@@ -1,0 +1,22 @@
+The font files in this directory are vendored so the settings page can offer
+them to any browser, not only to machines that happen to have them installed.
+All three are licensed under the SIL Open Font License, Version 1.1, which
+permits redistribution as part of a larger work.
+
+  3270-Regular.ttf        "IBM 3270", the IBM 3270 terminal font digitised by
+                          Ricardo Banffy.
+                          https://github.com/rbanffy/3270font
+
+  FiraMono-Regular.ttf    "Fira Mono" by Carrois Apostrophe / Mozilla.
+                          https://github.com/mozilla/Fira
+
+  IBMPlexMono-Regular.ttf "IBM Plex Mono" by IBM.
+                          https://github.com/IBM/plex
+
+The full licence text is at https://scripts.sil.org/OFL. In summary: the fonts
+may be used, studied, modified and redistributed freely, they may not be sold on
+their own, and a modified version may not use the reserved font names.
+
+The other fonts the settings page offers are not shipped. They are named in a
+font stack and resolve to whatever the browser's own machine has, falling back
+to its default monospace face.

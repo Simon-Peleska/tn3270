@@ -1,0 +1,71 @@
+/* Vendored so the settings page can offer them to any browser rather than only
+   to machines that happen to have them installed. See public/fonts/NOTICE. */
+@font-face {
+  font-family: 'IBM 3270';
+  src: url('/fonts/3270-Regular.ttf') format('truetype');
+  font-display: block;
+}
+
+@font-face {
+  font-family: 'Fira Mono';
+  src: url('/fonts/FiraMono-Regular.ttf') format('truetype');
+  font-display: block;
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('/fonts/IBMPlexMono-Regular.ttf') format('truetype');
+  font-display: block;
+}
+
+:root {
+  color-scheme: dark;
+  --bg: #12141a;
+  --line: #2b303b;
+  --text: #d8dce6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.4 ui-sans-serif, system-ui, sans-serif;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: #262a34;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #313644;
+}
+
+/* The grid is sized to whatever is left over here, so this box must not grow
+   with its content: min-height 0 lets it shrink, overflow hidden keeps a grid
+   that is briefly too large from bouncing the layout. */
+.screen {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 8px;
+  outline: none;
+  background: #000;
+}

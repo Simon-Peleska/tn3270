@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TN3270 Terminal</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <!-- Errors are shown here, in place, on the terminal's own status line.
+         The page is never navigated away from: a redirect would drop the
+         session the user is looking at. -->
+    <main id="screen" class="screen" tabindex="0"></main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

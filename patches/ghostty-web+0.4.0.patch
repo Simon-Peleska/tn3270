@@ -1,0 +1,13 @@
+diff --git a/node_modules/ghostty-web/dist/ghostty-web.js b/node_modules/ghostty-web/dist/ghostty-web.js
+index a4ca427..d83d1a4 100644
+--- a/node_modules/ghostty-web/dist/ghostty-web.js
++++ b/node_modules/ghostty-web/dist/ghostty-web.js
+@@ -1363,7 +1363,7 @@ class $ {
+   measureFont() {
+     const B = document.createElement("canvas").getContext("2d");
+     B.font = `${this.fontSize}px ${this.fontFamily}`;
+-    const g = B.measureText("M"), E = Math.ceil(g.width), C = g.actualBoundingBoxAscent || this.fontSize * 0.8, I = g.actualBoundingBoxDescent || this.fontSize * 0.2, D = Math.ceil(C + I) + 2, i = Math.ceil(C) + 1;
++    const g = B.measureText("M"), E = Math.ceil(g.width), C = g.fontBoundingBoxAscent || this.fontSize * 0.8, I = g.fontBoundingBoxDescent || this.fontSize * 0.2, D = Math.ceil(C + I) + 2, i = Math.ceil(C) + 1;
+     return { width: E, height: D, baseline: i };
+   }
+   /**

@@ -1,0 +1,306 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { Session, SessionRegistry } from '../server/session.js';
+import { INIT_SEQUENCE } from '../server/vt.js';
+import { AppError } from '../server/errors.js';
+import { testConfig, collectingViewer, waitUntil, startTracedSession } from './helpers.js';
+
+/**
+ * The multi-viewer contract: the session owns the screen, viewers come and go,
+ * and a viewer that joins late is immediately correct.
+ */
+
+test('the first viewer controls and the rest observe', async (t) => {
+  const session = new Session(testConfig());
+  t.after(() => session.close());
+  await session.ready;
+
+  const first = collectingViewer('first');
+  const second = collectingViewer('second');
+  session.attach(first);
+  session.attach(second);
+
+  assert.equal(first.role, 'controller');
+  assert.equal(second.role, 'observer');
+});
+
+test('a viewer joining mid-stream gets a repaint matching what the first viewer sees', async (t) => {
+  const fixture = await startTracedSession('test/traces/reverse.trc');
+  t.after(() => fixture.close());
+  const { session } = fixture;
+
+  const early = collectingViewer('early');
+  session.attach(early);
+  await waitUntil(() => session.screen.rowText(0).includes('_____'), 'the screen to be drawn');
+
+  const late = collectingViewer('late');
+  session.attach(late);
+
+  const repaint = late.screen[0];
+  assert.ok(repaint !== undefined, 'the late viewer should receive a repaint on attach');
+  assert.ok(repaint.startsWith(INIT_SEQUENCE), 'the repaint must set the terminal up from scratch');
+  assert.ok(repaint.includes('_____'), 'the repaint must contain the current screen');
+
+  const hello = late.messages[0];
+  assert.equal(hello?.type, 'hello');
+  assert.equal(hello?.type === 'hello' ? hello.rows : 0, session.screen.rows);
+});
+
+test('every attached viewer receives the same delta', async (t) => {
+  const fixture = await startTracedSession('test/traces/reverse.trc');
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  await waitUntil(() => session.screen.rowText(0).includes('_____'), 'the screen to be drawn');
+
+  const a = collectingViewer('a');
+  const b = collectingViewer('b');
+  session.attach(a);
+  session.attach(b);
+  const beforeA = a.screen.length;
+  const beforeB = b.screen.length;
+
+  session.b3270.runActions([{ action: 'String', args: ['hello'] }]);
+  await waitUntil(() => a.screen.length > beforeA, 'a delta to be broadcast');
+  await waitUntil(() => b.screen.length > beforeB, 'the observer to get it too');
+
+  assert.deepEqual(a.screen.slice(beforeA), b.screen.slice(beforeB));
+});
+
+test('a viewer with host colours off gets no truecolor from the host, another viewer is unaffected', async (t) => {
+  const fixture = await startTracedSession('test/traces/reverse.trc');
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  await waitUntil(() => session.screen.rowText(0).includes('_____'), 'the screen to be drawn');
+
+  const plain = collectingViewer('plain');
+  plain.hostColors = false;
+  const colored = collectingViewer('colored');
+  session.attach(plain);
+  session.attach(colored);
+
+  // "red" is ANSI slot 1, an indexed background SGR of 41 — a boundary check
+  // (not colours.includes('41')) because 41 can appear inside an unrelated
+  // number like a cursor row.
+  const redBackground = /(?:^|;)41(?:;|m)/;
+  const plainRepaint = plain.screen[0] ?? '';
+  const coloredRepaint = colored.screen[0] ?? '';
+  assert.ok(!redBackground.test(plainRepaint), 'the red field must not reach a viewer with host colours off');
+  assert.ok(redBackground.test(coloredRepaint), 'the other viewer must still see the host red');
+
+  // Flipping it live repaints only that viewer, in place.
+  session.handleClientMessage(colored, { type: 'hostColors', enabled: false });
+  const latest = colored.screen.at(-1) ?? '';
+  assert.ok(!redBackground.test(latest), 'toggling off must repaint without the host colour');
+  assert.equal(plain.screen.length, 1, 'the other viewer must not have been repainted');
+});
+
+test('an observer cannot type, and is told why in place', async (t) => {
+  const session = new Session(testConfig());
+  t.after(() => session.close());
+  await session.ready;
+
+  const controller = collectingViewer('controller');
+  const observer = collectingViewer('observer');
+  session.attach(controller);
+  session.attach(observer);
+
+  session.handleClientMessage(observer, { type: 'text', value: 'nope' });
+
+  const last = observer.messages.at(-1);
+  assert.equal(last?.type, 'error');
+  assert.equal(last?.type === 'error' ? last.code : '', 'E4003');
+});
+
+test('control passes on when the controller leaves', async (t) => {
+  const session = new Session(testConfig());
+  t.after(() => session.close());
+  await session.ready;
+
+  const first = collectingViewer('first');
+  const second = collectingViewer('second');
+  session.attach(first);
+  session.attach(second);
+  session.detach(first);
+
+  assert.equal(second.role, 'controller', 'the session must not be left read-only');
+});
+
+test('allowMultipleControllers makes every viewer a controller', async (t) => {
+  const session = new Session(testConfig({ sessions: { allowMultipleControllers: true, idleTimeoutMs: 0 } }));
+  t.after(() => session.close());
+  await session.ready;
+
+  const a = collectingViewer('a');
+  const b = collectingViewer('b');
+  session.attach(a);
+  session.attach(b);
+
+  assert.equal(a.role, 'controller');
+  assert.equal(b.role, 'controller');
+});
+
+test('the viewer ceiling is enforced', async (t) => {
+  const session = new Session(testConfig({ sessions: { maxViewersPerSession: 1, idleTimeoutMs: 0 } }));
+  t.after(() => session.close());
+  await session.ready;
+
+  session.attach(collectingViewer('a'));
+  assert.throws(() => session.attach(collectingViewer('b')), (err) => {
+    assert.ok(err instanceof AppError);
+    assert.equal(err.code, 'E3003');
+    return true;
+  });
+});
+
+test('a session survives its viewers leaving and rejoining', async (t) => {
+  const fixture = await startTracedSession('test/traces/reverse.trc');
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  await waitUntil(() => session.screen.rowText(0).includes('_____'), 'the screen to be drawn');
+
+  const viewer = collectingViewer('reload');
+  session.attach(viewer);
+  session.detach(viewer);
+  assert.equal(session.closed, false, 'the host connection must outlive the browser');
+
+  const rejoined = collectingViewer('rejoined');
+  session.attach(rejoined);
+  assert.ok(rejoined.screen[0]?.includes('_____'), 'the same screen must come straight back');
+});
+
+test('changing the model resizes the grid and tells every viewer before repainting', async (t) => {
+  const session = new Session(testConfig());
+  t.after(() => session.close());
+  await session.ready;
+  assert.equal(session.screen.rows, 43, 'the fixture starts on a model 4');
+
+  const controller = collectingViewer('controller');
+  const observer = collectingViewer('observer');
+  session.attach(controller);
+  session.attach(observer);
+
+  session.handleClientMessage(controller, { type: 'model', model: 2 });
+  await waitUntil(() => session.screen.rows === 24, 'the grid to become a model 2');
+
+  for (const viewer of [controller, observer]) {
+    const at = viewer.events.findIndex((event) => event.kind === 'message' && event.message.type === 'screen');
+    assert.notEqual(at, -1, `${viewer.id} must be told the new size`);
+    const event = viewer.events[at];
+    assert.deepEqual(event?.kind === 'message' ? event.message : null, {
+      type: 'screen', model: 2, rows: 24, cols: 80,
+    });
+
+    // A repaint is meaningless to a viewer still holding a 43-row terminal, so
+    // the resize arriving first is part of the contract, not a coincidence.
+    const next = viewer.events[at + 1];
+    assert.ok(
+      next?.kind === 'screen' && next.bytes.startsWith(INIT_SEQUENCE),
+      `${viewer.id} must be repainted immediately after being resized`,
+    );
+  }
+});
+
+test('changing the model under a live connection drops it and reopens the same host', async (t) => {
+  const fixture = await startTracedSession('test/traces/reverse.trc');
+  t.after(() => fixture.close());
+  const { session, host } = fixture;
+  await waitUntil(() => session.screen.rowText(0).includes('_____'), 'the screen to be drawn');
+  const expectedHost = `127.0.0.1:${host.port}`;
+  assert.equal(session.lastHost, expectedHost);
+
+  const controller = collectingViewer('controller');
+  session.attach(controller);
+  session.handleClientMessage(controller, { type: 'model', model: 2 });
+
+  // b3270 refuses a model change while connected, so the session has to take the
+  // connection down first — and then put it back, on the host as it was typed,
+  // port and all.
+  await waitUntil(() => session.screen.rows === 24, 'the grid to become a model 2');
+  await waitUntil(
+    () => session.oia.connectionState !== 'not-connected',
+    'the host connection to come back',
+  );
+  assert.equal(session.model, 2);
+  assert.equal(session.lastHost, expectedHost);
+});
+
+test('reconnecting without naming a host reuses the one the session knows', async (t) => {
+  const fixture = await startTracedSession('test/traces/reverse.trc');
+  t.after(() => fixture.close());
+  const { session, host } = fixture;
+  await waitUntil(() => session.oia.connectionState !== 'not-connected', 'the first connection');
+
+  const controller = collectingViewer('controller');
+  session.attach(controller);
+  session.handleClientMessage(controller, { type: 'disconnect' });
+  await waitUntil(() => session.oia.connectionState === 'not-connected', 'the disconnect');
+
+  session.handleClientMessage(controller, { type: 'connect', host: null });
+  await waitUntil(() => session.oia.connectionState !== 'not-connected', 'the reconnection');
+  assert.equal(session.lastHost, `127.0.0.1:${host.port}`);
+});
+
+test('a refresh repaints only the viewer who asked, even an observer', async (t) => {
+  const fixture = await startTracedSession('test/traces/reverse.trc');
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  await waitUntil(() => session.screen.rowText(0).includes('_____'), 'the screen to be drawn');
+
+  const controller = collectingViewer('controller');
+  const observer = collectingViewer('observer');
+  session.attach(controller);
+  session.attach(observer);
+  assert.equal(observer.role, 'observer');
+
+  const before = controller.screen.length;
+  session.handleClientMessage(observer, { type: 'refresh' });
+
+  assert.equal(controller.screen.length, before, 'nobody else may be disturbed');
+  const last = observer.screen.at(-1) ?? '';
+  assert.ok(last.startsWith(INIT_SEQUENCE), 'the asker gets a full repaint');
+  assert.ok(last.includes('_____'), 'and it is the host screen, not an error');
+  assert.ok(
+    observer.messages.every((message) => message.type !== 'error'),
+    'an observer asking for its own screen back is not an input',
+  );
+});
+
+test('a b3270 resource set in the config reaches the emulator', async (t) => {
+  // oversize is the cheapest resource to observe: b3270 answers it in the
+  // screen-mode indication, which is the same path the browser sees.
+  const session = new Session(testConfig({ b3270: { path: 'b3270', model: 2, settings: { oversize: '90x30' } } }));
+  t.after(() => session.close());
+  await session.ready;
+
+  assert.equal(session.screen.rows, 30);
+  assert.equal(session.screen.cols, 90);
+});
+
+test('the registry refuses to exceed maxSessions', () => {
+  const registry = new SessionRegistry(testConfig({ sessions: { maxSessions: 1, idleTimeoutMs: 0 } }));
+  registry.create();
+  assert.throws(() => registry.create(), (err) => {
+    assert.ok(err instanceof AppError);
+    assert.equal(err.code, 'E3002');
+    return true;
+  });
+  registry.closeAll();
+});
+
+test('an unknown session id is a stable error, not a crash', () => {
+  const registry = new SessionRegistry(testConfig());
+  assert.throws(() => registry.get('nope'), (err) => {
+    assert.ok(err instanceof AppError);
+    assert.equal(err.code, 'E3001');
+    return true;
+  });
+});
+
+test('a closed session removes itself from the registry', async () => {
+  const registry = new SessionRegistry(testConfig());
+  const session = registry.create();
+  await session.ready;
+  assert.equal(registry.list().length, 1);
+  session.close();
+  assert.equal(registry.list().length, 0);
+});

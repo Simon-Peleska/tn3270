@@ -1,0 +1,77 @@
+{
+  // ---------------------------------------------------------------------
+  // HTTP / WebSocket server
+  // ---------------------------------------------------------------------
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8017
+  },
+
+  // ---------------------------------------------------------------------
+  // The b3270 back end. One process is spawned per session.
+  // ---------------------------------------------------------------------
+  "b3270": {
+    // Resolved from PATH when left as a bare name. `nix develop` puts it there.
+    "path": "b3270",
+
+    // 3270 model: 2 = 24x80, 3 = 32x80, 4 = 43x80, 5 = 27x132.
+    // b3270's own default is 4; we default to 2 because that is what almost
+    // every host expects.
+    "model": 2,
+
+    // Host to connect to when a session is created without an explicit one.
+    // null means the session starts disconnected and waits for the user.
+    "defaultHost": null,
+
+    // Any b3270 resource, passed as -xrm "b3270.<name>: <value>". This is the
+    // general escape hatch: every setting b3270 has can be set here, whether or
+    // not this project knows about it. Names are documented at
+    // https://x3270.miraheze.org/wiki/Category:Resources
+    //
+    // A bare name is qualified as "b3270.<name>"; write "b3270.x" or "*x" in
+    // full when a resource needs a different qualifier.
+    "settings": {
+      // "codePage": "german",
+      // "oversize": "132x43",
+      // "monoCase": true,
+      // "typeahead": false,
+      // "verifyHostCert": true,
+      // "nopSeconds": 60
+    },
+
+    // Extra command line arguments, appended verbatim. For options that are not
+    // resources: ["-cafile", "/path/to/ca.pem"]
+    "extraArgs": []
+  },
+
+  // ---------------------------------------------------------------------
+  // Sessions and viewers
+  // ---------------------------------------------------------------------
+  "sessions": {
+    "maxSessions": 16,
+    "maxViewersPerSession": 8,
+
+    // A session with no viewers attached is torn down after this long. This is
+    // what lets a browser reload or a dropped connection survive without
+    // losing the host session.
+    "idleTimeoutMs": 300000,
+
+    // When false, the first viewer to attach controls the session and everyone
+    // else observes. When true, every viewer may type: input is serialised by
+    // b3270's single stdin, so this is safe, just chaotic.
+    "allowMultipleControllers": false
+  },
+
+  // ---------------------------------------------------------------------
+  // Security
+  // ---------------------------------------------------------------------
+  "security": {
+    // Hosts a client is permitted to ask for. An entry with a port matches
+    // exactly; an entry without one allows any port on that host. An empty
+    // list allows any host, which is only sensible on a trusted network.
+    "allowedHosts": []
+  },
+
+  // "debug" logs every line exchanged with b3270. Very useful, very noisy.
+  "logLevel": "info"
+}

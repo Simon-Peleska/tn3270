@@ -1,0 +1,22 @@
+{
+  "name": "tn3270",
+  "version": "0.1.0",
+  "description": "Web TN3270 terminal: b3270 backend, ghostty-web frontend",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node server/main.js",
+    "test": "node --test \"test/*.test.js\"",
+    "typecheck": "tsc -p jsconfig.json",
+    "postinstall": "patch-package"
+  },
+  "dependencies": {
+    "ghostty-web": "^0.4.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.0",
+    "@types/ws": "^8.18.1",
+    "patch-package": "^8.0.1"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "checkJs": true,
+    "allowJs": true,
+    "noEmit": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "noImplicitOverride": true,
+    "exactOptionalPropertyTypes": false,
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"],
+    // The frontend imports by URL, which the browser resolves against the
+    // server's static mounts. Point the type checker at the same files.
+    "baseUrl": ".",
+    "paths": {
+      "/vendor/dist/ghostty-web.js": ["node_modules/ghostty-web/dist/index.d.ts"],
+      "/keymap.js": ["public/keymap.js"],
+      "/box-select.js": ["public/box-select.js"],
+      "/settings.js": ["public/settings.js"],
+      "/store.js": ["public/store.js"]
+    }
+  },
+  "include": ["server/**/*.js", "public/**/*.js", "test/**/*.js"],
+  "exclude": ["node_modules"]
+}
