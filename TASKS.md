@@ -53,6 +53,14 @@ Status as of 2026-09-07.
 - [x] **Type gate** — `tsc -p jsconfig.json` with `checkJs` and `strict`, clean.
       No `any` anywhere.
 - [x] **Docs** — `ARCHITECTURE.md`, `SPECIFICATION.md`, `GOTCHAS.md`, this file.
+- [x] **Windows b3270** — the flake's `b3270.nix` cross-builds a `b3270.exe` via
+      `pkgsCross.mingwW64` (package `b3270-windows`, `x86_64-linux` build machine
+      only — Nix has no way to run a Windows build itself). Windows TLS comes from
+      the native SChannel/CryptoAPI libraries (`crypt32`/`secur32`) that mingw
+      already links, and its libexpat is vendored and self-built by the suite, so
+      neither `openssl` nor `expat` is a dependency there.
+- [x] **CI** — `.github/workflows/build.yml` builds `b3270` and `b3270-windows`
+      through the flake on `ubuntu-latest` and uploads both binaries as artifacts.
 
 ## Verification
 

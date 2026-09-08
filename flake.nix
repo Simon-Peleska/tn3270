@@ -9,16 +9,21 @@
       systems = [
         "x86_64-linux"
         "aarch64-linux"
-        "x86_64-darwin"
-        "aarch64-darwin"
       ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
     in
     {
-      packages = forAllSystems (pkgs: {
-        b3270 = pkgs.callPackage ./nix/b3270.nix { };
-        default = self.packages.${pkgs.stdenv.hostPlatform.system}.b3270;
-      });
+      packages = forAllSystems (
+        pkgs:
+        {
+          b3270 = pkgs.callPackage ./nix/b3270.nix { };
+          default = self.packages.${pkgs.stdenv.hostPlatform.system}.b3270;
+        }
+        // nixpkgs.lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
+          # Cross-compiled from Linux; Nix has no way to run a Windows build itself.
+          b3270-windows = pkgs.pkgsCross.mingwW64.callPackage ./nix/b3270.nix { };
+        }
+      );
 
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
