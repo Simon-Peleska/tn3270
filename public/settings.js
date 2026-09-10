@@ -16,9 +16,13 @@ const ESC = '\x1b';
 /**
  * @typedef {object} Theme
  * @property {string} name
- * @property {Record<string, string>} colors passed to ghostty's renderer: the
- *   six terminal-chrome colours (background, foreground, cursor, ...) plus
- *   the sixteen standard ANSI slots (black..brightWhite).
+ * @property {Record<string, string>} colors the six terminal-chrome colours
+ *   (background, foreground, cursor, ...), the sixteen standard ANSI slots
+ *   (black..brightWhite), all passed straight to ghostty's renderer, plus
+ *   `field`: this settings page's own colour for an editable value's block,
+ *   picked by hand from each theme's real palette (Gruvbox's `bg1`, Solarized's
+ *   `base02`, ...) rather than computed, because a flat brightness blend looks
+ *   right on some themes and grey on others. Ghostty ignores the extra key.
  */
 
 /**
@@ -32,72 +36,76 @@ const ESC = '\x1b';
  */
 export const THEMES = Object.freeze([
   { name: '3270 Green', colors: {
-    background: '#000000', foreground: '#00ff00', cursor: '#00ff00', cursorAccent: '#000000', selectionBackground: '#00ff00', selectionForeground: '#000000',
+    background: '#000000', foreground: '#00ff00', cursor: '#00ff00', cursorAccent: '#000000', selectionBackground: '#00ff00', selectionForeground: '#000000', field: '#003300',
     black: '#000000', red: '#00cc00', green: '#00ff00', yellow: '#00e600', blue: '#00b300', magenta: '#00cc00', cyan: '#00e600', white: '#00ff00',
     brightBlack: '#007700', brightRed: '#00ff00', brightGreen: '#00ff00', brightYellow: '#00ff00', brightBlue: '#00cc00', brightMagenta: '#00ff00', brightCyan: '#00ff00', brightWhite: '#00ff00',
   } },
   { name: 'Amber', colors: {
-    background: '#100c00', foreground: '#ffb000', cursor: '#ffb000', cursorAccent: '#100c00', selectionBackground: '#ffb000', selectionForeground: '#100c00',
+    background: '#100c00', foreground: '#ffb000', cursor: '#ffb000', cursorAccent: '#100c00', selectionBackground: '#ffb000', selectionForeground: '#100c00', field: '#2b1f00',
     black: '#000000', red: '#cc8400', green: '#cc8400', yellow: '#ffb000', blue: '#996300', magenta: '#cc8400', cyan: '#e69900', white: '#ffb000',
     brightBlack: '#7a5000', brightRed: '#ffb000', brightGreen: '#ffb000', brightYellow: '#ffb000', brightBlue: '#cc8400', brightMagenta: '#ffb000', brightCyan: '#ffb000', brightWhite: '#ffb000',
   } },
   { name: 'Ghostty Dark', colors: {
-    background: '#1e1e1e', foreground: '#d4d4d4', cursor: '#ffffff', cursorAccent: '#1e1e1e', selectionBackground: '#d4d4d4', selectionForeground: '#1e1e1e',
+    background: '#1e1e1e', foreground: '#d4d4d4', cursor: '#ffffff', cursorAccent: '#1e1e1e', selectionBackground: '#d4d4d4', selectionForeground: '#1e1e1e', field: '#2d2d2d',
     black: '#000000', red: '#cd3131', green: '#0dbc79', yellow: '#e5e510', blue: '#2472c8', magenta: '#bc3fbc', cyan: '#11a8cd', white: '#e5e5e5',
     brightBlack: '#666666', brightRed: '#f14c4c', brightGreen: '#23d18b', brightYellow: '#f5f543', brightBlue: '#3b8eea', brightMagenta: '#d670d6', brightCyan: '#29b8db', brightWhite: '#ffffff',
   } },
+  // Solarized names its own background shades base03 (default bg) through
+  // base01; base02 is its documented "background highlights" tone.
   { name: 'Solarized Dark', colors: {
-    background: '#002b36', foreground: '#93a1a1', cursor: '#93a1a1', cursorAccent: '#002b36', selectionBackground: '#93a1a1', selectionForeground: '#002b36',
+    background: '#002b36', foreground: '#93a1a1', cursor: '#93a1a1', cursorAccent: '#002b36', selectionBackground: '#93a1a1', selectionForeground: '#002b36', field: '#073642',
     black: '#073642', red: '#dc322f', green: '#859900', yellow: '#b58900', blue: '#268bd2', magenta: '#d33682', cyan: '#2aa198', white: '#eee8d5',
     brightBlack: '#002b36', brightRed: '#cb4b16', brightGreen: '#586e75', brightYellow: '#657b83', brightBlue: '#839496', brightMagenta: '#6c71c4', brightCyan: '#93a1a1', brightWhite: '#fdf6e3',
   } },
   { name: 'Paper', colors: {
-    background: '#f5f2e8', foreground: '#1a1a1a', cursor: '#1a1a1a', cursorAccent: '#f5f2e8', selectionBackground: '#1a1a1a', selectionForeground: '#f5f2e8',
+    background: '#f5f2e8', foreground: '#1a1a1a', cursor: '#1a1a1a', cursorAccent: '#f5f2e8', selectionBackground: '#1a1a1a', selectionForeground: '#f5f2e8', field: '#e8e2d0',
     black: '#1a1a1a', red: '#c0341d', green: '#4c7a1f', yellow: '#a86b00', blue: '#2050a0', magenta: '#8a3f8a', cyan: '#1a7a7a', white: '#d8d4c8',
     brightBlack: '#6b6b6b', brightRed: '#d8452a', brightGreen: '#5f9c2a', brightYellow: '#c98a1a', brightBlue: '#3a6fc4', brightMagenta: '#a854a8', brightCyan: '#2a9494', brightWhite: '#f5f2e8',
   } },
+  // Gruvbox's own background ramp is bg0 (default bg) through bg4; bg1 is
+  // what Gruvbox itself uses for a highlighted line or block.
   { name: 'Gruvbox Dark', colors: {
-    background: '#282828', foreground: '#ebdbb2', cursor: '#ebdbb2', cursorAccent: '#282828', selectionBackground: '#ebdbb2', selectionForeground: '#282828',
+    background: '#282828', foreground: '#ebdbb2', cursor: '#ebdbb2', cursorAccent: '#282828', selectionBackground: '#ebdbb2', selectionForeground: '#282828', field: '#3c3836',
     black: '#282828', red: '#cc241d', green: '#98971a', yellow: '#d79921', blue: '#458588', magenta: '#b16286', cyan: '#689d6a', white: '#a89984',
     brightBlack: '#928374', brightRed: '#fb4934', brightGreen: '#b8bb26', brightYellow: '#fabd2f', brightBlue: '#83a598', brightMagenta: '#d3869b', brightCyan: '#8ec07c', brightWhite: '#ebdbb2',
   } },
   { name: 'Gruvbox Dark Hard', colors: {
-    background: '#1d2021', foreground: '#ebdbb2', cursor: '#ebdbb2', cursorAccent: '#1d2021', selectionBackground: '#ebdbb2', selectionForeground: '#1d2021',
+    background: '#1d2021', foreground: '#ebdbb2', cursor: '#ebdbb2', cursorAccent: '#1d2021', selectionBackground: '#ebdbb2', selectionForeground: '#1d2021', field: '#282828',
     black: '#1d2021', red: '#cc241d', green: '#98971a', yellow: '#d79921', blue: '#458588', magenta: '#b16286', cyan: '#689d6a', white: '#a89984',
     brightBlack: '#928374', brightRed: '#fb4934', brightGreen: '#b8bb26', brightYellow: '#fabd2f', brightBlue: '#83a598', brightMagenta: '#d3869b', brightCyan: '#8ec07c', brightWhite: '#ebdbb2',
   } },
   { name: 'Gruvbox Light', colors: {
-    background: '#fbf1c7', foreground: '#3c3836', cursor: '#3c3836', cursorAccent: '#fbf1c7', selectionBackground: '#3c3836', selectionForeground: '#fbf1c7',
+    background: '#fbf1c7', foreground: '#3c3836', cursor: '#3c3836', cursorAccent: '#fbf1c7', selectionBackground: '#3c3836', selectionForeground: '#fbf1c7', field: '#ebdbb2',
     black: '#fbf1c7', red: '#cc241d', green: '#98971a', yellow: '#d79921', blue: '#458588', magenta: '#b16286', cyan: '#689d6a', white: '#7c6f64',
     brightBlack: '#928374', brightRed: '#9d0006', brightGreen: '#79740e', brightYellow: '#b57614', brightBlue: '#076678', brightMagenta: '#8f3f71', brightCyan: '#427b58', brightWhite: '#3c3836',
   } },
   { name: 'Dracula', colors: {
-    background: '#282a36', foreground: '#f8f8f2', cursor: '#f8f8f2', cursorAccent: '#282a36', selectionBackground: '#f8f8f2', selectionForeground: '#282a36',
+    background: '#282a36', foreground: '#f8f8f2', cursor: '#f8f8f2', cursorAccent: '#282a36', selectionBackground: '#f8f8f2', selectionForeground: '#282a36', field: '#44475a',
     black: '#21222c', red: '#ff5555', green: '#50fa7b', yellow: '#f1fa8c', blue: '#bd93f9', magenta: '#ff79c6', cyan: '#8be9fd', white: '#f8f8f2',
     brightBlack: '#6272a4', brightRed: '#ff6e6e', brightGreen: '#69ff94', brightYellow: '#ffffa5', brightBlue: '#d6acff', brightMagenta: '#ff92df', brightCyan: '#a4ffff', brightWhite: '#ffffff',
   } },
   { name: 'Nord', colors: {
-    background: '#2e3440', foreground: '#d8dee9', cursor: '#d8dee9', cursorAccent: '#2e3440', selectionBackground: '#d8dee9', selectionForeground: '#2e3440',
+    background: '#2e3440', foreground: '#d8dee9', cursor: '#d8dee9', cursorAccent: '#2e3440', selectionBackground: '#d8dee9', selectionForeground: '#2e3440', field: '#3b4252',
     black: '#3b4252', red: '#bf616a', green: '#a3be8c', yellow: '#ebcb8b', blue: '#81a1c1', magenta: '#b48ead', cyan: '#88c0d0', white: '#e5e9f0',
     brightBlack: '#4c566a', brightRed: '#bf616a', brightGreen: '#a3be8c', brightYellow: '#ebcb8b', brightBlue: '#81a1c1', brightMagenta: '#b48ead', brightCyan: '#8fbcbb', brightWhite: '#eceff4',
   } },
   { name: 'Catppuccin Mocha', colors: {
-    background: '#1e1e2e', foreground: '#cdd6f4', cursor: '#cdd6f4', cursorAccent: '#1e1e2e', selectionBackground: '#cdd6f4', selectionForeground: '#1e1e2e',
+    background: '#1e1e2e', foreground: '#cdd6f4', cursor: '#cdd6f4', cursorAccent: '#1e1e2e', selectionBackground: '#cdd6f4', selectionForeground: '#1e1e2e', field: '#313244',
     black: '#45475a', red: '#f38ba8', green: '#a6e3a1', yellow: '#f9e2af', blue: '#89b4fa', magenta: '#f5c2e7', cyan: '#94e2d5', white: '#bac2de',
     brightBlack: '#585b70', brightRed: '#f38ba8', brightGreen: '#a6e3a1', brightYellow: '#f9e2af', brightBlue: '#89b4fa', brightMagenta: '#f5c2e7', brightCyan: '#94e2d5', brightWhite: '#a6adc8',
   } },
   { name: 'One Dark', colors: {
-    background: '#282c34', foreground: '#abb2bf', cursor: '#abb2bf', cursorAccent: '#282c34', selectionBackground: '#abb2bf', selectionForeground: '#282c34',
+    background: '#282c34', foreground: '#abb2bf', cursor: '#abb2bf', cursorAccent: '#282c34', selectionBackground: '#abb2bf', selectionForeground: '#282c34', field: '#3e4451',
     black: '#282c34', red: '#e06c75', green: '#98c379', yellow: '#e5c07b', blue: '#61afef', magenta: '#c678dd', cyan: '#56b6c2', white: '#abb2bf',
     brightBlack: '#5c6370', brightRed: '#e06c75', brightGreen: '#98c379', brightYellow: '#e5c07b', brightBlue: '#61afef', brightMagenta: '#c678dd', brightCyan: '#56b6c2', brightWhite: '#ffffff',
   } },
   { name: 'Tokyo Night', colors: {
-    background: '#1a1b26', foreground: '#a9b1d6', cursor: '#a9b1d6', cursorAccent: '#1a1b26', selectionBackground: '#a9b1d6', selectionForeground: '#1a1b26',
+    background: '#1a1b26', foreground: '#a9b1d6', cursor: '#a9b1d6', cursorAccent: '#1a1b26', selectionBackground: '#a9b1d6', selectionForeground: '#1a1b26', field: '#292e42',
     black: '#15161e', red: '#f7768e', green: '#9ece6a', yellow: '#e0af68', blue: '#7aa2f7', magenta: '#bb9af7', cyan: '#7dcfff', white: '#a9b1d6',
     brightBlack: '#414868', brightRed: '#f7768e', brightGreen: '#9ece6a', brightYellow: '#e0af68', brightBlue: '#7aa2f7', brightMagenta: '#bb9af7', brightCyan: '#7dcfff', brightWhite: '#c0caf5',
   } },
   { name: 'Monokai', colors: {
-    background: '#272822', foreground: '#f8f8f2', cursor: '#f8f8f2', cursorAccent: '#272822', selectionBackground: '#f8f8f2', selectionForeground: '#272822',
+    background: '#272822', foreground: '#f8f8f2', cursor: '#f8f8f2', cursorAccent: '#272822', selectionBackground: '#f8f8f2', selectionForeground: '#272822', field: '#3e3d32',
     black: '#272822', red: '#f92672', green: '#a6e22e', yellow: '#f4bf75', blue: '#66d9ef', magenta: '#ae81ff', cyan: '#a1efe4', white: '#f8f8f2',
     brightBlack: '#75715e', brightRed: '#f92672', brightGreen: '#a6e22e', brightYellow: '#f4bf75', brightBlue: '#66d9ef', brightMagenta: '#ae81ff', brightCyan: '#a1efe4', brightWhite: '#f9f8f5',
   } },
@@ -433,9 +441,11 @@ export class SettingsPage {
     const foreground = colors['foreground'] ?? '#00ff00';
     const dim = mix(background, foreground, 0.55);
     // Editable values sit on a slightly brighter block, the way an unprotected
-    // field looks on a real 3270.
-    const field = mix(background, foreground, 0.12);
-    const chosen = mix(background, foreground, 0.3);
+    // field looks on a real 3270. Curated per theme (see the Theme typedef)
+    // since a flat blend off the background looks right on some themes and
+    // grey on others.
+    const field = colors['field'] ?? mix(background, foreground, 0.12);
+    const chosen = mix(field, foreground, 0.3);
     const warn = rgb(background)[0] > 128 ? '#a02c00' : '#ffcc00';
 
     const showsConnect = this.showsConnect();
