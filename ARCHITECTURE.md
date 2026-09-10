@@ -176,6 +176,25 @@ container and maps `KeyboardEvent` → 3270 action, with printable characters
 becoming `String("…")`. The whole map is two frozen tables, so it can be made
 configurable later without touching the transport.
 
+## All UI lives inside the terminal
+
+`public/index.html` is just a `<div id="screen">` around the ghostty-web
+canvas. **Every piece of chrome — the settings page, the error banner, the
+settings button on the OIA line — is drawn as VT bytes into that same
+`Terminal`, never as native HTML/DOM/CSS.** `settings.js` explains why at its
+own top: a second focus model, a second keybinding set, and a second
+fit-to-window problem are exactly the complexity this rule avoids. One
+renderer, one input path, one thing to keep sized and focused.
+
+The pattern (see `errorOverlayBytes()` and `settingsButtonBytes()` in
+`public/app.js`): build a string of VT escapes, wrap the cursor move in
+`ESC 7` / `ESC 8` (save/restore) so painting chrome never steals the real 3270
+cursor, and re-write it after every host update so it survives the next
+repaint or delta. Mouse hit-testing works the same way in reverse:
+`terminal.renderer`'s public `getCanvas()` / `charWidth` / `charHeight` turn a
+click's pixel coordinates back into a `{row, col}` cell to compare against
+where the chrome was drawn.
+
 ## Errors
 
 Per `CLAUDE.md`, every error site carries a stable code, shown in the logs *and*

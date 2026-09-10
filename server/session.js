@@ -389,6 +389,15 @@ export class Session {
 
     switch (message.type) {
       case 'action':
+        // b3270's own Backspace is a real 3270 keyboard's: a non-destructive
+        // cursor move left. Every user here is on a PC keyboard and expects
+        // Backspace to delete the character behind the cursor, so it is sent
+        // as the two actions that actually do that; Delete itself already
+        // refuses to cross into a protected field, so this is no less safe.
+        if (message.action === 'Backspace') {
+          this.b3270.runActions([{ action: 'Left' }, { action: 'Delete' }]);
+          return;
+        }
         this.b3270.runActions([{ action: message.action, args: message.args ?? [] }]);
         return;
       case 'text':

@@ -44,6 +44,50 @@ function errorOverlayBytes() {
 }
 
 /**
+ * @param {string} hex `#rrggbb`
+ * @returns {[number, number, number]}
+ */
+function hexToRgb(hex) {
+  return [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
+}
+
+/** The only way into settings for a mouse or a touch, so it lives right on
+ *  the 3270's own status line rather than in page chrome around the
+ *  terminal — the terminal is the whole UI (see settings.js). */
+const SETTINGS_BUTTON_LABEL = '[Settings]';
+
+/**
+ * @returns {string} VT bytes painting the button over the start of the OIA
+ *   row, reverse-themed so it reads as clickable against plain status text.
+ *   Cursor position is saved and restored around the paint (`ESC 7`/`ESC 8`)
+ *   so redrawing this on every host update never steals the real cursor from
+ *   whatever field the host put it in.
+ */
+function settingsButtonBytes() {
+  if (terminal === null) return '';
+  const colors = settings.theme().colors;
+  const [br, bg, bb] = hexToRgb(colors['foreground'] ?? '#00ff00');
+  const [fr, fg, fb] = hexToRgb(colors['background'] ?? '#000000');
+  const row = terminal.rows;
+  return `\x1b7\x1b[${row};1H\x1b[0;1;38;2;${fr};${fg};${fb};48;2;${br};${bg};${bb}m${SETTINGS_BUTTON_LABEL}\x1b[0m\x1b8`;
+}
+
+/**
+ * @param {MouseEvent} event
+ * @returns {{ row: number, col: number } | null} the 0-based cell under the
+ *   pointer, or null before the terminal exists.
+ */
+function cellAt(event) {
+  const renderer = terminal?.renderer;
+  if (terminal === null || renderer === undefined) return null;
+  const rect = renderer.getCanvas().getBoundingClientRect();
+  return {
+    row: Math.floor((event.clientY - rect.top) / renderer.charHeight),
+    col: Math.floor((event.clientX - rect.left) / renderer.charWidth),
+  };
+}
+
+/**
  * Show a coded error in place, on the terminal's own status line. Never
  * navigate: the session is right there on screen and a redirect would throw
  * it away. The overlay is reasserted after every later write to that row (see
@@ -342,6 +386,7 @@ function connectSocket(sessionId) {
       // bytes is safe because the server is asked for a full repaint on close.
       if (terminal !== null && !settings.open) {
         terminal.write(new Uint8Array(event.data));
+        terminal.write(settingsButtonBytes());
         if (activeError !== null) terminal.write(errorOverlayBytes());
       }
       return;
@@ -445,7 +490,14 @@ screenEl.addEventListener('keydown', (event) => {
   else send({ type: 'action', action: mapped.action, args: mapped.args });
 }, true);
 
-screenEl.addEventListener('click', () => screenEl.focus());
+screenEl.addEventListener('click', (event) => {
+  screenEl.focus();
+  if (settings.open || terminal === null) return;
+  const cell = cellAt(event);
+  if (cell !== null && cell.row === terminal.rows - 1 && cell.col < SETTINGS_BUTTON_LABEL.length) {
+    settings.toggle();
+  }
+});
 
 try {
   await init();

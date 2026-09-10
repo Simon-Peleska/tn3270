@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Session, SessionRegistry } from '../server/session.js';
 import { INIT_SEQUENCE } from '../server/vt.js';
 import { AppError } from '../server/errors.js';
-import { testConfig, collectingViewer, waitUntil, startTracedSession } from './helpers.js';
+import { testConfig, collectingViewer, waitUntil, settle, startTracedSession } from './helpers.js';
 
 /**
  * The multi-viewer contract: the session owns the screen, viewers come and go,
@@ -263,6 +263,34 @@ test('a refresh repaints only the viewer who asked, even an observer', async (t)
     observer.messages.every((message) => message.type !== 'error'),
     'an observer asking for its own screen back is not an input',
   );
+});
+
+test('a Backspace action deletes the character behind the cursor, not just moves over it', async (t) => {
+  // b3270's own Backspace only moves the cursor left; a PC keyboard's
+  // Backspace deletes. The field here is nondisplay, so the deletion itself
+  // is checked through the cursor: typing "hello" then backspacing must land
+  // one column short of typing "hell" plus a bare cursor-left would.
+  const fixture = await startTracedSession('test/traces/reverse.trc');
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  const { screen } = session;
+  await settle(session);
+
+  const controller = collectingViewer('controller');
+  session.attach(controller);
+
+  const before = screen.cursor.col;
+  session.handleClientMessage(controller, { type: 'text', value: 'hello' });
+  await settle(session);
+  assert.equal(screen.cursor.col, before + 5);
+
+  session.handleClientMessage(controller, { type: 'action', action: 'Backspace' });
+  await settle(session);
+  assert.equal(screen.cursor.col, before + 4, 'one character should have been deleted');
+
+  session.handleClientMessage(controller, { type: 'action', action: 'Backspace' });
+  await settle(session);
+  assert.equal(screen.cursor.col, before + 3, 'backspacing again deletes the next character back');
 });
 
 test('a b3270 resource set in the config reaches the emulator', async (t) => {
