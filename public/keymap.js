@@ -53,6 +53,17 @@ const CTRL_KEYS = Object.freeze({
 });
 
 /**
+ * Every one of these sends an Attention Identifier, the same as Enter: it
+ * unlocks the keyboard and asks the host for a whole new screen. Holding the
+ * key down must not fire a stream of them at the host — a real 3270 keyboard
+ * physically cannot repeat an AID key, and a host mid-response to the first
+ * one (TSO and ISPF especially) can be left keyboard-locked on a blank screen
+ * by a second one arriving on top of it.
+ * @type {ReadonlySet<string>}
+ */
+const AID_ACTIONS = new Set(['Enter', 'Clear', 'PF', 'PA', 'Attn', 'SysReq']);
+
+/**
  * Translate a keydown into a 3270 action, or into text to type.
  *
  * @param {KeyboardEvent} event
@@ -61,20 +72,22 @@ const CTRL_KEYS = Object.freeze({
 export function mapKey(event) {
   if (event.altKey || event.metaKey) return null;
 
-  // The right Control key is the 3270's Enter. Holding it down must not fire a
-  // stream of AIDs at the host, so a key repeat is dropped.
+  // The right Control key is the 3270's Enter.
   if (event.code === 'ControlRight') {
     return event.repeat ? null : { kind: 'action', action: 'Enter', args: [] };
   }
 
   if (event.ctrlKey) {
     const bound = CTRL_KEYS[event.key.toLowerCase()];
-    return bound ? { kind: 'action', action: bound.action, args: bound.args ?? [] } : null;
+    if (!bound) return null;
+    if (event.repeat && AID_ACTIONS.has(bound.action)) return null;
+    return { kind: 'action', action: bound.action, args: bound.args ?? [] };
   }
 
   // F1-F12 are PF1-PF12; with Shift they are PF13-PF24, exactly as on a 3270.
   const functionKey = /^F([1-9]|1[0-2])$/.exec(event.key);
   if (functionKey !== null) {
+    if (event.repeat) return null;
     const base = Number(functionKey[1]);
     return { kind: 'action', action: 'PF', args: [String(event.shiftKey ? base + 12 : base)] };
   }
@@ -82,7 +95,10 @@ export function mapKey(event) {
   if (event.key === 'Tab' && event.shiftKey) return { kind: 'action', action: 'BackTab', args: [] };
 
   const plain = PLAIN_KEYS[event.key];
-  if (plain) return { kind: 'action', action: plain.action, args: plain.args ?? [] };
+  if (plain) {
+    if (event.repeat && AID_ACTIONS.has(plain.action)) return null;
+    return { kind: 'action', action: plain.action, args: plain.args ?? [] };
+  }
 
   // A single character is text; anything longer is a named key we do not bind.
   if ([...event.key].length === 1) return { kind: 'text', value: event.key };
