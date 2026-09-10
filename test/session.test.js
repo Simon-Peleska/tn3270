@@ -200,6 +200,38 @@ test('changing the model resizes the grid and tells every viewer before repainti
   }
 });
 
+test('a host that only ever erases the default screen shrinks the grid to match', async (t) => {
+  const session = new Session(testConfig());
+  t.after(() => session.close());
+  await session.ready;
+
+  const viewer = collectingViewer('viewer');
+  session.attach(viewer);
+
+  // A model 4 offers 43x80, but a host that never sends Erase/Write Alternate
+  // only ever uses the default 24x80 — b3270 reports that as an erase
+  // indication's logical-rows/logical-columns, not as a new screen-mode.
+  session.handleIndication({ kind: 'screen-mode', body: { model: 4, rows: 43, columns: 80, color: true } });
+  await waitUntil(() => session.screen.rows === 43, 'the grid to grow to the model 4 size');
+
+  const before = viewer.events.length;
+  session.handleIndication({ kind: 'erase', body: { 'logical-rows': 24, 'logical-columns': 80 } });
+
+  const at = viewer.events.findIndex(
+    (event, i) => i >= before && event.kind === 'message' && event.message.type === 'screen',
+  );
+  assert.notEqual(at, -1, 'the viewer must be told the grid shrank to what the host actually uses');
+  assert.deepEqual(viewer.events[at]?.kind === 'message' ? viewer.events[at].message : null, {
+    type: 'screen', model: 4, rows: 24, cols: 80,
+  });
+
+  const next = viewer.events[at + 1];
+  assert.ok(
+    next?.kind === 'screen' && next.bytes.startsWith(INIT_SEQUENCE),
+    'the viewer must be repainted immediately after being resized',
+  );
+});
+
 test('changing the model under a live connection drops it and reopens the same host', async (t) => {
   const fixture = await startTracedSession('test/traces/reverse.trc');
   t.after(() => fixture.close());

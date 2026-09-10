@@ -165,7 +165,18 @@ export class Session {
       return;
     }
     if (kind === 'erase') {
+      // A host that never writes to the alternate screen only ever uses the
+      // model's default size (usually 24x80), reported here as logical-rows /
+      // logical-columns rather than in a screen-mode indication. The browser
+      // needs to hear about that too, or it keeps showing the full model size
+      // with dead space below or beside what the application actually draws.
+      const before = `${this.screen.rows}x${this.screen.cols}`;
       this.screen.applyErase(/** @type {import('./b3270.js').EraseIndication} */ (body));
+      if (`${this.screen.rows}x${this.screen.cols}` !== before) {
+        this.log.info('screen size changed', { rows: this.screen.rows, cols: this.screen.cols });
+        this.sendToAll({ type: 'screen', model: this.model, rows: this.screen.rows, cols: this.screen.cols });
+        this.repaintAll();
+      }
       this.scheduleFlush();
       return;
     }
