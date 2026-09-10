@@ -42,6 +42,7 @@ import { AppError } from './errors.js';
  * @property {string} connection
  * @property {string | null} host
  * @property {boolean} locked
+ * @property {boolean} insert
  * @property {'controller' | 'observer'} role
  * @property {number} viewers
  *

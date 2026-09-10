@@ -192,7 +192,12 @@ export class Session {
       return;
     }
     if (kind === 'oia') {
+      const wasInsert = this.oia.insert;
       this.oia.applyOia(/** @type {import('./b3270.js').OiaIndication} */ (body));
+      // The cursor shape (block vs. underline) is the only way a user can tell
+      // insert mode is on, so it needs its own status push rather than waiting
+      // for a connection-state change.
+      if (this.oia.insert !== wasInsert) this.broadcastStatus();
       this.scheduleFlush();
       return;
     }
@@ -427,6 +432,7 @@ export class Session {
         connection: this.oia.connectionState,
         host: this.oia.host,
         locked: this.oia.keyboardLocked,
+        insert: this.oia.insert,
         role: viewer.role,
         viewers: this.viewers.size,
       });

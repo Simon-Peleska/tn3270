@@ -442,6 +442,9 @@ function handleServerMessage(message) {
   }
   if (message.type === 'status') {
     settings.connected = message.connection !== 'not-connected';
+    // A real 3270 swaps the solid block cursor for an underline in insert
+    // mode, since it is otherwise the only way to tell the two apart.
+    terminal?.renderer?.setCursorStyle(message.insert ? 'underline' : 'block');
     // b3270 reports the host without its port, so filling the field from it
     // would quietly destroy what the user typed. Only use it to seed an empty
     // field, which is what a viewer joining someone else's session needs.
