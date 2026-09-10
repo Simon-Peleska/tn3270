@@ -30,7 +30,9 @@ const PLAIN_KEYS = Object.freeze({
   Home: { action: 'Home' },
   End: { action: 'End' },
   Insert: { action: 'ToggleInsert' },
-  Escape: { action: 'Clear' },
+  // Not Clear: menu-driven CICS/IMS applications commonly bind Attn to "back
+  // to the menu", and that is what operators actually expect Escape to do.
+  Escape: { action: 'Attn' },
 });
 
 /**
@@ -41,7 +43,7 @@ const PLAIN_KEYS = Object.freeze({
 const CTRL_KEYS = Object.freeze({
   r: { action: 'Reset' },
   a: { action: 'Attn' },
-  c: { action: 'Clear' },
+  // Not c: Ctrl+C is copy, handled before mapKey ever sees it.
   e: { action: 'EraseEOF' },
   d: { action: 'Dup' },
   f: { action: 'FieldMark' },

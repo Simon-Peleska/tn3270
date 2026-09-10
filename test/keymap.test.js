@@ -35,14 +35,14 @@ test('holding the Enter key down does not machine-gun the host', () => {
 });
 
 test('holding down any other AID key is dropped the same way, but ordinary keys still repeat', () => {
-  // Clear, PF and PA all unlock the keyboard and ask the host for a fresh
+  // Attn, PF and PA all unlock the keyboard and ask the host for a fresh
   // screen, exactly like Enter — a repeat of any of them is just as capable
   // of leaving a host like TSO keyboard-locked on a blank screen.
   assert.equal(mapKey(key({ key: 'Escape', code: 'Escape', repeat: true })), null);
   assert.equal(mapKey(key({ key: 'F3', code: 'F3', repeat: true })), null);
   assert.equal(mapKey(key({ key: '1', code: 'Digit1', ctrlKey: true, repeat: true })), null);
 
-  assert.deepEqual(mapKey(key({ key: 'Escape', code: 'Escape' })), { kind: 'action', action: 'Clear', args: [] });
+  assert.deepEqual(mapKey(key({ key: 'Escape', code: 'Escape' })), { kind: 'action', action: 'Attn', args: [] });
 
   // Cursor movement and editing keys are not AIDs, so the OS's normal
   // key-repeat behaviour must keep working for them.

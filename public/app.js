@@ -440,6 +440,10 @@ function handleServerMessage(message) {
     ensureTerminal(message.cols, message.rows + 1);
     return;
   }
+  if (message.type === 'fieldContent') {
+    navigator.clipboard.writeText(message.text);
+    return;
+  }
   if (message.type === 'status') {
     settings.connected = message.connection !== 'not-connected';
     // A real 3270 swaps the solid block cursor for an underline in insert
@@ -484,6 +488,21 @@ screenEl.addEventListener('keydown', (event) => {
   // A keystroke aimed at the live host is also the operator saying "I've seen
   // it", exactly how a real 3270 clears an operator-error condition.
   clearError();
+
+  // Ctrl+C is copy, not a 3270 action: with a selection, copy that; with none,
+  // copy whatever is in the field the cursor sits in (the server decides that
+  // last part — it is the only side that knows where fields are).
+  if (event.ctrlKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === 'c') {
+    event.preventDefault();
+    event.stopPropagation();
+    if (terminal !== null && terminal.hasSelection()) {
+      navigator.clipboard.writeText(terminal.getSelection());
+    } else {
+      send({ type: 'copyField' });
+    }
+    return;
+  }
+
   const mapped = mapKey(event);
   if (mapped === null) return;
   event.preventDefault();

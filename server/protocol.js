@@ -14,7 +14,8 @@ import { AppError } from './errors.js';
  * @typedef {{ type: 'model', model: number }} ModelMessage
  * @typedef {{ type: 'refresh' }} RefreshMessage
  * @typedef {{ type: 'hostColors', enabled: boolean }} HostColorsMessage
- * @typedef {ActionMessage | TextMessage | ConnectMessage | DisconnectMessage | ModelMessage | RefreshMessage | HostColorsMessage} ClientMessage
+ * @typedef {{ type: 'copyField' }} CopyFieldMessage
+ * @typedef {ActionMessage | TextMessage | ConnectMessage | DisconnectMessage | ModelMessage | RefreshMessage | HostColorsMessage | CopyFieldMessage} ClientMessage
  *
  * @typedef {object} HelloMessage
  * @property {'hello'} type
@@ -51,7 +52,15 @@ import { AppError } from './errors.js';
  * @property {string} code
  * @property {string} message
  *
- * @typedef {HelloMessage | ScreenMessage | StatusMessage | ErrorMessage} ServerMessage
+ * Answers a `copyField` request; the browser writes it straight to the
+ * clipboard. There is no message for a refused request (no field under the
+ * cursor, or a protected one) — the browser's clipboard is simply left alone.
+ *
+ * @typedef {object} FieldContentMessage
+ * @property {'fieldContent'} type
+ * @property {string} text
+ *
+ * @typedef {HelloMessage | ScreenMessage | StatusMessage | ErrorMessage | FieldContentMessage} ServerMessage
  */
 
 /**
@@ -134,6 +143,8 @@ export function parseClientMessage(raw) {
   // The settings page draws over the terminal, so the browser needs a way to
   // ask for the host screen back when it closes.
   if (type === 'refresh') return { type: 'refresh' };
+
+  if (type === 'copyField') return { type: 'copyField' };
 
   if (type === 'model') {
     const model = message['model'];

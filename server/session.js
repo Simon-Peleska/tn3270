@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { B3270 } from './b3270.js';
+import { editableFieldText } from './readbuffer.js';
 import { ScreenModel } from './screen.js';
 import { OiaModel } from './oia.js';
 import { fullRepaint, delta } from './vt.js';
@@ -70,6 +71,13 @@ export class Session {
     this.idleTimer = null;
     /** @type {(() => void) | null} Called when the session tears itself down. */
     this.onClosed = null;
+    /**
+     * `copyField` requests waiting on a `ReadBuffer` result, keyed by the
+     * r-tag `runActions` handed back. Everything else that runs an action
+     * never looks at its result, so this is the only bookkeeping needed.
+     * @type {Map<string, Viewer>}
+     */
+    this.pendingFieldReads = new Map();
 
     /** @type {() => void} */
     let announce = () => {};
@@ -243,6 +251,17 @@ export class Session {
     }
     if (kind === 'run-result') {
       const result = /** @type {import('./b3270.js').RunResultIndication} */ (body);
+      const tag = result['r-tag'];
+      const waitingViewer = tag !== undefined ? this.pendingFieldReads.get(tag) : undefined;
+      if (waitingViewer !== undefined) {
+        this.pendingFieldReads.delete(/** @type {string} */ (tag));
+        // Not in a field, or the field is protected: there is nothing to copy,
+        // and that is routine enough (every Ctrl+C outside a field lands here)
+        // that it must not surface as an error toast.
+        const text = result.success ? editableFieldText(result.text ?? []) : null;
+        if (text !== null) waitingViewer.sendMessage({ type: 'fieldContent', text });
+        return;
+      }
       if (!result.success) {
         const text = (result.text ?? []).join(' ');
         this.log.warn('action failed', { tag: result['r-tag'] ?? '', text });
@@ -432,6 +451,11 @@ export class Session {
       case 'model':
         this.setModel(message.model);
         return;
+      case 'copyField': {
+        const tag = this.b3270.runActions([{ action: 'ReadBuffer', args: ['Ascii', 'Field'] }]);
+        this.pendingFieldReads.set(tag, viewer);
+        return;
+      }
     }
   }
 
