@@ -3,8 +3,10 @@ import { mapKey } from '/keymap.js';
 import { SettingsPage } from '/settings.js';
 import { loadSettings, saveSettings } from '/store.js';
 import { installBoxSelection } from '/box-select.js';
+import { installCursorGlyph } from '/cursor-glyph.js';
 
 installBoxSelection();
+installCursorGlyph();
 
 /**
  * The browser side is deliberately thin: it renders VT bytes the server sends

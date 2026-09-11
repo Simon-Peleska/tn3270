@@ -19,6 +19,7 @@
       "/vendor/dist/ghostty-web.js": ["node_modules/ghostty-web/dist/index.d.ts"],
       "/keymap.js": ["public/keymap.js"],
       "/box-select.js": ["public/box-select.js"],
+      "/cursor-glyph.js": ["public/cursor-glyph.js"],
       "/settings.js": ["public/settings.js"],
       "/store.js": ["public/store.js"]
     }
