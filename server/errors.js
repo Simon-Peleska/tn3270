@@ -33,11 +33,13 @@ export const ERRORS = Object.freeze({
   E4002: 'WebSocket message had an unknown type',
   E4003: 'Input rejected: viewer is an observer',
   E4004: 'WebSocket closed unexpectedly',
+  E4005: 'Pasted text is too large to type into a screen',
 
   E5001: 'Terminal renderer failed to initialise',
   E5002: 'WebSocket connection to the server failed',
   E5003: 'Settings could not be read from the browser database',
   E5004: 'Settings could not be saved to the browser database',
+  E5005: 'Clipboard could not be read for a Shift+Insert paste',
 
   E6001: 'Static file not found',
   E6002: 'HTTP request failed',

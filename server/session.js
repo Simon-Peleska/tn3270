@@ -490,6 +490,15 @@ export class Session {
           this.b3270.runActions([{ action: 'String', args: [message.value] }]);
         }
         return;
+      case 'paste': {
+        // Not String: PasteString is what x3270 itself uses for a paste, so a
+        // newline moves to the next input field instead of sending Enter, and a
+        // backslash is a backslash rather than the start of an escape. It takes
+        // its text hex-encoded.
+        const hex = Buffer.from(message.text, 'utf8').toString('hex');
+        if (hex !== '') this.b3270.runActions([{ action: 'PasteString', args: [hex] }]);
+        return;
+      }
       case 'connect':
         // A configured host is never sent to the browser, so a page that cannot
         // see it asks to connect without naming one.

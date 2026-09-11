@@ -89,13 +89,14 @@ Printable characters are sent as text. Everything else:
 | Backspace, Delete | Backspace, Delete |
 | Arrows, Home, End | Up, Down, Left, Right, Home, End |
 | Insert | ToggleInsert |
-| Esc | Clear |
+| Ctrl-V, Shift-Insert | paste the clipboard into the screen |
+| Esc | Attn |
 | F1–F12 | PF1–PF12 |
 | Shift-F1–F12 | PF13–PF24 |
 | Ctrl-1 / Ctrl-2 / Ctrl-3 | PA1 / PA2 / PA3 |
 | Ctrl-R | Reset |
 | Ctrl-A | Attn |
-| Ctrl-C | Clear |
+| Ctrl-C | copy the selection, or the field under the cursor |
 | Ctrl-E | EraseEOF |
 | Ctrl-U | EraseInput |
 | Ctrl-D | Dup |
@@ -104,6 +105,14 @@ Printable characters are sent as text. Everything else:
 
 Alt and Meta combinations are left to the browser. There is no local echo: what
 appears on screen is what the host put there.
+
+A paste is typed into the screen with b3270's `PasteString`, not `String`: a
+newline moves to the next line of input instead of sending Enter, and a
+backslash is a backslash rather than the start of an escape. Ctrl-V arrives as a
+browser paste event carrying the text; Shift-Insert does not, so it reads the
+clipboard itself, which the browser asks the user's permission for. A paste of
+more than 16384 characters is refused with `E4005` — b3270 types it one
+character at a time, so a stray copy of a log file would block the session.
 
 ### Action allow-list
 
@@ -135,6 +144,7 @@ terminal.
 
 ```jsonc
 {"type":"text","value":"abc"}
+{"type":"paste","text":"one\ntwo"}
 {"type":"action","action":"PF","args":["3"]}
 {"type":"connect","host":"mainframe:23"}
 {"type":"disconnect"}

@@ -29,6 +29,7 @@ const PLAIN_KEYS = Object.freeze({
   ArrowRight: { action: 'Right' },
   Home: { action: 'Home' },
   End: { action: 'End' },
+  // Shift+Insert is paste, handled before mapKey ever sees it.
   Insert: { action: 'ToggleInsert' },
   // Not Clear: menu-driven CICS/IMS applications commonly bind Attn to "back
   // to the menu", and that is what operators actually expect Escape to do.

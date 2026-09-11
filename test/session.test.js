@@ -344,6 +344,25 @@ test('clicking a cell moves the cursor there', async (t) => {
   assert.equal(session.screen.cursor.col, 11);
 });
 
+test('pasted text is typed literally, backslashes and all', async (t) => {
+  // String() reads a backslash as the start of an escape — "\b" is a backspace
+  // — so a paste that went through it would silently lose characters the
+  // operator copied. PasteString treats the whole thing as text.
+  const fixture = await startTracedSession('test/traces/reverse.trc');
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  await settle(session);
+
+  const controller = collectingViewer('controller');
+  session.attach(controller);
+  const before = session.screen.cursor.col;
+
+  session.handleClientMessage(controller, { type: 'paste', text: 'a\\b' });
+  await settle(session);
+
+  assert.equal(session.screen.cursor.col, before + 3);
+});
+
 test('a b3270 resource set in the config reaches the emulator', async (t) => {
   // oversize is the cheapest resource to observe: b3270 answers it in the
   // screen-mode indication, which is the same path the browser sees.

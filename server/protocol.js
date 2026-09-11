@@ -9,6 +9,7 @@ import { AppError } from './errors.js';
  *
  * @typedef {{ type: 'action', action: string, args?: string[] }} ActionMessage
  * @typedef {{ type: 'text', value: string }} TextMessage
+ * @typedef {{ type: 'paste', text: string }} PasteMessage
  * @typedef {{ type: 'connect', host: string | null }} ConnectMessage
  * @typedef {{ type: 'disconnect' }} DisconnectMessage
  * @typedef {{ type: 'model', model: number }} ModelMessage
@@ -16,7 +17,7 @@ import { AppError } from './errors.js';
  * @typedef {{ type: 'hostColors', enabled: boolean }} HostColorsMessage
  * @typedef {{ type: 'copyField' }} CopyFieldMessage
  * @typedef {{ type: 'fieldColor', color: string | null }} FieldColorMessage
- * @typedef {ActionMessage | TextMessage | ConnectMessage | DisconnectMessage | ModelMessage | RefreshMessage | HostColorsMessage | CopyFieldMessage | FieldColorMessage} ClientMessage
+ * @typedef {ActionMessage | TextMessage | PasteMessage | ConnectMessage | DisconnectMessage | ModelMessage | RefreshMessage | HostColorsMessage | CopyFieldMessage | FieldColorMessage} ClientMessage
  *
  * @typedef {object} HelloMessage
  * @property {'hello'} type
@@ -120,6 +121,16 @@ export function parseClientMessage(raw) {
     const value = message['value'];
     if (typeof value !== 'string') throw new AppError('E4002', 'text.value must be a string');
     return { type: 'text', value };
+  }
+
+  // A paste is one keystroke for the user but arbitrarily much data for b3270,
+  // which types it a character at a time. A screenful of a model 5 is 3564
+  // characters; anything past a few of those is a mistake, not a paste.
+  if (type === 'paste') {
+    const text = message['text'];
+    if (typeof text !== 'string') throw new AppError('E4002', 'paste.text must be a string');
+    if (text.length > 16384) throw new AppError('E4005', `paste of ${text.length} characters is too large`);
+    return { type: 'paste', text };
   }
 
   if (type === 'connect') {

@@ -115,6 +115,7 @@ test('well-formed client messages are parsed', () => {
     type: 'action', action: 'PF', args: ['3'],
   });
   assert.deepEqual(parseClientMessage('{"type":"text","value":"abc"}'), { type: 'text', value: 'abc' });
+  assert.deepEqual(parseClientMessage('{"type":"paste","text":"a\\nb"}'), { type: 'paste', text: 'a\nb' });
   assert.deepEqual(parseClientMessage('{"type":"disconnect"}'), { type: 'disconnect' });
   assert.deepEqual(parseClientMessage('{"type":"model","model":4}'), { type: 'model', model: 4 });
   assert.deepEqual(parseClientMessage('{"type":"connect","host":"mainframe:23"}'), {
@@ -134,6 +135,16 @@ test('only the four real 3270 models may be asked for', () => {
       return true;
     }, `model ${String(model)} must be refused`);
   }
+});
+
+test('a paste far larger than a screen is refused', () => {
+  // b3270 types a paste one character at a time, so a stray copy of a log file
+  // would keep the session busy for minutes.
+  assert.throws(() => parseClientMessage(JSON.stringify({ type: 'paste', text: 'x'.repeat(16385) })), (err) => {
+    assert.ok(err instanceof AppError);
+    assert.equal(err.code, 'E4005');
+    return true;
+  });
 });
 
 test('an action outside the allow-list never reaches b3270', () => {

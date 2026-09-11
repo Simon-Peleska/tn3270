@@ -270,6 +270,14 @@ function applyTheme(theme) {
   screenEl.style.background = theme.colors['background'] ?? '#000000';
   created.options.theme = theme.colors;
   created.reset();
+  // reset() frees the WASM terminal and builds a new one, but the selection
+  // manager holds its own reference and is never told. Copying then reads
+  // freed memory, and once the screen grows — a host switching to the
+  // alternate screen, say — the dead terminal still has the old, smaller grid,
+  // so anything outside it silently copies as nothing.
+  const selection = created['selectionManager'];
+  const wasmTerm = created.wasmTerm;
+  if (selection !== undefined && wasmTerm !== undefined) selection['wasmTerm'] = wasmTerm;
   renderer.resize(created.cols, created.rows);
   if (created.wasmTerm !== undefined) renderer.render(created.wasmTerm, true);
 }
@@ -515,6 +523,21 @@ screenEl.addEventListener('keydown', (event) => {
     return;
   }
 
+  // Shift+Insert is paste everywhere else in the world, but the browser only
+  // turns Ctrl+V into a paste event — this one arrives as an ordinary key, so
+  // the clipboard has to be read directly, which Chrome asks permission for
+  // once. Ctrl+V is the way in that never needs it.
+  if (event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && event.key === 'Insert') {
+    event.preventDefault();
+    event.stopPropagation();
+    navigator.clipboard.readText().then((text) => {
+      if (text !== '') send({ type: 'paste', text });
+    }).catch((cause) => {
+      showError('E5005', `The clipboard could not be read; Ctrl+V pastes without asking: ${String(cause)}`);
+    });
+    return;
+  }
+
   const mapped = mapKey(event);
   if (mapped === null) return;
   event.preventDefault();
@@ -522,6 +545,19 @@ screenEl.addEventListener('keydown', (event) => {
 
   if (mapped.kind === 'text') send({ type: 'text', value: mapped.value });
   else send({ type: 'action', action: mapped.action, args: mapped.args });
+}, true);
+
+// Ctrl+V and the right-click menu arrive as one event carrying the text, which
+// needs no clipboard permission — unlike reading it ourselves. Capture, because
+// ghostty puts its own paste handler on the hidden textarea and stops the event
+// there, where it would be dropped: ghostty is a renderer here, it has no host.
+screenEl.addEventListener('paste', (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  if (settings.open) return;
+  clearError();
+  const text = event.clipboardData?.getData('text/plain') ?? '';
+  if (text !== '') send({ type: 'paste', text });
 }, true);
 
 screenEl.addEventListener('click', (event) => {
