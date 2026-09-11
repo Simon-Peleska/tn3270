@@ -57,11 +57,13 @@ function hexToRgb(hex) {
 const SETTINGS_BUTTON_LABEL = '[Settings]';
 
 /**
- * @returns {string} VT bytes painting the button over the start of the OIA
- *   row, reverse-themed so it reads as clickable against plain status text.
- *   Cursor position is saved and restored around the paint (`ESC 7`/`ESC 8`)
- *   so redrawing this on every host update never steals the real cursor from
- *   whatever field the host put it in.
+ * @returns {string} VT bytes painting the button over the end of the OIA row,
+ *   just past the cursor position, reverse-themed so it reads as clickable
+ *   against plain status text. The server lays the status line out narrow
+ *   enough to leave these columns free (see oia.js). Cursor position is saved
+ *   and restored around the paint (`ESC 7`/`ESC 8`) so redrawing this on every
+ *   host update never steals the real cursor from whatever field the host put
+ *   it in.
  */
 function settingsButtonBytes() {
   if (terminal === null) return '';
@@ -69,7 +71,8 @@ function settingsButtonBytes() {
   const [br, bg, bb] = hexToRgb(colors['foreground'] ?? '#00ff00');
   const [fr, fg, fb] = hexToRgb(colors['background'] ?? '#000000');
   const row = terminal.rows;
-  return `\x1b7\x1b[${row};1H\x1b[0;1;38;2;${fr};${fg};${fb};48;2;${br};${bg};${bb}m${SETTINGS_BUTTON_LABEL}\x1b[0m\x1b8`;
+  const col = terminal.cols - SETTINGS_BUTTON_LABEL.length + 1;
+  return `\x1b7\x1b[${row};${col}H\x1b[0;1;38;2;${fr};${fg};${fb};48;2;${br};${bg};${bb}m${SETTINGS_BUTTON_LABEL}\x1b[0m\x1b8`;
 }
 
 /**
@@ -516,7 +519,7 @@ screenEl.addEventListener('click', (event) => {
   screenEl.focus();
   if (settings.open || terminal === null) return;
   const cell = cellAt(event);
-  if (cell !== null && cell.row === terminal.rows - 1 && cell.col < SETTINGS_BUTTON_LABEL.length) {
+  if (cell !== null && cell.row === terminal.rows - 1 && cell.col >= terminal.cols - SETTINGS_BUTTON_LABEL.length) {
     settings.toggle();
   }
 });

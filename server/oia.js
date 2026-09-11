@@ -27,6 +27,14 @@ const LOCK_TEXT = Object.freeze({
 });
 
 /**
+ * Columns held clear at the right-hand end of the line. The browser paints its
+ * settings button over them (SETTINGS_BUTTON_LABEL in public/app.js is exactly
+ * one narrower, so a space is left between the button and the status text) and
+ * nothing the operator needs ever ends up underneath it.
+ */
+const SETTINGS_BUTTON_COLUMNS = 11;
+
+/**
  * @typedef {object} OiaSnapshot
  * @property {string} connection
  * @property {string} lock
@@ -94,14 +102,16 @@ export class OiaModel {
   }
 
   /**
-   * Lay the status line out over the full screen width:
-   * connection on the left, lock state in the middle, cursor position right.
+   * Lay the status line out: connection on the left, lock state in the middle,
+   * cursor position right — all of it squeezed into the width the settings
+   * button leaves over, so the two never overlap.
    *
    * @param {number} cols
    * @param {import('./screen.js').Cursor} cursor
    * @returns {string} exactly `cols` characters
    */
   render(cols, cursor) {
+    const width = Math.max(0, cols - SETTINGS_BUTTON_COLUMNS);
     const left = this.connected ? (this.host ?? 'connected') : this.connectionState;
     const lock = this.keyboardLocked ? (LOCK_TEXT[this.lock] ?? `X ${this.lock}`) : '';
     const flags = [this.insert ? 'Insert' : '', this.typeahead ? 'TA' : ''].filter(Boolean).join(' ');
@@ -110,18 +120,18 @@ export class OiaModel {
     const right = [flags, position].filter(Boolean).join('  ');
     const middle = lock;
 
-    let line = left.slice(0, cols);
+    let line = left.slice(0, width);
     // Centre the lock message when there is room, otherwise just append it.
-    const centreStart = Math.max(line.length + 2, Math.floor((cols - middle.length) / 2));
-    if (middle && centreStart + middle.length <= cols - right.length - 2) {
+    const centreStart = Math.max(line.length + 2, Math.floor((width - middle.length) / 2));
+    if (middle && centreStart + middle.length <= width - right.length - 2) {
       line = line.padEnd(centreStart, ' ') + middle;
     } else if (middle) {
       line = `${line}  ${middle}`;
     }
 
-    if (right.length + 1 <= cols) {
-      line = line.slice(0, cols - right.length - 1).padEnd(cols - right.length, ' ') + right;
+    if (right.length + 1 <= width) {
+      line = line.slice(0, width - right.length - 1).padEnd(width - right.length, ' ') + right;
     }
-    return line.slice(0, cols).padEnd(cols, ' ');
+    return line.slice(0, width).padEnd(cols, ' ');
   }
 }
