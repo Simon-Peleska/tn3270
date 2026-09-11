@@ -69,15 +69,23 @@ export const THEMES = Object.freeze([
   } },
   // Gruvbox's own background ramp is bg0 (default bg) through bg4; bg1 is
   // what Gruvbox itself uses for a highlighted line or block.
+  //
+  // The dark variants take Gruvbox's *bright* palette for the plain slots
+  // rather than its muted one. A shell mostly writes in its foreground colour
+  // and reaches for a palette slot to make one word stand out; a 3270 paints
+  // whole screens out of these slots, green above all (it is the default
+  // foreground), and the muted set is too dim to read that way. Slot 9 keeps
+  // Gruvbox's real orange, because that slot is the host colour named
+  // "orange" and bright red is already slot 1.
   { name: 'Gruvbox Dark', colors: {
     background: '#282828', foreground: '#ebdbb2', cursor: '#ebdbb2', cursorAccent: '#282828', selectionBackground: '#ebdbb2', selectionForeground: '#282828', field: '#3c3836',
-    black: '#282828', red: '#cc241d', green: '#98971a', yellow: '#d79921', blue: '#458588', magenta: '#b16286', cyan: '#689d6a', white: '#a89984',
-    brightBlack: '#928374', brightRed: '#fb4934', brightGreen: '#b8bb26', brightYellow: '#fabd2f', brightBlue: '#83a598', brightMagenta: '#d3869b', brightCyan: '#8ec07c', brightWhite: '#ebdbb2',
+    black: '#282828', red: '#fb4934', green: '#b8bb26', yellow: '#fabd2f', blue: '#83a598', magenta: '#d3869b', cyan: '#8ec07c', white: '#ebdbb2',
+    brightBlack: '#928374', brightRed: '#fe8019', brightGreen: '#b8bb26', brightYellow: '#fabd2f', brightBlue: '#83a598', brightMagenta: '#d3869b', brightCyan: '#8ec07c', brightWhite: '#ebdbb2',
   } },
   { name: 'Gruvbox Dark Hard', colors: {
     background: '#1d2021', foreground: '#ebdbb2', cursor: '#ebdbb2', cursorAccent: '#1d2021', selectionBackground: '#ebdbb2', selectionForeground: '#1d2021', field: '#282828',
-    black: '#1d2021', red: '#cc241d', green: '#98971a', yellow: '#d79921', blue: '#458588', magenta: '#b16286', cyan: '#689d6a', white: '#a89984',
-    brightBlack: '#928374', brightRed: '#fb4934', brightGreen: '#b8bb26', brightYellow: '#fabd2f', brightBlue: '#83a598', brightMagenta: '#d3869b', brightCyan: '#8ec07c', brightWhite: '#ebdbb2',
+    black: '#1d2021', red: '#fb4934', green: '#b8bb26', yellow: '#fabd2f', blue: '#83a598', magenta: '#d3869b', cyan: '#8ec07c', white: '#ebdbb2',
+    brightBlack: '#928374', brightRed: '#fe8019', brightGreen: '#b8bb26', brightYellow: '#fabd2f', brightBlue: '#83a598', brightMagenta: '#d3869b', brightCyan: '#8ec07c', brightWhite: '#ebdbb2',
   } },
   { name: 'Gruvbox Light', colors: {
     background: '#fbf1c7', foreground: '#3c3836', cursor: '#3c3836', cursorAccent: '#fbf1c7', selectionBackground: '#3c3836', selectionForeground: '#fbf1c7', field: '#ebdbb2',
