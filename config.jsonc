@@ -32,7 +32,11 @@
     // full when a resource needs a different qualifier.
     "settings": {
       // "codePage": "german",
-      // "oversize": "132x43",
+
+      // Columns x rows, both at least the model's own size. Setting this makes
+      // b3270 negotiate as IBM-DYNAMIC and let the host pick the screen size.
+      "oversize": "160x62",
+
       // "monoCase": true,
       // "typeahead": false,
       // "verifyHostCert": true,
