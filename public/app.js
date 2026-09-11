@@ -258,6 +258,10 @@ function applyTheme(theme) {
   const renderer = created?.renderer;
   if (created === null || renderer === undefined) return;
 
+  // The server paints the typeable fields, so it has to be told which colour
+  // this theme wants them; it repaints in answer.
+  send({ type: 'fieldColor', color: theme.colors['field'] ?? null });
+
   renderer.setTheme(theme.colors);
   // The page around the grid is part of the picture: a black frame around an
   // amber screen looks like a bug rather than a theme.
@@ -370,8 +374,11 @@ function connectSocket(sessionId) {
   // Passed on the URL, not a follow-up message, so the very first repaint the
   // server sends already matches the saved preference instead of flashing
   // host colours for one frame.
-  const hostColors = settings.hostColors ? '' : '?hostColors=0';
-  const ws = new WebSocket(`${scheme}://${location.host}/ws/${sessionId}${hostColors}`);
+  const query = new URLSearchParams();
+  if (!settings.hostColors) query.set('hostColors', '0');
+  const field = settings.theme().colors['field'];
+  if (field !== undefined) query.set('fieldColor', field);
+  const ws = new WebSocket(`${scheme}://${location.host}/ws/${sessionId}?${query}`);
   ws.binaryType = 'arraybuffer';
   socket = ws;
 

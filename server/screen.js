@@ -11,6 +11,9 @@ import { AppError } from './errors.js';
  * @property {string | null} fg Host colour name, or null for the screen default.
  * @property {string | null} bg
  * @property {string | null} gr Comma-separated graphic rendition, or null.
+ * @property {boolean} editable Whether this cell sits in an unprotected field.
+ *   Not from the screen indications — b3270 does not put field boundaries in
+ *   them — but from a ReadBuffer the session asks for; see applyFields.
  */
 
 /**
@@ -22,7 +25,7 @@ import { AppError } from './errors.js';
 
 /** @returns {Cell} */
 function blankCell() {
-  return { ch: ' ', fg: null, bg: null, gr: null };
+  return { ch: ' ', fg: null, bg: null, gr: null, editable: false };
 }
 
 export class ScreenModel {
@@ -102,9 +105,28 @@ export class ScreenModel {
       cell.fg = null;
       cell.bg = null;
       cell.gr = null;
+      cell.editable = false;
     }
     this.cursor = { row: 0, col: 0, enabled: this.cursor.enabled };
     this.markAllDirty();
+  }
+
+  /**
+   * Replace the "can the operator type here" map wholesale, marking as dirty
+   * only the rows it actually changed — the host rewrites the screen far more
+   * often than it rearranges its fields.
+   *
+   * @param {boolean[]} editable row-major, as {@link import('./readbuffer.js').fieldMap} returns
+   * @returns {void}
+   */
+  applyFields(editable) {
+    for (let i = 0; i < this.cells.length; i++) {
+      const cell = this.cells[i];
+      const next = editable[i] ?? false;
+      if (cell === undefined || cell.editable === next) continue;
+      cell.editable = next;
+      this.dirtyRows.add(Math.floor(i / this.cols));
+    }
   }
 
   /**

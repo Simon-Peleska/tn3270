@@ -19,10 +19,13 @@ const ESC = '\x1b';
  * @property {Record<string, string>} colors the six terminal-chrome colours
  *   (background, foreground, cursor, ...), the sixteen standard ANSI slots
  *   (black..brightWhite), all passed straight to ghostty's renderer, plus
- *   `field`: this settings page's own colour for an editable value's block,
- *   picked by hand from each theme's real palette (Gruvbox's `bg1`, Solarized's
- *   `base02`, ...) rather than computed, because a flat brightness blend looks
- *   right on some themes and grey on others. Ghostty ignores the extra key.
+ *   `field`: the colour of a field you can type into, both on this settings
+ *   page and — the server is told it, and paints them — on the host screen.
+ *   Picked by hand from each theme's real palette (Gruvbox's `bg1`, Nord's
+ *   `nord2`, ...) rather than computed, because a flat brightness blend looks
+ *   right on some themes and grey on others. It has to stand out against
+ *   `background`, which this page draws on, *and* against `black`, which is
+ *   where a host's default background lands. Ghostty ignores the extra key.
  */
 
 /**
@@ -50,10 +53,12 @@ export const THEMES = Object.freeze([
     black: '#000000', red: '#cd3131', green: '#0dbc79', yellow: '#e5e510', blue: '#2472c8', magenta: '#bc3fbc', cyan: '#11a8cd', white: '#e5e5e5',
     brightBlack: '#666666', brightRed: '#f14c4c', brightGreen: '#23d18b', brightYellow: '#f5f543', brightBlue: '#3b8eea', brightMagenta: '#d670d6', brightCyan: '#29b8db', brightWhite: '#ffffff',
   } },
-  // Solarized names its own background shades base03 (default bg) through
-  // base01; base02 is its documented "background highlights" tone.
+  // Solarized's own "background highlights" tone, base02, is already spoken for
+  // as this palette's black, and the next shade up (base01) is a text colour
+  // far too bright to fill a field with — so the field colour is the one value
+  // here that is a lift of base02 rather than a shade Solarized names itself.
   { name: 'Solarized Dark', colors: {
-    background: '#002b36', foreground: '#93a1a1', cursor: '#93a1a1', cursorAccent: '#002b36', selectionBackground: '#93a1a1', selectionForeground: '#002b36', field: '#073642',
+    background: '#002b36', foreground: '#93a1a1', cursor: '#93a1a1', cursorAccent: '#002b36', selectionBackground: '#93a1a1', selectionForeground: '#002b36', field: '#0f4a58',
     black: '#073642', red: '#dc322f', green: '#859900', yellow: '#b58900', blue: '#268bd2', magenta: '#d33682', cyan: '#2aa198', white: '#eee8d5',
     brightBlack: '#002b36', brightRed: '#cb4b16', brightGreen: '#586e75', brightYellow: '#657b83', brightBlue: '#839496', brightMagenta: '#6c71c4', brightCyan: '#93a1a1', brightWhite: '#fdf6e3',
   } },
@@ -85,12 +90,12 @@ export const THEMES = Object.freeze([
     brightBlack: '#6272a4', brightRed: '#ff6e6e', brightGreen: '#69ff94', brightYellow: '#ffffa5', brightBlue: '#d6acff', brightMagenta: '#ff92df', brightCyan: '#a4ffff', brightWhite: '#ffffff',
   } },
   { name: 'Nord', colors: {
-    background: '#2e3440', foreground: '#d8dee9', cursor: '#d8dee9', cursorAccent: '#2e3440', selectionBackground: '#d8dee9', selectionForeground: '#2e3440', field: '#3b4252',
+    background: '#2e3440', foreground: '#d8dee9', cursor: '#d8dee9', cursorAccent: '#2e3440', selectionBackground: '#d8dee9', selectionForeground: '#2e3440', field: '#434c5e',
     black: '#3b4252', red: '#bf616a', green: '#a3be8c', yellow: '#ebcb8b', blue: '#81a1c1', magenta: '#b48ead', cyan: '#88c0d0', white: '#e5e9f0',
     brightBlack: '#4c566a', brightRed: '#bf616a', brightGreen: '#a3be8c', brightYellow: '#ebcb8b', brightBlue: '#81a1c1', brightMagenta: '#b48ead', brightCyan: '#8fbcbb', brightWhite: '#eceff4',
   } },
   { name: 'Catppuccin Mocha', colors: {
-    background: '#1e1e2e', foreground: '#cdd6f4', cursor: '#cdd6f4', cursorAccent: '#1e1e2e', selectionBackground: '#cdd6f4', selectionForeground: '#1e1e2e', field: '#313244',
+    background: '#1e1e2e', foreground: '#cdd6f4', cursor: '#cdd6f4', cursorAccent: '#1e1e2e', selectionBackground: '#cdd6f4', selectionForeground: '#1e1e2e', field: '#585b70',
     black: '#45475a', red: '#f38ba8', green: '#a6e3a1', yellow: '#f9e2af', blue: '#89b4fa', magenta: '#f5c2e7', cyan: '#94e2d5', white: '#bac2de',
     brightBlack: '#585b70', brightRed: '#f38ba8', brightGreen: '#a6e3a1', brightYellow: '#f9e2af', brightBlue: '#89b4fa', brightMagenta: '#f5c2e7', brightCyan: '#94e2d5', brightWhite: '#a6adc8',
   } },

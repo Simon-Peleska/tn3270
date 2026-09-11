@@ -38,14 +38,34 @@ function bgSgr(index) {
 }
 
 /**
+ * A 3270 gives the operator no hint of where the typeable fields are beyond
+ * whatever text is already sitting in them, which on an empty form is nothing
+ * at all. Tinting their background is the one thing this emulator adds to what
+ * the host asked for — and the viewer's own theme picks the colour, so it is
+ * never brighter or dimmer than the rest of the screen it sits in.
+ *
+ * @param {string | null} hex `#rrggbb`; anything else means no tint. This is
+ *   also the guard against a browser posting arbitrary bytes into a sequence
+ *   every *other* viewer of the session then receives.
+ * @returns {number[] | null} SGR parameters selecting it as a background
+ */
+export function fieldTintSgr(hex) {
+  const match = /^#([0-9a-fA-F]{6})$/.exec(hex ?? '');
+  if (match === null) return null;
+  const value = Number.parseInt(match[1], 16);
+  return [48, 2, (value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff];
+}
+
+/**
  * @param {import('./screen.js').Cell} cell
  * @param {import('./screen.js').ScreenModel} screen
  * @param {boolean} hostColors when false, no explicit colour is emitted at all
  *   and the terminal's own theme paints the cell; only graphic rendition
  *   (reverse, underline, ...) still carries meaning.
+ * @param {number[] | null} fieldTint
  * @returns {string} the SGR sequence that selects this cell's appearance
  */
-function sgrFor(cell, screen, hostColors) {
+function sgrFor(cell, screen, hostColors, fieldTint) {
   /** @type {number[]} */
   const params = [0, ...grToSgr(cell.gr)];
 
@@ -67,6 +87,11 @@ function sgrFor(cell, screen, hostColors) {
     params.push(48, 2, DEFAULT_BACKGROUND[0], DEFAULT_BACKGROUND[1], DEFAULT_BACKGROUND[2]);
   }
 
+  // Last background wins, so this goes after the host's — but only where the
+  // host did not name one itself. A field the application deliberately painted
+  // red is saying something the tint has no business overwriting.
+  if (fieldTint !== null && cell.editable && cell.bg === null) params.push(...fieldTint);
+
   return `${ESC}[${params.join(';')}m`;
 }
 
@@ -75,7 +100,7 @@ function sgrFor(cell, screen, hostColors) {
  * @returns {string} a key that is equal exactly when two cells look the same
  */
 function styleKey(cell) {
-  return `${cell.fg ?? ''}|${cell.bg ?? ''}|${cell.gr ?? ''}`;
+  return `${cell.fg ?? ''}|${cell.bg ?? ''}|${cell.gr ?? ''}|${cell.editable ? 'e' : ''}`;
 }
 
 /**
@@ -85,9 +110,10 @@ function styleKey(cell) {
  * @param {import('./screen.js').ScreenModel} screen
  * @param {number} row 0-based
  * @param {boolean} hostColors
+ * @param {number[] | null} fieldTint
  * @returns {string}
  */
-function encodeRow(screen, row, hostColors) {
+function encodeRow(screen, row, hostColors, fieldTint) {
   let out = `${ESC}[${row + 1};1H`;
   let runStyle = null;
   let runText = '';
@@ -97,7 +123,7 @@ function encodeRow(screen, row, hostColors) {
     const key = styleKey(cell);
     if (key !== runStyle) {
       if (runStyle !== null) out += runText;
-      out += sgrFor(cell, screen, hostColors);
+      out += sgrFor(cell, screen, hostColors, fieldTint);
       runStyle = key;
       runText = '';
     }
@@ -136,11 +162,13 @@ function encodeCursor(screen) {
  * @param {boolean} [hostColors] Off renders every cell in the viewer's own
  *   theme instead of the mainframe's explicit colours. Defaults to on, the
  *   real 3270's behaviour.
+ * @param {string | null} [fieldColor] see {@link fieldTintSgr}
  * @returns {string}
  */
-export function fullRepaint(screen, oiaText, hostColors = true) {
+export function fullRepaint(screen, oiaText, hostColors = true, fieldColor = null) {
+  const fieldTint = fieldTintSgr(fieldColor);
   let out = INIT_SEQUENCE;
-  for (let row = 0; row < screen.rows; row++) out += encodeRow(screen, row, hostColors);
+  for (let row = 0; row < screen.rows; row++) out += encodeRow(screen, row, hostColors, fieldTint);
   out += encodeOia(screen.rows + 1, oiaText);
   return out + encodeCursor(screen);
 }
@@ -151,14 +179,16 @@ export function fullRepaint(screen, oiaText, hostColors = true) {
  * @param {string} oiaText
  * @param {boolean} oiaChanged
  * @param {boolean} [hostColors] see {@link fullRepaint}
+ * @param {string | null} [fieldColor] see {@link fieldTintSgr}
  * @returns {string} empty when there is nothing to send
  */
-export function delta(screen, dirtyRows, oiaText, oiaChanged, hostColors = true) {
+export function delta(screen, dirtyRows, oiaText, oiaChanged, hostColors = true, fieldColor = null) {
   if (dirtyRows.length === 0 && !oiaChanged) return encodeCursor(screen);
 
+  const fieldTint = fieldTintSgr(fieldColor);
   let out = '';
   for (const row of dirtyRows) {
-    if (row >= 0 && row < screen.rows) out += encodeRow(screen, row, hostColors);
+    if (row >= 0 && row < screen.rows) out += encodeRow(screen, row, hostColors, fieldTint);
   }
   if (oiaChanged) out += encodeOia(screen.rows + 1, oiaText);
   return out + encodeCursor(screen);

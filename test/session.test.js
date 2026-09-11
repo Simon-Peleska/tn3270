@@ -364,3 +364,41 @@ test('a closed session removes itself from the registry', async () => {
   session.close();
   assert.equal(registry.list().length, 0);
 });
+
+/**
+ * Where the typeable fields are is not in b3270's screen indications, so the
+ * session has to go and read them. These check the whole round trip: a viewer
+ * says what colour it wants, the session asks b3270, and the tint comes back
+ * in the bytes — all of it against a real emulator and a real trace.
+ */
+
+test('a viewer that asked for a field colour gets the typeable fields tinted with it', async (t) => {
+  const fixture = await startTracedSession('test/traces/reverse.trc');
+  t.after(() => fixture.close());
+  const { session } = fixture;
+
+  const viewer = collectingViewer('tinted');
+  viewer.fieldColor = '#123456';
+  session.attach(viewer);
+
+  await waitUntil(() => session.screen.cells.some((cell) => cell.editable), 'the field map to be read');
+  await settle(session);
+
+  assert.ok(
+    viewer.screen.join('').includes('48;2;18;52;86'),
+    'the viewer should have been sent its own tint as a background',
+  );
+});
+
+test('a viewer that asked for no field colour is sent none, and costs no field read', async (t) => {
+  const fixture = await startTracedSession('test/traces/reverse.trc');
+  t.after(() => fixture.close());
+  const { session } = fixture;
+
+  const viewer = collectingViewer('plain');
+  session.attach(viewer);
+  await settle(session);
+
+  assert.equal(session.fieldReadTag, null, 'nobody wants the field map, so none should be in flight');
+  assert.equal(session.screen.cells.some((cell) => cell.editable), false);
+});

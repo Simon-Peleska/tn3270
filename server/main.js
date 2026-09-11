@@ -158,22 +158,26 @@ server.on('upgrade', (req, socket, head) => {
   // matches the browser's saved preference instead of flashing host colours
   // for one frame and then correcting itself.
   const hostColors = url.searchParams.get('hostColors') !== '0';
+  const requested = url.searchParams.get('fieldColor');
+  const fieldColor = requested !== null && /^#[0-9a-fA-F]{6}$/.test(requested) ? requested : null;
 
-  wss.handleUpgrade(req, socket, head, (ws) => attachViewer(session, ws, hostColors));
+  wss.handleUpgrade(req, socket, head, (ws) => attachViewer(session, ws, hostColors, fieldColor));
 });
 
 /**
  * @param {import('./session.js').Session} session
  * @param {import('ws').WebSocket} ws
  * @param {boolean} hostColors
+ * @param {string | null} fieldColor
  * @returns {void}
  */
-function attachViewer(session, ws, hostColors) {
+function attachViewer(session, ws, hostColors, fieldColor) {
   /** @type {import('./session.js').Viewer} */
   const viewer = {
     id: randomUUID().slice(0, 8),
     role: 'observer',
     hostColors,
+    fieldColor,
     // Screen output goes in binary frames, control traffic in text frames. The
     // frame type is the discriminator, so neither needs an envelope.
     sendScreen(bytes) {

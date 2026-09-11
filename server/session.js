@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { B3270 } from './b3270.js';
-import { editableFieldText } from './readbuffer.js';
+import { editableFieldText, fieldMap } from './readbuffer.js';
 import { ScreenModel } from './screen.js';
 import { OiaModel } from './oia.js';
 import { fullRepaint, delta } from './vt.js';
@@ -19,6 +19,9 @@ import { logger } from './log.js';
  * @property {boolean} hostColors Off paints every cell in this viewer's own
  *   theme instead of the mainframe's explicit colours; a purely personal
  *   display preference, not something the other viewers or the host see.
+ * @property {string | null} fieldColor `#rrggbb` to tint the background of the
+ *   fields this viewer may type into, or null to leave them alone. Personal in
+ *   the same way hostColors is, and comes from the viewer's theme.
  * @property {(bytes: string) => void} sendScreen
  * @property {(message: import('./protocol.js').ServerMessage) => void} sendMessage
  */
@@ -78,6 +81,10 @@ export class Session {
      * @type {Map<string, Viewer>}
      */
     this.pendingFieldReads = new Map();
+    /** @type {boolean} The host has redrawn since the field map was last read. */
+    this.fieldsStale = false;
+    /** @type {string | null} The r-tag of the field-map read in flight, if any. */
+    this.fieldReadTag = null;
 
     /** @type {() => void} */
     let announce = () => {};
@@ -169,6 +176,7 @@ export class Session {
 
     if (kind === 'screen') {
       this.screen.applyScreen(/** @type {import('./b3270.js').ScreenIndication} */ (body));
+      this.fieldsStale = true;
       this.scheduleFlush();
       return;
     }
@@ -185,6 +193,7 @@ export class Session {
         this.sendToAll({ type: 'screen', model: this.model, rows: this.screen.rows, cols: this.screen.cols });
         this.repaintAll();
       }
+      this.fieldsStale = true;
       this.scheduleFlush();
       return;
     }
@@ -252,6 +261,16 @@ export class Session {
     if (kind === 'run-result') {
       const result = /** @type {import('./b3270.js').RunResultIndication} */ (body);
       const tag = result['r-tag'];
+
+      if (tag !== undefined && tag === this.fieldReadTag) {
+        this.fieldReadTag = null;
+        if (result.success) {
+          this.screen.applyFields(fieldMap(result.text ?? [], this.screen.rows, this.screen.cols));
+        }
+        this.scheduleFlush();
+        return;
+      }
+
       const waitingViewer = tag !== undefined ? this.pendingFieldReads.get(tag) : undefined;
       if (waitingViewer !== undefined) {
         this.pendingFieldReads.delete(/** @type {string} */ (tag));
@@ -285,9 +304,27 @@ export class Session {
     });
   }
 
+  /** @returns {boolean} Whether anyone is actually showing the editable fields. */
+  wantsFieldMap() {
+    for (const viewer of this.viewers) {
+      if (viewer.fieldColor !== null) return true;
+    }
+    return false;
+  }
+
   /** @returns {void} */
   flush() {
     if (this.closed) return;
+
+    // Where the fields are is not in b3270's screen indications — they carry
+    // only the character, its colour and its highlighting — so it has to be
+    // asked for separately. That costs about a millisecond, but one read at a
+    // time: anything that happens while it is in flight just leaves the map
+    // stale, and the next flush picks it up.
+    if (this.fieldsStale && this.fieldReadTag === null && this.wantsFieldMap()) {
+      this.fieldsStale = false;
+      this.fieldReadTag = this.b3270.runActions([{ action: 'ReadBuffer', args: ['Ascii'] }]);
+    }
 
     const nextOia = this.oia.render(this.screen.cols, this.screen.cursor);
     const oiaChanged = nextOia !== this.oiaText;
@@ -296,20 +333,19 @@ export class Session {
     const dirtyRows = this.screen.takeDirtyRows();
     if (dirtyRows.length === 0 && !oiaChanged) return;
 
-    // Viewers may not agree on whether host colours should show, so the delta
-    // is encoded once per preference actually in use rather than once overall.
-    /** @type {string | null} */
-    let withColors = null;
-    /** @type {string | null} */
-    let withoutColors = null;
+    // Viewers may not agree on how the screen should look, so the delta is
+    // encoded once per combination of display preferences actually in use
+    // rather than once per viewer — two browsers on the same theme share one.
+    /** @type {Map<string, string>} */
+    const encoded = new Map();
     for (const viewer of this.viewers) {
-      if (viewer.hostColors) {
-        withColors ??= delta(this.screen, dirtyRows, this.oiaText, oiaChanged, true);
-        if (withColors !== '') viewer.sendScreen(withColors);
-      } else {
-        withoutColors ??= delta(this.screen, dirtyRows, this.oiaText, oiaChanged, false);
-        if (withoutColors !== '') viewer.sendScreen(withoutColors);
+      const key = `${viewer.hostColors}|${viewer.fieldColor ?? ''}`;
+      let bytes = encoded.get(key);
+      if (bytes === undefined) {
+        bytes = delta(this.screen, dirtyRows, this.oiaText, oiaChanged, viewer.hostColors, viewer.fieldColor);
+        encoded.set(key, bytes);
       }
+      if (bytes !== '') viewer.sendScreen(bytes);
     }
   }
 
@@ -331,7 +367,7 @@ export class Session {
    */
   repaint(viewer) {
     this.oiaText = this.oia.render(this.screen.cols, this.screen.cursor);
-    viewer.sendScreen(fullRepaint(this.screen, this.oiaText, viewer.hostColors));
+    viewer.sendScreen(fullRepaint(this.screen, this.oiaText, viewer.hostColors, viewer.fieldColor));
   }
 
   /**
@@ -367,6 +403,10 @@ export class Session {
     // an hour late is immediately correct.
     this.repaint(viewer);
     this.broadcastStatus();
+    // Nothing has been reading the field map while there were no viewers, or
+    // none that wanted it, so the first one to arrive has to ask for it.
+    this.fieldsStale = true;
+    this.scheduleFlush();
   }
 
   /**
@@ -410,6 +450,16 @@ export class Session {
     if (message.type === 'hostColors') {
       viewer.hostColors = message.enabled;
       this.repaint(viewer);
+      return;
+    }
+
+    // Likewise the theme's colour for a typeable field: personal, and the
+    // first viewer to ask for one is what makes the field map worth reading.
+    if (message.type === 'fieldColor') {
+      viewer.fieldColor = message.color;
+      this.fieldsStale = true;
+      this.repaint(viewer);
+      this.scheduleFlush();
       return;
     }
 

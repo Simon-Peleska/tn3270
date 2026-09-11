@@ -252,3 +252,15 @@ test('the host field is gone once connected, and the usual fields start at the t
   page.handleKey(key({ key: 'ArrowRight' }));
   assert.deepEqual(calls.themes, [THEMES[1]?.name], 'field 0 is the theme, not the host, while connected');
 });
+
+test("every theme's field colour stands out against both backgrounds it is drawn on", () => {
+  for (const theme of THEMES) {
+    const { field, background, black } = theme.colors;
+    assert.ok(field !== undefined, `${theme.name} has no field colour`);
+    // This page draws the field blocks on `background`; the server paints the
+    // host's typeable fields over `black`, where a host's default background
+    // lands. Matching either one makes the field invisible on that screen.
+    assert.notEqual(field, background, `${theme.name}'s field colour is its background`);
+    assert.notEqual(field, black, `${theme.name}'s field colour is its ANSI black`);
+  }
+});

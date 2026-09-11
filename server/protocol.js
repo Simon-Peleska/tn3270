@@ -15,7 +15,8 @@ import { AppError } from './errors.js';
  * @typedef {{ type: 'refresh' }} RefreshMessage
  * @typedef {{ type: 'hostColors', enabled: boolean }} HostColorsMessage
  * @typedef {{ type: 'copyField' }} CopyFieldMessage
- * @typedef {ActionMessage | TextMessage | ConnectMessage | DisconnectMessage | ModelMessage | RefreshMessage | HostColorsMessage | CopyFieldMessage} ClientMessage
+ * @typedef {{ type: 'fieldColor', color: string | null }} FieldColorMessage
+ * @typedef {ActionMessage | TextMessage | ConnectMessage | DisconnectMessage | ModelMessage | RefreshMessage | HostColorsMessage | CopyFieldMessage | FieldColorMessage} ClientMessage
  *
  * @typedef {object} HelloMessage
  * @property {'hello'} type
@@ -138,6 +139,18 @@ export function parseClientMessage(raw) {
     const enabled = message['enabled'];
     if (typeof enabled !== 'boolean') throw new AppError('E4002', 'hostColors.enabled must be a boolean');
     return { type: 'hostColors', enabled };
+  }
+
+  // The colour is picked by the browser's theme and then echoed back into VT
+  // bytes that every viewer of this session may receive, so the shape is
+  // checked here rather than trusted.
+  if (type === 'fieldColor') {
+    const color = message['color'];
+    if (color === null || color === undefined) return { type: 'fieldColor', color: null };
+    if (typeof color !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(color)) {
+      throw new AppError('E4002', `fieldColor.color must be #rrggbb, got ${String(color)}`);
+    }
+    return { type: 'fieldColor', color };
   }
 
   // The settings page draws over the terminal, so the browser needs a way to

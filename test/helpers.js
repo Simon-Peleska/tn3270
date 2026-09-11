@@ -37,6 +37,8 @@ export function collectingViewer(id) {
     id,
     role: 'observer',
     hostColors: true,
+    /** @type {string | null} */
+    fieldColor: null,
     /** @type {string[]} */
     screen: [],
     /** @type {import('../server/protocol.js').ServerMessage[]} */
