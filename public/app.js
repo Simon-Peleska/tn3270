@@ -528,9 +528,20 @@ screenEl.addEventListener('click', (event) => {
   screenEl.focus();
   if (settings.open || terminal === null) return;
   const cell = cellAt(event);
-  if (cell !== null && cell.row === terminal.rows - 1 && cell.col >= terminal.cols - SETTINGS_BUTTON_LABEL.length) {
+  if (cell === null) return;
+
+  if (cell.row === terminal.rows - 1 && cell.col >= terminal.cols - SETTINGS_BUTTON_LABEL.length) {
     settings.toggle();
+    return;
   }
+
+  // Clicking a cell puts the cursor there, the way every other 3270 client
+  // works. The status line under the screen is ours, not the host's, and a
+  // click that ends a drag was aiming at the selection, not at a field.
+  if (cell.row < 0 || cell.row >= terminal.rows - 1) return;
+  if (cell.col < 0 || cell.col >= terminal.cols) return;
+  if (terminal.hasSelection()) return;
+  send({ type: 'action', action: 'MoveCursor1', args: [String(cell.row + 1), String(cell.col + 1)] });
 });
 
 try {

@@ -325,6 +325,25 @@ test('a Backspace action deletes the character behind the cursor, not just moves
   assert.equal(screen.cursor.col, before + 3, 'backspacing again deletes the next character back');
 });
 
+test('clicking a cell moves the cursor there', async (t) => {
+  // The browser sends the clicked cell as 1-origin row/col, which is what
+  // MoveCursor1 takes; 0-origin would land the cursor one row and one column
+  // short of where the operator pointed.
+  const fixture = await startTracedSession('test/traces/reverse.trc');
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  await settle(session);
+
+  const controller = collectingViewer('controller');
+  session.attach(controller);
+
+  session.handleClientMessage(controller, { type: 'action', action: 'MoveCursor1', args: ['5', '12'] });
+  await settle(session);
+
+  assert.equal(session.screen.cursor.row, 4);
+  assert.equal(session.screen.cursor.col, 11);
+});
+
 test('a b3270 resource set in the config reaches the emulator', async (t) => {
   // oversize is the cheapest resource to observe: b3270 answers it in the
   // screen-mode indication, which is the same path the browser sees.

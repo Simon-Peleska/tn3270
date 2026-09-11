@@ -76,7 +76,7 @@ export const ALLOWED_ACTIONS = new Set([
   'Up', 'Down', 'Left', 'Right', 'Newline',
   'Backspace', 'Delete', 'DeleteField', 'DeleteWord', 'EraseEOF', 'EraseInput',
   'Insert', 'ToggleInsert', 'Attn', 'SysReq', 'Dup', 'FieldMark',
-  'PF', 'PA', 'CursorSelect',
+  'PF', 'PA', 'CursorSelect', 'MoveCursor1',
 ]);
 
 /**
