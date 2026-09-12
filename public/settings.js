@@ -39,13 +39,11 @@ export const THEMES = Object.freeze([
   // The same emulator with its white background turned on, which darkens every
   // colour to survive it and swaps the neutral pair: a field the host paints
   // white is the readable one and a black one disappears into the page, exactly
-  // as they do the other way round above. Its black is #0d0d0d rather than
-  // #000000 because the renderer skips a pure black fill, taking it for the
-  // cleared canvas — which on a white page leaves reverse video unpainted.
+  // as they do the other way round above.
   { name: 'Host On-Demand White', colors: {
-    background: '#ffffff', foreground: '#0d0d0d', cursor: '#0d0d0d', cursorAccent: '#ffffff', selectionBackground: '#0d0d0d', selectionForeground: '#ffffff', field: '#e6e6e6',
-    black: '#ffffff', red: '#cc0000', green: '#008000', yellow: '#8a7f00', blue: '#000099', magenta: '#7700cc', cyan: '#008080', white: '#0d0d0d',
-    brightBlack: '#666666', brightRed: '#cc6600', brightGreen: '#00a300', brightYellow: '#b38f00', brightBlue: '#0000cc', brightMagenta: '#cc00cc', brightCyan: '#00a3a3', brightWhite: '#0d0d0d',
+    background: '#ffffff', foreground: '#000000', cursor: '#000000', cursorAccent: '#ffffff', selectionBackground: '#000000', selectionForeground: '#ffffff', field: '#e6e6e6',
+    black: '#ffffff', red: '#cc0000', green: '#008000', yellow: '#8a7f00', blue: '#000099', magenta: '#7700cc', cyan: '#008080', white: '#000000',
+    brightBlack: '#666666', brightRed: '#cc6600', brightGreen: '#00a300', brightYellow: '#b38f00', brightBlue: '#0000cc', brightMagenta: '#cc00cc', brightCyan: '#00a3a3', brightWhite: '#000000',
   } },
   { name: 'Ghostty Dark', colors: {
     background: '#1e1e1e', foreground: '#d4d4d4', cursor: '#ffffff', cursorAccent: '#1e1e1e', selectionBackground: '#d4d4d4', selectionForeground: '#1e1e1e', field: '#2d2d2d',
@@ -165,6 +163,24 @@ function at(row, col) {
 }
 
 /**
+ * ghostty-web packs each theme colour into `0xRRGGBB` and reads 0 as "not set",
+ * so pure black asks for the WASM terminal's own default instead — a grey, which
+ * is what every cell the host left at the default colour then comes out as. One
+ * bit off black is the same colour to look at and is not zero.
+ *
+ * @param {Theme} theme
+ * @returns {Record<string, string>}
+ */
+export function terminalColors(theme) {
+  /** @type {Record<string, string>} */
+  const colors = {};
+  for (const [key, value] of Object.entries(theme.colors)) {
+    colors[key] = value.toLowerCase() === '#000000' ? '#010101' : value;
+  }
+  return colors;
+}
+
+/**
  * The SGR sequence selecting one pair of true colours.
  *
  * @param {string} fg `#rrggbb`
@@ -174,7 +190,10 @@ function at(row, col) {
  */
 export function paint(fg, bg, bold = false) {
   const [fr, fg2, fb] = rgb(fg);
-  const [br, bg2, bb] = rgb(bg);
+  let [br, bg2, bb] = rgb(bg);
+  // The renderer skips a (0, 0, 0) cell fill, taking it for the cleared canvas,
+  // so a bar painted pure black would show the page through it.
+  if (br === 0 && bg2 === 0 && bb === 0) [br, bg2, bb] = [1, 1, 1];
   return `${ESC}[0${bold ? ';1' : ''};38;2;${fr};${fg2};${fb};48;2;${br};${bg2};${bb}m`;
 }
 

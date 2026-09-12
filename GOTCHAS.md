@@ -97,14 +97,18 @@ Node 22 treats the argument as a file path. Use the glob: `node --test
 `tsc` only picks up `tsconfig.json` automatically. The type gate is
 `tsc -p jsconfig.json`.
 
-## A pure black cell background is never painted
+## `#000000` in a theme means "unset" to ghostty-web
 
-ghostty-web's renderer skips the fill when a cell's background comes out
-`(0, 0, 0)`, taking it for the cleared canvas. On a dark theme that is invisible
-and free; on a light one it means any cell that lands on pure black — reverse
-video, the OIA bar, a host field painted black — keeps the page underneath it
-instead. A light theme therefore uses `#0d0d0d` where it means black, which is
-what `Host On-Demand White` does.
+`parseColorToHex()` packs a colour into `0xRRGGBB` and the WASM terminal reads 0
+as "not set", so pure black — background, foreground or any of the sixteen
+slots — silently becomes ghostty's own default instead. A black-background theme
+comes up grey (`#1d1f21`) everywhere the host left the colour alone, and a
+reverse-video cell over a black foreground gets ghostty's light grey. Every
+theme is therefore passed through `terminalColors()`, which hands ghostty
+`#010101` where the theme says black. Separately, the renderer skips its fill for
+a `(0, 0, 0)` cell background, taking it for the cleared canvas, which would
+leave the bars this page paints itself see-through on a light theme — `paint()`
+shifts a pure black background by the same one bit.
 
 ## Typing into `reverse.trc` shows nothing
 

@@ -1,6 +1,6 @@
 import { init, Terminal } from '/vendor/dist/ghostty-web.js';
 import { mapKey } from '/keymap.js';
-import { ESC, SettingsPage, paint } from '/settings.js';
+import { ESC, SettingsPage, paint, terminalColors } from '/settings.js';
 import { loadSettings, saveSettings } from '/store.js';
 import { MAX_SESSIONS, SessionPrefix, paneAreas, parseSessionHash, sessionHash, switcherText } from '/sessions.js';
 import { installBoxSelection } from '/box-select.js';
@@ -320,7 +320,7 @@ function ensureTerminal(slot) {
     fontFamily: settings.font().family,
     fontSize: 15,
     scrollback: 0,
-    theme: settings.theme().colors,
+    theme: terminalColors(settings.theme()),
   });
   created.open(slot.pane);
   slot.terminal = created;
@@ -360,8 +360,9 @@ function applyTheme(theme) {
     const renderer = created?.renderer;
     if (created == null || renderer === undefined) continue;
 
-    renderer.setTheme(theme.colors);
-    created.options.theme = theme.colors;
+    const colors = terminalColors(theme);
+    renderer.setTheme(colors);
+    created.options.theme = colors;
     created.reset();
     // reset() frees the WASM terminal and builds a new one, but the selection
     // manager keeps its own reference and is never told; copying would then
