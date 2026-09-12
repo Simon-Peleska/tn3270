@@ -48,6 +48,8 @@ export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
  * @property {string} connection b3270's own word for it
  * @property {boolean} connected what that word means — decided here, so no
  *   client has to keep its own list of which states count as connected
+ * @property {boolean} touched whether input has ever been aimed at this
+ *   session, by any viewer
  * @property {string | null} host
  * @property {boolean} locked
  * @property {boolean} insert

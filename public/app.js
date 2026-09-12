@@ -30,9 +30,11 @@ const screenEl = element('screen');
 const MIN_FONT_SIZE = 6;
 const MAX_FONT_SIZE = 64;
 
-/** Exactly one narrower than SETTINGS_BUTTON_COLUMNS in server/oia.js, which
- *  holds these columns of the status line clear for it. */
-const SETTINGS_BUTTON_LABEL = '[Settings]';
+const RESET_LABEL = '[Reset]';
+const SETTINGS_LABEL = '[Settings]';
+/** Exactly one narrower than BUTTON_COLUMNS in server/oia.js, which holds these
+ *  columns of the status line clear for them. */
+const BUTTONS = `${RESET_LABEL} ${SETTINGS_LABEL}`;
 
 /** @type {{ code: string, message: string } | null} */
 let activeError = null;
@@ -72,21 +74,21 @@ function prefixBarBytes() {
 }
 
 /**
- * The only way into settings for a mouse, so it lives on the 3270's own status
- * line: the terminal is the whole UI. Every pane carries its own, so a split is
- * not a screen you have to switch away from to configure. The cursor is saved
- * and restored around the paint, or redrawing it on every host update would
- * steal the real cursor from whatever field the host put it in.
+ * The only way into settings or a refit for a mouse, so they live on the 3270's
+ * own status line: the terminal is the whole UI. Every pane carries its own, so
+ * a split is not a screen you have to switch away from to work on. The cursor is
+ * saved and restored around the paint, or redrawing it on every host update
+ * would steal the real cursor from whatever field the host put it in.
  *
  * @param {import('ghostty-web').Terminal} term
  * @returns {string}
  */
-function settingsButtonBytes(term) {
+function buttonBytes(term) {
   const colors = settings.theme().colors;
   const fg = colors['background'] ?? '#000000';
   const bg = colors['foreground'] ?? '#00ff00';
-  const col = term.cols - SETTINGS_BUTTON_LABEL.length + 1;
-  return `${ESC}7${ESC}[${term.rows};${col}H${paint(fg, bg, true)}${SETTINGS_BUTTON_LABEL}${ESC}[0m${ESC}8`;
+  const col = term.cols - BUTTONS.length + 1;
+  return `${ESC}7${ESC}[${term.rows};${col}H${paint(fg, bg, true)}${BUTTONS}${ESC}[0m${ESC}8`;
 }
 
 /**
@@ -183,6 +185,8 @@ async function createSession() {
  *   first status arrives
  * @property {boolean | null} connected the server's verdict on that state;
  *   null until the first status, so it always counts as a change
+ * @property {boolean} touched whether anyone has typed at this session — the
+ *   server's answer, since another viewer's typing counts too
  */
 
 /** @type {(SessionSlot | null)[]} */
@@ -224,7 +228,7 @@ function newSlot(id, cols = 0, rows = 0) {
   /** @type {SessionSlot} */
   const slot = {
     id, pane, terminal: null, socket: null, backoffMs: 250,
-    model: 0, oversize: '', cols, rows, connection: '', connected: null,
+    model: 0, oversize: '', cols, rows, connection: '', connected: null, touched: false,
   };
   pane.addEventListener('click', (event) => paneClicked(slot, event));
   return slot;
@@ -480,13 +484,30 @@ function paneFit(slot, fontSize) {
 }
 
 /**
- * Give a session with no host on it a screen the size of the pane it now sits
- * in, which keeps a split from being four screens of unreadable text. The size
- * is negotiated when the connection opens, so a *connected* session cannot be
- * resized without dropping and reopening it — losing the host's idea of where
- * the operator was just because the screen was split would be indefensible.
- * Those panes shrink their text instead, and the settings page refits on
- * purpose. Only a layout change calls this.
+ * Ask for this session's screen at the size of the pane it now sits in. The
+ * size is negotiated when the connection opens, so on a connected session this
+ * drops and reopens the host — the caller is the one that decides that is
+ * acceptable.
+ *
+ * @param {SessionSlot} slot
+ * @returns {void}
+ */
+function fitSession(slot) {
+  const fit = paneFit(slot, settings.fitFontSize);
+  if (fit === null) return;
+  const value = settings.fitSize(fit, slot.model);
+  if (value === slot.oversize) return;
+  sendQuietly(slot, { type: 'oversize', value });
+}
+
+/**
+ * Give every pane a screen its own size, which keeps a split from being four
+ * screens of unreadable text. Only for the sessions where that costs nothing:
+ * one with no host on it, and one nobody has typed at yet. Losing the host's
+ * idea of where the operator was just because the screen was split would be
+ * indefensible — but before they have touched it there is nothing to lose, and
+ * a pane of the wrong size is what they would have had to fix by hand anyway.
+ * A session that has been used shrinks its text instead, until [Reset].
  *
  * @returns {void}
  */
@@ -496,12 +517,8 @@ function fitIdleSessions() {
   if (settings.oversize === '') return;
   for (const index of panes) {
     const slot = sessions[index];
-    if (slot == null || slot.connection !== 'not-connected') continue;
-    const fit = paneFit(slot, settings.fitFontSize);
-    if (fit === null) continue;
-    const value = settings.fitSize(fit, slot.model);
-    if (value === slot.oversize) continue;
-    sendQuietly(slot, { type: 'oversize', value });
+    if (slot == null || (slot.connected === true && slot.touched)) continue;
+    fitSession(slot);
   }
 }
 
@@ -516,13 +533,21 @@ function fitPanes() {
 // The screen box is sized by the page, so its own resizes are the signal to
 // refit. Coalesced into a frame because a drag fires this continuously.
 let fitScheduled = false;
+/** @type {ReturnType<typeof setTimeout> | undefined} */
+let settleTimer;
 new ResizeObserver(() => {
-  if (fitScheduled) return;
-  fitScheduled = true;
-  requestAnimationFrame(() => {
-    fitScheduled = false;
-    fitPanes();
-  });
+  if (!fitScheduled) {
+    fitScheduled = true;
+    requestAnimationFrame(() => {
+      fitScheduled = false;
+      fitPanes();
+    });
+  }
+  // Asking for a bigger screen costs a round trip to the host, so the sessions
+  // that can be resized wait for the window to stop moving first. The ones that
+  // cannot have already rescaled their text in the frame above.
+  clearTimeout(settleTimer);
+  settleTimer = setTimeout(fitIdleSessions, 400);
 }).observe(screenEl);
 
 /**
@@ -598,7 +623,7 @@ function connectSocket(slot) {
     const covered = settings.open && slot === activeSession();
     if (term === null || slot.pane.hidden || covered) return;
     term.write(new Uint8Array(event.data));
-    term.write(settingsButtonBytes(term));
+    term.write(buttonBytes(term));
     if (slot === activeSession()) writeOverlays();
   });
 
@@ -666,6 +691,7 @@ function handleServerMessage(slot, message) {
     const changed = slot.connected !== message.connected;
     slot.connection = message.connection;
     slot.connected = message.connected;
+    slot.touched = message.touched;
     // A real 3270 swaps the block cursor for an underline in insert mode, and
     // insert is the session's own state, not just the focused pane's.
     slot.terminal?.renderer?.setCursorStyle(message.insert ? 'underline' : 'block');
@@ -937,6 +963,23 @@ screenEl.addEventListener('paste', (event) => {
 }, true);
 
 /**
+ * The operator asking for this session's screen back at the size of its pane,
+ * whatever it has been through — the way out of a pane that was resized under a
+ * connection this side would not touch on its own. It costs the host connection,
+ * which is why it is a button and not something that happens behind their back.
+ *
+ * @param {SessionSlot} slot
+ * @returns {void}
+ */
+function resetSize(slot) {
+  if (settings.oversize === '') {
+    showError('E5007', 'Turn "Fit to window" on in the settings first.');
+    return;
+  }
+  fitSession(slot);
+}
+
+/**
  * A click is both "type here" and, in a split, "type at this session from now
  * on" — the pane is the only thing a mouse can aim at.
  *
@@ -955,8 +998,12 @@ function paneClicked(slot, event) {
   const row = Math.floor((event.clientY - rect.top) / renderer.charHeight);
   const col = Math.floor((event.clientX - rect.left) / renderer.charWidth);
 
-  if (row === term.rows - 1 && col >= term.cols - SETTINGS_BUTTON_LABEL.length) {
+  if (row === term.rows - 1 && col >= term.cols - SETTINGS_LABEL.length) {
     settings.toggle();
+    return;
+  }
+  if (row === term.rows - 1 && col >= term.cols - BUTTONS.length) {
+    resetSize(slot);
     return;
   }
 

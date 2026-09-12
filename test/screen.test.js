@@ -130,6 +130,19 @@ test('the OIA line is exactly as wide as the screen and shows the lock', () => {
   assert.equal(oia.keyboardLocked, true);
 });
 
+test('the OIA leaves the browser its columns at the right, however full it is', () => {
+  const oia = new OiaModel();
+  oia.applyConnection({ state: 'connected-tn3270e', host: 'a-very-long-hostname.example.com:992' });
+  oia.applyOia({ field: 'lock', value: 'system' });
+  oia.applyOia({ field: 'insert', value: true });
+  oia.applyOia({ field: 'typeahead', value: true });
+
+  // '[Reset] [Settings]' is 18 columns, painted flush right by public/app.js
+  // over a status line the server never writes into.
+  const text = oia.render(80, { row: 23, col: 79, enabled: true });
+  assert.equal(text.slice(-19), ' '.repeat(19), `the OIA wrote into the buttons: ${JSON.stringify(text)}`);
+});
+
 test('the OIA reflects the connection state', () => {
   const oia = new OiaModel();
   assert.equal(oia.connected, false);

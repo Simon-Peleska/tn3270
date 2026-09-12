@@ -89,6 +89,13 @@ the host.
   changing either the model or the fit **drops the connection and reopens the
   same host**. The settings page says so before it does it. Observers cannot
   change the size (`E3006`).
+- A pane that changes size — a split, or the window being dragged — refits the
+  sessions that have nothing to lose by it: one with no host on it, and one
+  **nobody has typed at yet**. A session the operator has used keeps its screen
+  and shrinks its text instead, because dropping a live connection to make a
+  pane tidier is not a trade the page may make on its own. Typing counts from
+  any viewer, and a session never becomes untouched again. A window drag waits
+  until the window stops moving; a split refits at once.
 - A size change resizes the grid for **every** viewer, not just the one who
   asked.
 - The grid is drawn as large as the page allows without being cut off. Rows and
@@ -106,6 +113,14 @@ the host.
   it is rendered faithfully: `X Not Connected`, `X SYSTEM`, `X Wait`,
   `X Protected`, `X Numeric`, `X Operator Error`, and so on. An unrecognised lock
   value is shown verbatim as `X <value>` rather than swallowed.
+- The right of the OIA row holds `[Reset] [Settings]`, painted by the browser
+  over columns the server never writes into. Every pane carries its own, so a
+  split is not a screen you have to switch away from to work on. **Reset** asks
+  for this session's screen back at the size of its pane, whatever it has been
+  through — the way out of a pane resized under a connection the page would not
+  touch on its own — and costs the host connection, the same as any other size
+  change. With fit to window off there is no size to reset to, and it says so
+  (`E5007`).
 - Colours are the sixteen 3270 host colours, rendered as truecolor from x3270's
   own palette. If the host reports no colour (a 3278), the screen is rendered
   monochrome green rather than being given invented colours.
@@ -284,6 +299,7 @@ browser, `E6xxx` server transport.
 | `E5004` | Settings could not be saved to the browser database |
 | `E5005` | Clipboard could not be read for a Shift+Insert paste |
 | `E5006` | Another terminal session could not be opened |
+| `E5007` | Screen cannot be refitted while fit to window is off |
 | `E6001` | Static file not found |
 | `E6002` | WebSocket upgrade path is not a session |
 | `E6003` | WebSocket closed unexpectedly |
@@ -298,7 +314,7 @@ navigated away from.
 ```bash
 nix develop            # node, typescript, and an X11-free b3270
 npm install
-npm test               # 118 tests: unit, integration, and the WASM round-trip
+npm test               # 120 tests: unit, integration, and the WASM round-trip
 npm run typecheck      # tsc --strict over JSDoc; the "no any" gate
 npm start              # http://127.0.0.1:8017
 ```

@@ -55,6 +55,10 @@ export class Session {
 
     /** @type {string | null} The host as typed, kept for reconnecting. */
     this.lastHost = null;
+    /** @type {boolean} Whether input has ever been aimed at this session. Set
+     * here rather than in a browser because any viewer's typing counts, and
+     * never cleared: a session the operator has used stays used. */
+    this.touched = false;
     /** @type {number | null} A model waiting for the connection to go away. */
     this.pendingModel = null;
     /** @type {string} `<cols>x<rows>`, or '' for the model's own size. b3270
@@ -521,6 +525,14 @@ export class Session {
       return;
     }
 
+    // Input, as opposed to connecting or changing a setting. The browsers are
+    // told the moment it first happens, because it is what stops them resizing
+    // this session out from under the operator.
+    if (!this.touched && (message.type === 'action' || message.type === 'text' || message.type === 'paste')) {
+      this.touched = true;
+      this.broadcastStatus();
+    }
+
     switch (message.type) {
       case 'action':
         // b3270's Backspace is a real 3270 keyboard's: a non-destructive move
@@ -573,6 +585,7 @@ export class Session {
         type: 'status',
         connection: this.oia.connectionState,
         connected: this.oia.connected,
+        touched: this.touched,
         host: this.oia.host,
         locked: this.oia.keyboardLocked,
         insert: this.oia.insert,

@@ -25,9 +25,9 @@ const LOCK_TEXT = Object.freeze({
   'scrolled': 'X Scrolled',
 });
 
-/** Held clear at the right for the browser's settings button, which is one
- *  narrower (SETTINGS_BUTTON_LABEL in public/app.js) so a space is left. */
-const SETTINGS_BUTTON_COLUMNS = 11;
+/** Held clear at the right for the browser's own buttons, which are one column
+ *  narrower together (BUTTONS in public/app.js) so a space is left. */
+const BUTTON_COLUMNS = 19;
 
 export class OiaModel {
   constructor() {
@@ -90,14 +90,14 @@ export class OiaModel {
 
   /**
    * Connection left, lock state middle, cursor position right — inside the width
-   * the settings button leaves over, so the two never overlap.
+   * the buttons leave over, so the two never overlap.
    *
    * @param {number} cols
    * @param {import('./screen.js').Cursor} cursor
    * @returns {string} exactly `cols` characters
    */
   render(cols, cursor) {
-    const width = Math.max(0, cols - SETTINGS_BUTTON_COLUMNS);
+    const width = Math.max(0, cols - BUTTON_COLUMNS);
     const left = this.connected ? (this.host ?? 'connected') : this.connectionState;
     const lock = this.keyboardLocked ? (LOCK_TEXT[this.lock] ?? `X ${this.lock}`) : '';
     const flags = [this.insert ? 'Insert' : '', this.typeahead ? 'TA' : ''].filter(Boolean).join(' ');

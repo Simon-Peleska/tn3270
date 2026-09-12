@@ -111,6 +111,31 @@ test('an observer cannot type, and is told why in place', async (t) => {
   assert.equal(last?.type === 'error' ? last.code : '', 'E3006');
 });
 
+test('a session counts as untouched until someone types at it', async (t) => {
+  const session = new Session(testConfig());
+  t.after(() => session.close());
+  await session.ready;
+
+  const viewer = collectingViewer('viewer');
+  session.attach(viewer);
+
+  /** @returns {boolean} what the last status told the browsers */
+  const reported = () => {
+    const status = viewer.messages.filter((m) => m.type === 'status').at(-1);
+    return status?.type === 'status' ? status.touched : false;
+  };
+
+  // Connecting and configuring are not using the session; they are what the
+  // settings page does before the operator has done anything at all.
+  session.handleClientMessage(viewer, { type: 'hostColors', enabled: false });
+  session.handleClientMessage(viewer, { type: 'oversize', value: '100x40' });
+  assert.equal(session.touched, false);
+
+  session.handleClientMessage(viewer, { type: 'text', value: 'abc' });
+  assert.equal(session.touched, true);
+  assert.equal(reported(), true, 'the browsers must be told the moment it changes');
+});
+
 test('control passes on when the controller leaves', async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
