@@ -1,5 +1,5 @@
-/* Vendored so the settings page can offer them to any browser rather than only
-   to machines that happen to have them installed. See public/fonts/NOTICE. */
+/* Vendored so any browser gets them, not only machines that have them
+   installed. See public/fonts/NOTICE. */
 @font-face {
   font-family: 'IBM 3270';
   src: url('/fonts/3270-Regular.ttf') format('truetype');
@@ -55,14 +55,10 @@ button:hover {
   background: #313644;
 }
 
-/* The grid is sized to whatever is left over here, so this box must not grow
-   with its content: min-height 0 lets it shrink, overflow hidden keeps a grid
-   that is briefly too large from bouncing the layout.
-
-   Always two columns by two rows, however many sessions are on screen: a pane
-   is given the cells it spans (see paneAreas() in sessions.js), so changing the
-   layout moves the boxes the terminals already live in instead of rebuilding
-   them. */
+/* Must not grow with its content: min-height 0 lets it shrink, overflow hidden
+   keeps a briefly too-large grid from bouncing the layout. Always 2x2 however
+   many sessions are shown — a pane gets the cells it spans (paneAreas() in
+   sessions.js), so a layout change moves boxes instead of rebuilding them. */
 .screen {
   flex: 1;
   min-height: 0;
@@ -83,8 +79,7 @@ button:hover {
   align-items: center;
 }
 
-/* display:flex above would otherwise win over the hidden attribute's own
-   display:none, and a hidden pane would still take up its cells. */
+/* display:flex above would beat the hidden attribute's own display:none. */
 .pane[hidden] {
   display: none;
 }

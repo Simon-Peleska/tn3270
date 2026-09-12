@@ -57,7 +57,7 @@ controller. This is safe — all input is serialised through b3270's single stdi
 but two people typing into one screen is inherently chaotic, so it is off by
 default.
 
-An observer that tries to type gets error `E4003` in the page; nothing is sent to
+An observer that tries to type gets error `E3006` in the page; nothing is sent to
 the host.
 
 ## 4. The screen
@@ -72,7 +72,7 @@ the host.
   and negotiates as IBM-DYNAMIC. Turning it off puts the model's own size back.
   The screen is never smaller than the model — b3270 refuses that and quietly
   hands back the model's own screen — and never more than the 16383 cells b3270
-  has a buffer for (`E4006`); a model change that the standing size no longer fits
+  has a buffer for (`E4004`); a model change that the standing size no longer fits
   turns the oversize off rather than failing.
 - A pane too narrow for the model's 80 columns asks for them anyway, drawn in
   text small enough to hold them, and asks for the extra rows that smaller text
@@ -88,7 +88,7 @@ the host.
 - The size is negotiated with the host once, when the connection is opened, so
   changing either the model or the fit **drops the connection and reopens the
   same host**. The settings page says so before it does it. Observers cannot
-  change the size (`E4003`).
+  change the size (`E3006`).
 - A size change resizes the grid for **every** viewer, not just the one who
   asked.
 - The grid is drawn as large as the page allows without being cut off. Rows and
@@ -174,7 +174,7 @@ newline moves to the next line of input instead of sending Enter, and a
 backslash is a backslash rather than the start of an escape. Ctrl-V arrives as a
 browser paste event carrying the text; Shift-Insert does not, so it reads the
 clipboard itself, which the browser asks the user's permission for. A paste of
-more than 16384 characters is refused with `E4005` — b3270 types it one
+more than 16384 characters is refused with `E4003` — b3270 types it one
 character at a time, so a stray copy of a log file would block the session.
 
 ### Action allow-list
@@ -195,7 +195,7 @@ terminal. Text frames are JSON:
 {"type":"hello","sessionId":"…","rows":43,"cols":80,"model":4,"oversize":"","models":[{"model":2,"rows":24,"columns":80}],"role":"controller","viewers":1}
 {"type":"screen","model":2,"rows":24,"cols":80,"oversize":""}
 {"type":"status","connection":"connected-tn3270e","host":"mainframe:23","locked":false,"role":"controller","viewers":2}
-{"type":"error","code":"E4003","message":"This session is being controlled by someone else."}
+{"type":"error","code":"E3006","message":"This session is being controlled by someone else."}
 ```
 
 `screen` is sent whenever the grid changes size, always immediately before the
@@ -250,7 +250,10 @@ Errors are JSON: `{"code":"E6001","message":"…"}` with a matching status.
 ## 8. Error codes
 
 Every code is fixed for the lifetime of the project and appears both in the log
-and in the page.
+and in the page. The blocks are subsystems, and a code belongs to the subsystem
+that decides it is an error rather than to the file that throws it: `E1xxx`
+config, `E2xxx` b3270, `E3xxx` session, `E4xxx` client messages, `E5xxx`
+browser, `E6xxx` server transport.
 
 | Code | Meaning |
 |---|---|
@@ -258,6 +261,7 @@ and in the page.
 | `E1002` | Config file is not valid JSONC |
 | `E1003` | Config value has the wrong type |
 | `E1004` | Config value is out of range |
+| `E1005` | Config value is not a usable b3270 resource name |
 | `E2001` | b3270 could not be spawned |
 | `E2002` | b3270 exited unexpectedly |
 | `E2003` | b3270 emitted a line that is not valid JSON |
@@ -269,13 +273,11 @@ and in the page.
 | `E3003` | Session has too many viewers |
 | `E3004` | Screen indication referenced a cell outside the screen |
 | `E3005` | Host address is not allowed by config |
-| `E3006` | *Retired* — the screen model can now be changed under a connection |
+| `E3006` | Input rejected: viewer is an observer |
 | `E4001` | WebSocket message was not valid JSON |
 | `E4002` | WebSocket message had an unknown type |
-| `E4003` | Input rejected: viewer is an observer |
-| `E4004` | WebSocket closed unexpectedly |
-| `E4005` | Pasted text is too large to type into a screen |
-| `E4006` | Oversize screen has more cells than b3270 can hold |
+| `E4003` | Pasted text is too large to type into a screen |
+| `E4004` | Oversize screen has more cells than b3270 can hold |
 | `E5001` | Terminal renderer failed to initialise |
 | `E5002` | WebSocket connection to the server failed |
 | `E5003` | Settings could not be read from the browser database |
@@ -283,8 +285,8 @@ and in the page.
 | `E5005` | Clipboard could not be read for a Shift+Insert paste |
 | `E5006` | Another terminal session could not be opened |
 | `E6001` | Static file not found |
-| `E6002` | HTTP request failed |
-| `E6003` | WebSocket upgrade path is not a session |
+| `E6002` | WebSocket upgrade path is not a session |
+| `E6003` | WebSocket closed unexpectedly |
 | `E6004` | Server could not start |
 | `E0000` | An error with no code of its own; see the log |
 
@@ -296,7 +298,7 @@ navigated away from.
 ```bash
 nix develop            # node, typescript, and an X11-free b3270
 npm install
-npm test               # 115 tests: unit, integration, and the WASM round-trip
+npm test               # 118 tests: unit, integration, and the WASM round-trip
 npm run typecheck      # tsc --strict over JSDoc; the "no any" gate
 npm start              # http://127.0.0.1:8017
 ```

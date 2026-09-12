@@ -1,12 +1,11 @@
 /**
  * The Operator Information Area: the status line a real 3270 draws below the
- * screen. It is the only place a user can see *why* the keyboard is dead, so
- * it is worth rendering faithfully rather than dropping.
+ * screen, and the only place a user can see *why* the keyboard is dead.
  */
 
 /**
- * b3270's `lock` values, in the wording a 3270 operator expects. Unknown values
- * still show up (as "X <value>") rather than being swallowed.
+ * b3270's `lock` values in the wording an operator expects. Anything else still
+ * shows, as "X <value>".
  * @type {Readonly<Record<string, string>>}
  */
 const LOCK_TEXT = Object.freeze({
@@ -26,21 +25,9 @@ const LOCK_TEXT = Object.freeze({
   'scrolled': 'X Scrolled',
 });
 
-/**
- * Columns held clear at the right-hand end of the line. The browser paints its
- * settings button over them (SETTINGS_BUTTON_LABEL in public/app.js is exactly
- * one narrower, so a space is left between the button and the status text) and
- * nothing the operator needs ever ends up underneath it.
- */
+/** Held clear at the right for the browser's settings button, which is one
+ *  narrower (SETTINGS_BUTTON_LABEL in public/app.js) so a space is left. */
 const SETTINGS_BUTTON_COLUMNS = 11;
-
-/**
- * @typedef {object} OiaSnapshot
- * @property {string} connection
- * @property {string} lock
- * @property {boolean} insert
- * @property {string} lu
- */
 
 export class OiaModel {
   constructor() {
@@ -96,15 +83,14 @@ export class OiaModel {
     return this.connectionState.startsWith('connected');
   }
 
-  /** @returns {boolean} Whether the keyboard is locked and input is pointless. */
+  /** @returns {boolean} Locked means input is pointless. */
   get keyboardLocked() {
     return this.lock !== '' && this.lock !== 'unlocked';
   }
 
   /**
-   * Lay the status line out: connection on the left, lock state in the middle,
-   * cursor position right — all of it squeezed into the width the settings
-   * button leaves over, so the two never overlap.
+   * Connection left, lock state middle, cursor position right — inside the width
+   * the settings button leaves over, so the two never overlap.
    *
    * @param {number} cols
    * @param {import('./screen.js').Cursor} cursor

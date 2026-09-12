@@ -9,30 +9,26 @@ import { isHostAllowed } from './protocol.js';
 import { logger } from './log.js';
 
 /**
- * A viewer is anything that can be sent screen bytes and control messages.
- * Keeping it to this two-method shape is what lets the tests attach a plain
- * collector object instead of a real WebSocket.
+ * Anything that can be sent screen bytes and control messages. Two methods, so
+ * a test can attach a plain collector instead of a real WebSocket.
  *
  * @typedef {object} Viewer
  * @property {string} id
  * @property {'controller' | 'observer'} role
  * @property {boolean} hostColors Off paints every cell in this viewer's own
- *   theme instead of the mainframe's explicit colours; a purely personal
- *   display preference, not something the other viewers or the host see.
- * @property {string | null} fieldColor `#rrggbb` to tint the background of the
- *   fields this viewer may type into, or null to leave them alone. Personal in
- *   the same way hostColors is, and comes from the viewer's theme.
+ *   theme instead of the mainframe's colours. Personal: neither the host nor
+ *   the other viewers see it.
+ * @property {string | null} fieldColor `#rrggbb` tinting the fields this viewer
+ *   may type into, or null. Personal in the same way, and comes from its theme.
  * @property {(bytes: string) => void} sendScreen
  * @property {(message: import('./protocol.js').ServerMessage) => void} sendMessage
  */
 
 /**
- * One host session: a b3270 process, the authoritative screen, and the set of
- * viewers watching it.
- *
- * The session deliberately outlives its viewers. A browser reload, a dropped
- * connection or a second person opening the same URL are all just attach and
- * detach; the host connection is never disturbed.
+ * One host session: a b3270 process, the authoritative screen, and the viewers
+ * watching it. It outlives them all — a reload, a dropped connection or a
+ * second person on the same URL are attach and detach, and never disturb the
+ * host connection.
  */
 export class Session {
   /**
@@ -50,28 +46,26 @@ export class Session {
     this.screen = new ScreenModel();
     /** @type {OiaModel} */
     this.oia = new OiaModel();
-    /** @type {number} The 3270 model in force; b3270 confirms it in screen-mode. */
+    /** @type {number} b3270 confirms this in screen-mode. */
     this.model = config.b3270.model;
     /** @type {import('./b3270.js').ModelInfo[]} The models this b3270 offers. */
     this.models = [];
     /** @type {Set<Viewer>} */
     this.viewers = new Set();
 
-    /** @type {string | null} The host string as typed, kept for reconnecting. */
+    /** @type {string | null} The host as typed, kept for reconnecting. */
     this.lastHost = null;
     /** @type {number | null} A model waiting for the connection to go away. */
     this.pendingModel = null;
-    /** @type {string} The oversize screen in force, `<cols>x<rows>`, or '' for
-     * the model's own size. b3270 takes it as a resource, which the config may
-     * write bare or qualified. */
+    /** @type {string} `<cols>x<rows>`, or '' for the model's own size. b3270
+     * takes it as a resource, which the config may write bare or qualified. */
     this.oversize = config.b3270.settings['oversize']
       ?? config.b3270.settings['b3270.oversize']
       ?? config.b3270.settings['*oversize']
       ?? '';
     /** @type {string | null} An oversize waiting for the connection to go away. */
     this.pendingOversize = null;
-    /** @type {string} What b3270 has actually been told, which is not always
-     * what was asked for — see sizeActions(). */
+    /** @type {string} What b3270 was told, not always what was asked for. */
     this.b3270Oversize = this.oversize;
 
     /** @type {string} */
@@ -86,27 +80,19 @@ export class Session {
     this.idleTimer = null;
     /** @type {(() => void) | null} Called when the session tears itself down. */
     this.onClosed = null;
-    /**
-     * `copyField` requests waiting on a `ReadBuffer` result, keyed by the
-     * r-tag `runActions` handed back. Everything else that runs an action
-     * never looks at its result, so this is the only bookkeeping needed.
-     * @type {Map<string, Viewer>}
-     */
+    /** @type {Map<string, Viewer>} `copyField` requests waiting on a
+     * `ReadBuffer` result, by the r-tag `runActions` handed back. */
     this.pendingFieldReads = new Map();
-    /** @type {boolean} The host has redrawn since the field map was last read. */
+    /** @type {boolean} The host redrew since the field map was read. */
     this.fieldsStale = false;
-    /** @type {string | null} The r-tag of the field-map read in flight, if any. */
+    /** @type {string | null} The r-tag of the field-map read in flight. */
     this.fieldReadTag = null;
 
     /** @type {() => void} */
     let announce = () => {};
-    /**
-     * b3270 reports its real geometry and its model list a few milliseconds
-     * after it is spawned. Anything that describes the session to a browser has
-     * to wait for that, or it hands out the placeholder 24x80 and an empty model
-     * picker.
-     * @type {Promise<void>}
-     */
+    /** @type {Promise<void>} b3270 reports its real geometry and model list a
+     * few milliseconds after it is spawned; describing the session to a browser
+     * before that hands out a placeholder 24x80 and an empty model picker. */
     this.ready = new Promise((resolve) => {
       announce = resolve;
     });
@@ -126,8 +112,8 @@ export class Session {
     });
 
     // Nothing may wait forever on an emulator that never speaks.
-    const readyTimer = setTimeout(() => this.markReady(), 5000);
-    readyTimer.unref();
+    this.readyTimer = setTimeout(() => this.markReady(), 5000);
+    this.readyTimer.unref();
 
     this.startIdleTimer();
   }
@@ -143,8 +129,7 @@ export class Session {
     }
     this.log.info('connecting', { host });
     // b3270 reports the host back without its port, so reopening from what it
-    // says would silently land on telnet 23. Remember what was actually asked
-    // for instead.
+    // says would silently land on telnet 23.
     this.lastHost = host;
     this.b3270.open(host);
   }
@@ -156,11 +141,9 @@ export class Session {
   }
 
   /**
-   * Change the grid size. The 3270 model is negotiated with the host when the
-   * connection is made, so b3270 refuses this outright while a connection is
-   * open ("Cannot change model or oversize while connected"). The connection is
-   * therefore dropped, the model set, and the same host reopened — which is the
-   * restart the browser warns about before asking for this.
+   * The model is negotiated when the connection is made, so b3270 refuses to
+   * change it while one is open. Drop, set, reopen — the restart the browser
+   * warns about before asking for this.
    *
    * @param {number} model
    * @returns {void}
@@ -180,11 +163,9 @@ export class Session {
   }
 
   /**
-   * Ask for a screen bigger than the model's own. This is what makes b3270
-   * negotiate as IBM-DYNAMIC, and like the model it is settled when the
-   * connection is made, so it changes the same way: drop, set, reopen. b3270
-   * can defer it instead (`Set("-defer", "oversize", ...)`) but the host would
-   * go on using the old size until the connection dropped anyway.
+   * A screen bigger than the model's own, which is what makes b3270 negotiate
+   * as IBM-DYNAMIC. Settled when the connection is made, like the model, so it
+   * changes the same way.
    *
    * @param {string} value `<cols>x<rows>`, or '' for the model's own size
    * @returns {void}
@@ -204,20 +185,14 @@ export class Session {
   }
 
   /**
-   * The one action that puts b3270 on a given model at the size asked for.
+   * The one action that puts b3270 on a model at the size asked for. They are a
+   * single setting to the emulator — an oversize is only legal against the model
+   * it was measured for — so both always go in one `Set()`, which reconciles
+   * them before applying either.
    *
-   * Model and oversize are a single setting to the emulator: an oversize is
-   * only legal against the model it was measured for, and setting the model
-   * alone with an oversize left over from a bigger one fails outright
-   * ("Invalid oversize rows (24): Less than model 4 rows (43)"). b3270 takes
-   * both in one `Set()`, which reconciles them before applying either, so
-   * that is how they are always sent.
-   *
-   * Turning the oversize off is asked for as the model's own size rather than
-   * as nothing, because b3270 4.5 clears the resource but forgets to resize
-   * the screen: Common/model.c only calls `set_rows_cols()` for a non-empty
-   * oversize. Fixed after 4.5ga5; the same size either way, so this costs
-   * nothing but the terminal still negotiating as IBM-DYNAMIC.
+   * Turning the oversize off asks for the model's own size rather than nothing:
+   * b3270 4.5 clears the resource but forgets to resize the screen (Common/
+   * model.c only calls `set_rows_cols()` for a non-empty oversize).
    *
    * @param {number} model
    * @returns {Array<{ action: string, args?: string[] }>}
@@ -230,8 +205,7 @@ export class Session {
 
     let oversize = this.oversize;
     if (!fits) {
-      // A screen the new model has outgrown is no screen size at all: say so,
-      // rather than leaving the browser showing a number nothing is using.
+      // A screen the new model has outgrown is no screen size at all.
       oversize = this.b3270Oversize === '' || info === undefined ? '' : `${info.columns}x${info.rows}`;
       this.oversize = '';
     }
@@ -260,38 +234,27 @@ export class Session {
     }
     if (kind === 'erase') {
       // A host that never writes to the alternate screen only ever uses the
-      // model's default size (usually 24x80), reported here as logical-rows /
-      // logical-columns rather than in a screen-mode indication. The browser
-      // needs to hear about that too, or it keeps showing the full model size
-      // with dead space below or beside what the application actually draws.
-      const before = `${this.screen.rows}x${this.screen.cols}`;
+      // model's default size, reported here rather than in a screen-mode; the
+      // browser needs it too, or it shows the full model with dead space in it.
+      const before = this.screenSize();
       this.screen.applyErase(/** @type {import('./b3270.js').EraseIndication} */ (body));
-      if (`${this.screen.rows}x${this.screen.cols}` !== before) {
-        this.log.info('screen size changed', { rows: this.screen.rows, cols: this.screen.cols });
-        this.sendToAll({ type: 'screen', model: this.model, rows: this.screen.rows, cols: this.screen.cols, oversize: this.oversize });
-        this.repaintAll();
-      }
+      this.announceResize(before);
       this.fieldsStale = true;
       this.scheduleFlush();
       return;
     }
     if (kind === 'screen-mode') {
       const mode = /** @type {import('./b3270.js').ScreenModeIndication} */ (body);
-      const before = `${this.screen.rows}x${this.screen.cols}`;
+      const before = this.screenSize();
       this.model = mode.model;
       this.screen.applyScreenMode(mode);
-      if (`${this.screen.rows}x${this.screen.cols}` !== before) {
-        this.log.info('screen mode changed', { model: this.model, rows: this.screen.rows, cols: this.screen.cols });
-        this.sendToAll({ type: 'screen', model: this.model, rows: this.screen.rows, cols: this.screen.cols, oversize: this.oversize });
-        this.repaintAll();
-      }
+      this.announceResize(before);
       this.markReady();
       this.scheduleFlush();
       return;
     }
     if (kind === 'models') {
-      // b3270 lists what it supports at startup, so the browser's picker is the
-      // emulator's own answer rather than a second copy of the table.
+      // The browser's picker is the emulator's own answer, not a second copy.
       if (Array.isArray(body)) {
         this.models = /** @type {import('./b3270.js').ModelInfo[]} */ (body);
       }
@@ -300,9 +263,8 @@ export class Session {
     if (kind === 'oia') {
       const wasInsert = this.oia.insert;
       this.oia.applyOia(/** @type {import('./b3270.js').OiaIndication} */ (body));
-      // The cursor shape (block vs. underline) is the only way a user can tell
-      // insert mode is on, so it needs its own status push rather than waiting
-      // for a connection-state change.
+      // The cursor shape is the only sign of insert mode, so it gets its own
+      // push rather than waiting for a connection-state change.
       if (this.oia.insert !== wasInsert) this.broadcastStatus();
       this.scheduleFlush();
       return;
@@ -356,9 +318,7 @@ export class Session {
       const waitingViewer = tag !== undefined ? this.pendingFieldReads.get(tag) : undefined;
       if (waitingViewer !== undefined) {
         this.pendingFieldReads.delete(/** @type {string} */ (tag));
-        // Not in a field, or the field is protected: there is nothing to copy,
-        // and that is routine enough (every Ctrl+C outside a field lands here)
-        // that it must not surface as an error toast.
+        // Nothing to copy is routine — every Ctrl+C outside a field lands here.
         const text = result.success ? editableFieldText(result.text ?? []) : null;
         if (text !== null) waitingViewer.sendMessage({ type: 'fieldContent', text });
         return;
@@ -373,8 +333,8 @@ export class Session {
   }
 
   /**
-   * Indications arrive in bursts. Coalescing a burst into a single frame keeps
-   * the wire quiet and means viewers never see a half-applied screen.
+   * Indications arrive in bursts; one frame per burst keeps the wire quiet and
+   * means no viewer ever sees a half-applied screen.
    * @returns {void}
    */
   scheduleFlush() {
@@ -386,7 +346,7 @@ export class Session {
     });
   }
 
-  /** @returns {boolean} Whether anyone is actually showing the editable fields. */
+  /** @returns {boolean} Whether anyone is showing the editable fields. */
   wantsFieldMap() {
     for (const viewer of this.viewers) {
       if (viewer.fieldColor !== null) return true;
@@ -398,11 +358,9 @@ export class Session {
   flush() {
     if (this.closed) return;
 
-    // Where the fields are is not in b3270's screen indications — they carry
-    // only the character, its colour and its highlighting — so it has to be
-    // asked for separately. That costs about a millisecond, but one read at a
-    // time: anything that happens while it is in flight just leaves the map
-    // stale, and the next flush picks it up.
+    // b3270's screen indications carry the character, its colour and its
+    // highlighting, but not where the fields are, so that is asked for
+    // separately — one read at a time, and the next flush picks up the rest.
     if (this.fieldsStale && this.fieldReadTag === null && this.wantsFieldMap()) {
       this.fieldsStale = false;
       this.fieldReadTag = this.b3270.runActions([{ action: 'ReadBuffer', args: ['Ascii'] }]);
@@ -415,9 +373,8 @@ export class Session {
     const dirtyRows = this.screen.takeDirtyRows();
     if (dirtyRows.length === 0 && !oiaChanged) return;
 
-    // Viewers may not agree on how the screen should look, so the delta is
-    // encoded once per combination of display preferences actually in use
-    // rather than once per viewer — two browsers on the same theme share one.
+    // Encoded once per combination of display preferences in use, not once per
+    // viewer: two browsers on the same theme share one.
     /** @type {Map<string, string>} */
     const encoded = new Map();
     for (const viewer of this.viewers) {
@@ -431,21 +388,34 @@ export class Session {
     }
   }
 
-  /**
-   * Send every viewer a complete picture. Used when the screen is resized, when
-   * there is no sensible delta to compute.
-   * @returns {void}
-   */
-  repaintAll() {
-    this.oiaText = this.oia.render(this.screen.cols, this.screen.cursor);
-    this.screen.takeDirtyRows();
-    for (const viewer of this.viewers) this.repaint(viewer);
+  /** @returns {string} `<rows>x<cols>`, for spotting a resize. */
+  screenSize() {
+    return `${this.screen.rows}x${this.screen.cols}`;
   }
 
   /**
-   * Send one viewer a complete picture, without disturbing the others.
-   * @param {Viewer} viewer
+   * @param {string} before what screenSize() said before the indication
    * @returns {void}
+   */
+  announceResize(before) {
+    if (this.screenSize() === before) return;
+    this.log.info('screen size changed', { model: this.model, rows: this.screen.rows, cols: this.screen.cols });
+    this.sendToAll({ type: 'screen', model: this.model, rows: this.screen.rows, cols: this.screen.cols, oversize: this.oversize });
+    this.repaintAll();
+  }
+
+  /** @returns {void} Everyone gets a complete picture; there is no delta. */
+  repaintAll() {
+    this.oiaText = this.oia.render(this.screen.cols, this.screen.cursor);
+    this.screen.takeDirtyRows();
+    for (const viewer of this.viewers) {
+      viewer.sendScreen(fullRepaint(this.screen, this.oiaText, viewer.hostColors, viewer.fieldColor));
+    }
+  }
+
+  /**
+   * @param {Viewer} viewer
+   * @returns {void} One viewer gets a complete picture; the others see nothing.
    */
   repaint(viewer) {
     this.oiaText = this.oia.render(this.screen.cols, this.screen.cursor);
@@ -482,12 +452,11 @@ export class Session {
       viewers: this.viewers.size,
     });
 
-    // The whole point of holding the screen on the server: a viewer that joins
-    // an hour late is immediately correct.
+    // The whole point of holding the screen here: a viewer joining an hour late
+    // is immediately correct.
     this.repaint(viewer);
     this.broadcastStatus();
-    // Nothing has been reading the field map while there were no viewers, or
-    // none that wanted it, so the first one to arrive has to ask for it.
+    // Nobody was reading the field map while there were no viewers wanting it.
     this.fieldsStale = true;
     this.scheduleFlush();
   }
@@ -500,7 +469,7 @@ export class Session {
     if (!this.viewers.delete(viewer)) return;
     this.log.info('viewer detached', { viewer: viewer.id, total: this.viewers.size });
 
-    // Promote someone so the session does not become permanently read-only.
+    // Or the session would be permanently read-only.
     if (viewer.role === 'controller' && !this.config.sessions.allowMultipleControllers) {
       const next = this.viewers.values().next();
       if (!next.done) {
@@ -519,25 +488,22 @@ export class Session {
    * @returns {void}
    */
   handleClientMessage(viewer, message) {
-    // Asking for your own screen back changes nothing for anyone else, so an
-    // observer may do it — otherwise closing the settings page would leave an
-    // observer staring at it.
+    // Your own screen back changes nothing for anyone else, so an observer may
+    // ask — or closing the settings page would leave it stuck there.
     if (message.type === 'refresh') {
       this.repaint(viewer);
       return;
     }
 
-    // Whether to show host colours is this viewer's own preference, not
-    // something that touches the host or the other viewers, so it needs no
-    // controller role either.
+    // Also this viewer's own preference, touching neither host nor the others.
     if (message.type === 'hostColors') {
       viewer.hostColors = message.enabled;
       this.repaint(viewer);
       return;
     }
 
-    // Likewise the theme's colour for a typeable field: personal, and the
-    // first viewer to ask for one is what makes the field map worth reading.
+    // Likewise, and the first viewer to ask is what makes the field map worth
+    // reading at all.
     if (message.type === 'fieldColor') {
       viewer.fieldColor = message.color;
       this.fieldsStale = true;
@@ -549,7 +515,7 @@ export class Session {
     if (viewer.role !== 'controller') {
       viewer.sendMessage({
         type: 'error',
-        code: 'E4003',
+        code: 'E3006',
         message: 'This session is being controlled by someone else.',
       });
       return;
@@ -557,11 +523,9 @@ export class Session {
 
     switch (message.type) {
       case 'action':
-        // b3270's own Backspace is a real 3270 keyboard's: a non-destructive
-        // cursor move left. Every user here is on a PC keyboard and expects
-        // Backspace to delete the character behind the cursor, so it is sent
-        // as the two actions that actually do that; Delete itself already
-        // refuses to cross into a protected field, so this is no less safe.
+        // b3270's Backspace is a real 3270 keyboard's: a non-destructive move
+        // left. A PC keyboard expects a delete, which is these two actions —
+        // and Delete already refuses to cross into a protected field.
         if (message.action === 'Backspace') {
           this.b3270.runActions([{ action: 'Left' }, { action: 'Delete' }]);
           return;
@@ -574,17 +538,15 @@ export class Session {
         }
         return;
       case 'paste': {
-        // Not String: PasteString is what x3270 itself uses for a paste, so a
-        // newline moves to the next input field instead of sending Enter, and a
-        // backslash is a backslash rather than the start of an escape. It takes
-        // its text hex-encoded.
+        // PasteString, not String: a newline moves to the next field instead of
+        // sending Enter, and a backslash is a backslash. Hex-encoded.
         const hex = Buffer.from(message.text, 'utf8').toString('hex');
         if (hex !== '') this.b3270.runActions([{ action: 'PasteString', args: [hex] }]);
         return;
       }
       case 'connect':
-        // A configured host is never sent to the browser, so a page that cannot
-        // see it asks to connect without naming one.
+        // A configured host never reaches the browser, which then asks to
+        // connect without naming one.
         this.connect(message.host ?? this.lastHost ?? '');
         return;
       case 'disconnect':
@@ -610,6 +572,7 @@ export class Session {
       viewer.sendMessage({
         type: 'status',
         connection: this.oia.connectionState,
+        connected: this.oia.connected,
         host: this.oia.host,
         locked: this.oia.keyboardLocked,
         insert: this.oia.insert,
@@ -661,6 +624,7 @@ export class Session {
   close() {
     if (this.closed) return;
     this.closed = true;
+    clearTimeout(this.readyTimer);
     this.markReady();
     this.stopIdleTimer();
     this.log.info('closing', { viewers: this.viewers.size });
@@ -670,9 +634,7 @@ export class Session {
   }
 }
 
-/**
- * Owns every live session and enforces the configured ceiling.
- */
+/** Owns every live session and enforces the configured ceiling. */
 export class SessionRegistry {
   /** @param {import('./config.js').Config} config */
   constructor(config) {

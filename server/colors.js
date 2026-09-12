@@ -1,16 +1,14 @@
 /**
- * Which of the terminal's own sixteen ANSI slots each 3270 host colour maps
- * onto. The host only ever says a colour's *name* ("red", "turquoise", ...);
- * what RGB that turns into is the terminal's theme, exactly like a shell's
- * `red` is whatever the theme's palette says red is. So this table names an
- * SGR slot (0-15, the standard 30-37/90-97 set), never an RGB value.
+ * Which of the terminal's sixteen ANSI slots each 3270 host colour maps onto.
+ * The host only names a colour; what RGB that is comes from the theme, as a
+ * shell's `red` does. So this names a slot (0-15), never an RGB value.
  *
- * neutralBlack/black and neutralWhite/white share a slot because they were
- * already the same colour in the old x3270 palette.
+ * neutralBlack/black and neutralWhite/white shared a slot in the old x3270
+ * palette already.
  *
  * @type {Readonly<Record<string, number>>}
  */
-export const HOST_COLOR_ANSI = Object.freeze({
+const HOST_COLOR_ANSI = Object.freeze({
   neutralBlack: 0,
   black: 0,
   red: 1,
@@ -29,12 +27,11 @@ export const HOST_COLOR_ANSI = Object.freeze({
   paleTurquoise: 14,
 });
 
-/** An unstyled 3270 field is green on black, same as the real hardware. */
+/** An unstyled 3270 field is green on black, like the hardware. */
 export const DEFAULT_FOREGROUND_ANSI = 2;
 export const DEFAULT_BACKGROUND_ANSI = 0;
 
-/** A 3278 (monochrome) terminal is green on black; it has no palette to speak
- * of, so this stays a fixed RGB rather than a themeable slot. */
+/** A 3278 has no palette to theme, so its green stays a fixed RGB. */
 export const MONO_FOREGROUND = /** @type {readonly [number, number, number]} */ ([0, 255, 0]);
 export const DEFAULT_BACKGROUND = /** @type {readonly [number, number, number]} */ ([0, 0, 0]);
 
@@ -47,16 +44,14 @@ export function ansiColorIndex(name, fallback) {
   if (name === null) return fallback;
   const exact = HOST_COLOR_ANSI[name];
   if (exact !== undefined) return exact;
-  // b3270 spells it "gray"; accept the British spelling too rather than
-  // silently rendering the wrong colour.
+  // b3270 spells it "gray"; the British spelling must not silently mis-render.
   if (name === 'grey') return HOST_COLOR_ANSI['gray'] ?? fallback;
   return fallback;
 }
 
 /**
- * Graphic rendition names that map onto SGR parameters. b3270 also emits
- * `wide`, `order`, `selectable`, `private-use`, `no-copy`, `left-half` and
- * `right-half`, which describe the character rather than how to draw it.
+ * Graphic renditions that map onto SGR. b3270 also emits `wide`, `order`,
+ * `selectable` and others, which describe the character, not how to draw it.
  *
  * @type {Readonly<Record<string, number>>}
  */
@@ -68,8 +63,8 @@ const GR_SGR = Object.freeze({
 });
 
 /**
- * @param {string | null} gr Comma-separated list from b3270.
- * @returns {number[]} SGR parameters, ascending, no duplicates.
+ * @param {string | null} gr comma-separated list from b3270
+ * @returns {number[]} SGR parameters, ascending, no duplicates
  */
 export function grToSgr(gr) {
   if (gr === null || gr === '') return [];

@@ -4,26 +4,23 @@ import {
 } from './colors.js';
 
 /**
- * Turns the authoritative ScreenModel into the VT byte stream ghostty-web
- * renders. Everything a browser ever receives about the screen is produced
- * here, which is what makes a late-joining viewer possible: the same model can
- * emit either a delta or a complete repaint.
+ * Turns the authoritative ScreenModel into the VT bytes ghostty-web renders.
+ * The same model emits either a delta or a complete repaint, which is what
+ * makes a late-joining viewer possible.
  */
 
 const ESC = '\x1b';
 
 /**
- * Set-up written once per viewer, before any painting.
- *
- * Autowrap must be off. With it on, writing a character into the last column of
- * the last row wraps and scrolls the entire screen, which corrupts every
- * subsequent absolute cursor address.
+ * Written once per viewer, before any painting. Autowrap must be off: with it
+ * on, a character in the last column of the last row scrolls the whole screen
+ * and every absolute cursor address after it is wrong.
  */
 export const INIT_SEQUENCE = `${ESC}[?7l${ESC}[?25l${ESC}[0m${ESC}[H${ESC}[2J`;
 
 /**
  * @param {number} index ANSI colour index, 0-15
- * @returns {number} the SGR foreground parameter for that index
+ * @returns {number} the SGR foreground parameter
  */
 function fgSgr(index) {
   return index < 8 ? 30 + index : 82 + index;
@@ -31,22 +28,19 @@ function fgSgr(index) {
 
 /**
  * @param {number} index ANSI colour index, 0-15
- * @returns {number} the SGR background parameter for that index
+ * @returns {number} the SGR background parameter
  */
 function bgSgr(index) {
   return index < 8 ? 40 + index : 92 + index;
 }
 
 /**
- * A 3270 gives the operator no hint of where the typeable fields are beyond
- * whatever text is already sitting in them, which on an empty form is nothing
- * at all. Tinting their background is the one thing this emulator adds to what
- * the host asked for — and the viewer's own theme picks the colour, so it is
- * never brighter or dimmer than the rest of the screen it sits in.
+ * On an empty form a 3270 gives no hint of where the typeable fields are.
+ * Tinting them is the one thing this emulator adds to what the host asked for,
+ * and the viewer's own theme picks the colour.
  *
- * @param {string | null} hex `#rrggbb`; anything else means no tint. This is
- *   also the guard against a browser posting arbitrary bytes into a sequence
- *   every *other* viewer of the session then receives.
+ * @param {string | null} hex `#rrggbb`; anything else means no tint, which is
+ *   also the guard against a browser posting bytes every *other* viewer gets.
  * @returns {number[] | null} SGR parameters selecting it as a background
  */
 export function fieldTintSgr(hex) {
@@ -59,53 +53,48 @@ export function fieldTintSgr(hex) {
 /**
  * @param {import('./screen.js').Cell} cell
  * @param {import('./screen.js').ScreenModel} screen
- * @param {boolean} hostColors when false, no explicit colour is emitted at all
- *   and the terminal's own theme paints the cell; only graphic rendition
- *   (reverse, underline, ...) still carries meaning.
+ * @param {boolean} hostColors false emits no colour at all, leaving the cell to
+ *   the terminal's own theme; only graphic rendition still carries meaning.
  * @param {number[] | null} fieldTint
- * @returns {string} the SGR sequence that selects this cell's appearance
+ * @returns {string} the SGR sequence selecting this cell's appearance
  */
 function sgrFor(cell, screen, hostColors, fieldTint) {
   /** @type {number[]} */
   const params = [0, ...grToSgr(cell.gr)];
 
   if (!hostColors) {
-    // Nothing to add: the viewer asked for the host's colours to stay out of
-    // its theme, so this cell falls back to whatever the renderer paints by
-    // default.
+    // Nothing to add; the renderer's own default paints this cell.
   } else if (screen.color) {
-    // The host only names a colour ("red", "turquoise", ...); which RGB that
-    // is comes from the viewer's own theme, via the standard ANSI slot, the
-    // same way a shell's "red" is whatever the theme says red is.
+    // The host only names a colour; which RGB that is comes from the viewer's
+    // theme via the standard ANSI slot, as a shell's "red" does.
     const fg = ansiColorIndex(cell.fg ?? screen.defaultFg, DEFAULT_FOREGROUND_ANSI);
     const bg = ansiColorIndex(cell.bg ?? screen.defaultBg, DEFAULT_BACKGROUND_ANSI);
     params.push(fgSgr(fg), bgSgr(bg));
   } else {
-    // A 3278 reports no colour at all, so render it as the green-on-black
-    // terminal it is and let graphic rendition carry the meaning.
+    // A 3278 reports no colour, so it is the green-on-black terminal it is.
     params.push(38, 2, MONO_FOREGROUND[0], MONO_FOREGROUND[1], MONO_FOREGROUND[2]);
     params.push(48, 2, DEFAULT_BACKGROUND[0], DEFAULT_BACKGROUND[1], DEFAULT_BACKGROUND[2]);
   }
 
-  // Last background wins, so this goes after the host's — but only where the
-  // host did not name one itself. A field the application deliberately painted
-  // red is saying something the tint has no business overwriting.
+  // Last background wins, so this goes after the host's — but never over one
+  // the host named itself, which was saying something.
   if (fieldTint !== null && cell.editable && cell.bg === null) params.push(...fieldTint);
 
   return `${ESC}[${params.join(';')}m`;
 }
 
 /**
- * @param {import('./screen.js').Cell} cell
- * @returns {string} a key that is equal exactly when two cells look the same
+ * @param {import('./screen.js').Cell} a
+ * @param {import('./screen.js').Cell} b
+ * @returns {boolean} whether the two would be painted identically
  */
-function styleKey(cell) {
-  return `${cell.fg ?? ''}|${cell.bg ?? ''}|${cell.gr ?? ''}|${cell.editable ? 'e' : ''}`;
+function sameStyle(a, b) {
+  return a.fg === b.fg && a.bg === b.bg && a.gr === b.gr && a.editable === b.editable;
 }
 
 /**
- * Paint one full row, grouping runs of identically-styled cells so a typical
- * 3270 row costs a handful of escape sequences rather than eighty.
+ * One full row, grouping runs of identically-styled cells so a typical 3270 row
+ * costs a handful of escape sequences rather than eighty.
  *
  * @param {import('./screen.js').ScreenModel} screen
  * @param {number} row 0-based
@@ -115,16 +104,16 @@ function styleKey(cell) {
  */
 function encodeRow(screen, row, hostColors, fieldTint) {
   let out = `${ESC}[${row + 1};1H`;
-  let runStyle = null;
+  /** @type {import('./screen.js').Cell | null} */
+  let styled = null;
   let runText = '';
 
   for (let col = 0; col < screen.cols; col++) {
     const cell = screen.cellAt(row, col);
-    const key = styleKey(cell);
-    if (key !== runStyle) {
-      if (runStyle !== null) out += runText;
+    if (styled === null || !sameStyle(cell, styled)) {
+      out += runText;
       out += sgrFor(cell, screen, hostColors, fieldTint);
-      runStyle = key;
+      styled = cell;
       runText = '';
     }
     runText += cell.ch === '' ? ' ' : cell.ch;
@@ -153,15 +142,13 @@ function encodeCursor(screen) {
 }
 
 /**
- * Everything a viewer needs to show the current screen from nothing. Sent to
- * every viewer the moment it attaches, however long the session has been
- * running.
+ * Everything a viewer needs to show the screen from nothing, sent the moment it
+ * attaches however long the session has been running.
  *
  * @param {import('./screen.js').ScreenModel} screen
  * @param {string} oiaText
  * @param {boolean} [hostColors] Off renders every cell in the viewer's own
- *   theme instead of the mainframe's explicit colours. Defaults to on, the
- *   real 3270's behaviour.
+ *   theme. Defaults to on, the real 3270's behaviour.
  * @param {string | null} [fieldColor] see {@link fieldTintSgr}
  * @returns {string}
  */

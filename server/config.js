@@ -11,90 +11,64 @@ import { AppError } from './errors.js';
  */
 
 /**
- * Strip comments from JSONC by scanning characters, so that `//` and `/*`
- * inside string literals survive. Comments are replaced by spaces rather than
- * removed, which keeps byte offsets intact for JSON.parse error messages.
+ * JSONC in, JSON out. Comments and trailing commas are overwritten with spaces
+ * rather than deleted, so the byte offsets in JSON.parse's error messages still
+ * point at the right character. Scanned character by character, so `//` and
+ * `/*` inside a string survive. A trailing comma is spotted from the closing
+ * brace looking back, which is what lets a comment sit between the two.
  *
  * @param {string} text
  * @returns {string}
  */
-export function stripJsonComments(text) {
+export function stripJsonc(text) {
   const out = text.split('');
   let inString = false;
-  let inLineComment = false;
-  let inBlockComment = false;
+  let comma = -1;
 
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
     const next = text[i + 1];
 
-    if (inLineComment) {
-      if (ch === '\n') inLineComment = false;
-      else out[i] = ' ';
+    if (inString) {
+      if (ch === '\\') i++;
+      else if (ch === '"') inString = false;
       continue;
     }
 
-    if (inBlockComment) {
-      if (ch === '*' && next === '/') {
-        out[i] = ' ';
-        out[i + 1] = ' ';
+    if (ch === '/' && next === '/') {
+      while (i < text.length && text[i] !== '\n') out[i++] = ' ';
+      continue;
+    }
+
+    if (ch === '/' && next === '*') {
+      out[i] = ' ';
+      i++;
+      while (i < text.length) {
+        const closing = text[i] === '*' && text[i + 1] === '/';
+        if (text[i] !== '\n') out[i] = ' ';
+        if (closing) {
+          out[i + 1] = ' ';
+          i++;
+          break;
+        }
         i++;
-        inBlockComment = false;
-      } else if (ch !== '\n') {
-        out[i] = ' ';
       }
       continue;
     }
 
-    if (inString) {
-      if (ch === '\\') i++;
-      else if (ch === '"') inString = false;
+    if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') continue;
+
+    if (ch === ',') {
+      comma = i;
       continue;
     }
 
-    if (ch === '"') {
+    if (ch === '}' || ch === ']') {
+      if (comma !== -1) out[comma] = ' ';
+    } else if (ch === '"') {
       inString = true;
-    } else if (ch === '/' && next === '/') {
-      inLineComment = true;
-      out[i] = ' ';
-    } else if (ch === '/' && next === '*') {
-      inBlockComment = true;
-      out[i] = ' ';
     }
-  }
-
-  return out.join('');
-}
-
-/**
- * Trailing commas are legal in JSONC but not in JSON. Only safe to run after
- * comments are gone and only outside strings, so it shares the scanner's rules.
- * @param {string} text
- * @returns {string}
- */
-function stripTrailingCommas(text) {
-  const out = text.split('');
-  let inString = false;
-
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (inString) {
-      if (ch === '\\') i++;
-      else if (ch === '"') inString = false;
-      continue;
-    }
-    if (ch === '"') {
-      inString = true;
-      continue;
-    }
-    if (ch !== ',') continue;
-
-    for (let j = i + 1; j < text.length; j++) {
-      const ahead = text[j];
-      if (ahead === ' ' || ahead === '\t' || ahead === '\n' || ahead === '\r') continue;
-      if (ahead === '}' || ahead === ']') out[i] = ' ';
-      break;
-    }
+    comma = -1;
   }
 
   return out.join('');
@@ -105,9 +79,8 @@ function stripTrailingCommas(text) {
  * @returns {unknown}
  */
 export function parseJsonc(text) {
-  const plain = stripTrailingCommas(stripJsonComments(text));
   try {
-    return JSON.parse(plain);
+    return JSON.parse(stripJsonc(text));
   } catch (cause) {
     throw new AppError('E1002', cause instanceof Error ? cause.message : String(cause), cause);
   }
@@ -210,14 +183,10 @@ function strArray(obj, key, name, fallback) {
 }
 
 /**
- * Any b3270 resource, set from the config file. b3270 takes arbitrary resources
- * on the command line as `-xrm "b3270.<name>: <value>"`, so this is the one
- * mechanism that covers every setting the emulator has without this project
- * having to know a single one of their names.
- *
- * A name may be given bare (`oversize`) and is qualified as `b3270.oversize`, or
- * written out in full (`b3270.oversize`, `*oversize`) when a resource needs a
- * different qualifier.
+ * Any b3270 resource at all, which is how every setting the emulator has is
+ * reachable without this project knowing one of their names. Bare (`oversize`)
+ * is qualified as `b3270.oversize`; written out in full (`*oversize`) it is
+ * passed as given, for the resources that need a different qualifier.
  *
  * @param {Record<string, unknown>} obj
  * @param {string} key
@@ -246,7 +215,7 @@ function resources(obj, key, name) {
 }
 
 /**
- * Validate a parsed config object, filling in defaults for anything absent.
+ * Validate a parsed config, filling in defaults for anything absent.
  * @param {unknown} raw
  * @returns {Config}
  */

@@ -1,24 +1,18 @@
 /**
- * Keyboard → 3270 actions.
+ * Keyboard → 3270 actions. ghostty's `onData` is never used: it would VT-encode
+ * the keypress only for this to decode it back, and PA1, Clear, Attn and Reset
+ * have no VT equivalent at all.
  *
- * The terminal is a renderer only: we never use ghostty's `onData`, because it
- * would VT-encode the keypress and force us to decode it back, and 3270 keys
- * like PA1, Clear, Attn and Reset have no VT equivalent at all. Mapping the
- * KeyboardEvent directly is both lossless and shorter.
- */
-
-/**
  * @typedef {{ action: string, args?: string[] }} KeyAction
  */
 
 /**
- * Keys that mean the same thing however the modifiers fall.
+ * Keys that mean the same however the modifiers fall.
  * @type {Readonly<Record<string, KeyAction>>}
  */
 const PLAIN_KEYS = Object.freeze({
-  // A 3270 keyboard's Enter sits where a PC's right Control is, and the key in
-  // the PC's Enter position is the newline key. x3270 binds them that way and
-  // so do we: muscle memory from a real terminal has to keep working.
+  // A 3270's Enter sits where a PC's right Control is, and the PC's Enter
+  // position is its newline key. x3270 binds them this way; muscle memory.
   Enter: { action: 'Newline' },
   Tab: { action: 'Tab' },
   Backspace: { action: 'Backspace' },
@@ -31,14 +25,13 @@ const PLAIN_KEYS = Object.freeze({
   End: { action: 'End' },
   // Shift+Insert is paste, handled before mapKey ever sees it.
   Insert: { action: 'ToggleInsert' },
-  // Not Clear: menu-driven CICS/IMS applications commonly bind Attn to "back
-  // to the menu", and that is what operators actually expect Escape to do.
+  // Not Clear: CICS/IMS menus bind Attn to "back to the menu", which is what
+  // an operator expects of Escape.
   Escape: { action: 'Attn' },
 });
 
 /**
- * Control-key combinations. A 3270 keyboard has keys a PC does not, so the ones
- * that matter get a Ctrl binding.
+ * The keys a 3270 keyboard has and a PC does not.
  * @type {Readonly<Record<string, KeyAction>>}
  */
 const CTRL_KEYS = Object.freeze({
@@ -56,18 +49,16 @@ const CTRL_KEYS = Object.freeze({
 });
 
 /**
- * Every one of these sends an Attention Identifier, the same as Enter: it
- * unlocks the keyboard and asks the host for a whole new screen. Holding the
- * key down must not fire a stream of them at the host — a real 3270 keyboard
- * physically cannot repeat an AID key, and a host mid-response to the first
- * one (TSO and ISPF especially) can be left keyboard-locked on a blank screen
- * by a second one arriving on top of it.
+ * These send an Attention Identifier: the keyboard unlocks and the host draws a
+ * whole new screen. A real 3270 keyboard physically cannot repeat one, and TSO
+ * or ISPF mid-response to the first can be left locked on a blank screen by a
+ * second, so auto-repeat must not fire them.
  * @type {ReadonlySet<string>}
  */
 const AID_ACTIONS = new Set(['Enter', 'Clear', 'PF', 'PA', 'Attn', 'SysReq']);
 
 /**
- * Translate a keydown into a 3270 action, or into text to type.
+ * A keydown as a 3270 action, or as text to type.
  *
  * @param {KeyboardEvent} event
  * @returns {{ kind: 'action', action: string, args: string[] } | { kind: 'text', value: string } | null}
@@ -87,7 +78,7 @@ export function mapKey(event) {
     return { kind: 'action', action: bound.action, args: bound.args ?? [] };
   }
 
-  // F1-F12 are PF1-PF12; with Shift they are PF13-PF24, exactly as on a 3270.
+  // F1-F12 are PF1-PF12; with Shift, PF13-PF24, exactly as on a 3270.
   const functionKey = /^F([1-9]|1[0-2])$/.exec(event.key);
   if (functionKey !== null) {
     if (event.repeat) return null;
@@ -103,7 +94,7 @@ export function mapKey(event) {
     return { kind: 'action', action: plain.action, args: plain.args ?? [] };
   }
 
-  // A single character is text; anything longer is a named key we do not bind.
+  // A single character is text; anything longer is a named key, unbound.
   if ([...event.key].length === 1) return { kind: 'text', value: event.key };
 
   return null;

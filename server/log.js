@@ -31,7 +31,7 @@ function emit(level, scope, message, fields) {
 }
 
 /**
- * A logger bound to one subsystem, so every line says where it came from.
+ * Bound to one subsystem, so every line says where it came from.
  * @param {string} scope
  */
 export function logger(scope) {
@@ -44,8 +44,8 @@ export function logger(scope) {
     warn: (m, f) => emit('warn', scope, m, f),
 
     /**
-     * Errors get a one-line summary with the code, then the full error so a
-     * stack trace is never lost.
+     * A one-line summary with the code, then the error itself so no stack
+     * trace is lost.
      * @param {unknown} err
      * @param {Record<string, unknown>} [f]
      */

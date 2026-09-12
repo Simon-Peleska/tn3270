@@ -1,25 +1,24 @@
 import { AppError } from './errors.js';
 
 /**
- * The authoritative screen. b3270 sends incremental updates ("a screen
- * indication does not specify the entire contents of the screen"), so someone
- * has to hold the whole picture. Holding it here, on the server, is what lets
- * a browser join an existing session and be sent a complete repaint.
+ * The authoritative screen. b3270 sends incremental updates, so someone has to
+ * hold the whole picture; holding it here is what lets a browser join an
+ * existing session and be sent a complete repaint.
  *
  * @typedef {object} Cell
  * @property {string} ch A single character; ' ' when blank.
  * @property {string | null} fg Host colour name, or null for the screen default.
  * @property {string | null} bg
  * @property {string | null} gr Comma-separated graphic rendition, or null.
- * @property {boolean} editable Whether this cell sits in an unprotected field.
- *   Not from the screen indications — b3270 does not put field boundaries in
- *   them — but from a ReadBuffer the session asks for; see applyFields.
+ * @property {boolean} editable In an unprotected field. Not in the screen
+ *   indications — b3270 leaves field boundaries out of them — but from a
+ *   ReadBuffer the session asks for; see applyFields.
  */
 
 /**
  * @typedef {object} Cursor
- * @property {number} row 0-based.
- * @property {number} col 0-based.
+ * @property {number} row 0-based
+ * @property {number} col 0-based
  * @property {boolean} enabled
  */
 
@@ -38,7 +37,7 @@ export class ScreenModel {
     this.rows = rows;
     /** @type {number} */
     this.cols = cols;
-    /** @type {boolean} Whether the host reports colours at all (3279 vs 3278). */
+    /** @type {boolean} Whether the host reports colours (3279 vs 3278). */
     this.color = true;
     /** @type {string | null} */
     this.defaultFg = null;
@@ -48,7 +47,7 @@ export class ScreenModel {
     this.cursor = { row: 0, col: 0, enabled: false };
     /** @type {Cell[]} Row-major, length rows*cols. */
     this.cells = [];
-    /** @type {Set<number>} Rows changed since the last call to takeDirtyRows(). */
+    /** @type {Set<number>} Rows changed since takeDirtyRows() last ran. */
     this.dirtyRows = new Set();
 
     this.resize(rows, cols);
@@ -85,8 +84,8 @@ export class ScreenModel {
   }
 
   /**
-   * The erased state is blank, no graphic rendition, cursor at the top left.
-   * The fg/bg given here become the screen-wide defaults.
+   * Blank, no graphic rendition, cursor at the top left. The fg/bg given here
+   * become the screen-wide defaults.
    *
    * @param {import('./b3270.js').EraseIndication} erase
    * @returns {void}
@@ -112,9 +111,8 @@ export class ScreenModel {
   }
 
   /**
-   * Replace the "can the operator type here" map wholesale, marking as dirty
-   * only the rows it actually changed — the host rewrites the screen far more
-   * often than it rearranges its fields.
+   * Replace the "can the operator type here" map, dirtying only the rows that
+   * changed — the host rewrites the screen far oftener than its fields.
    *
    * @param {boolean[]} editable row-major, as {@link import('./readbuffer.js').fieldMap} returns
    * @returns {void}
@@ -142,12 +140,9 @@ export class ScreenModel {
   }
 
   /**
-   * Apply one screen indication. Rows and columns from b3270 are 1-based.
-   *
-   * Attributes are retained per cell: a change that does not mention `fg`
-   * leaves each covered cell's existing foreground alone, as the b3270 protocol
-   * specifies ("if a particular screen attribute is not specified by this
-   * indication, then it stays the same").
+   * One screen indication; b3270's rows and columns are 1-based. Attributes are
+   * retained per cell, as its protocol specifies: a change that does not
+   * mention `fg` leaves every covered cell's foreground alone.
    *
    * @param {import('./b3270.js').ScreenIndication} screen
    * @returns {void}

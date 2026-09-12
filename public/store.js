@@ -1,11 +1,8 @@
 /**
- * Settings live in IndexedDB, one record under a fixed key.
- *
- * localStorage would have been shorter, but settings belong to the browser
- * rather than to a session, and IndexedDB is the store that survives the
- * "clear site data on close" settings people actually use for a terminal they
- * log into. The API is callback-based, so it is wrapped once here and never
- * thought about again.
+ * Settings in IndexedDB, one record under a fixed key. localStorage would be
+ * shorter, but IndexedDB is the store that survives the "clear site data on
+ * close" settings people use for a terminal they log into. Its callback API is
+ * wrapped once here and never thought about again.
  */
 
 const DB_NAME = 'tn3270';
@@ -38,8 +35,8 @@ function open() {
 }
 
 /**
- * @returns {Promise<Partial<StoredSettings>>} an empty object when nothing has
- *   been saved yet, which is the normal first-visit case rather than an error.
+ * @returns {Promise<Partial<StoredSettings>>} empty when nothing is saved yet,
+ *   which is a first visit rather than an error
  */
 export async function loadSettings() {
   const db = await open();

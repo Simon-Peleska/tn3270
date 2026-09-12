@@ -1,12 +1,15 @@
 /**
- * Stable error codes. A code is an identity: once assigned to a site it never
- * changes, so a code reported by a user leads straight back to one log line and
- * one place in the source. Add new codes at the end of a block; never renumber.
+ * A code is an identity: once assigned to a site it never changes, so a code a
+ * user reports leads back to one log line and one place in the source. Add at
+ * the end of a block; never renumber.
  *
- * E1xxx config, E2xxx b3270, E3xxx session, E4xxx websocket, E5xxx frontend,
- * E6xxx http.
+ * The blocks are subsystems, and a code belongs to the subsystem that decides
+ * it is an error, not to the file that happens to throw:
+ *
+ * E1xxx config, E2xxx b3270, E3xxx session, E4xxx client messages,
+ * E5xxx browser, E6xxx server transport.
  */
-export const ERRORS = Object.freeze({
+const ERRORS = Object.freeze({
   E1001: 'Config file could not be read',
   E1002: 'Config file is not valid JSONC',
   E1003: 'Config value has the wrong type',
@@ -25,16 +28,12 @@ export const ERRORS = Object.freeze({
   E3003: 'Session has too many viewers',
   E3004: 'Screen indication referenced a cell outside the screen',
   E3005: 'Host address is not allowed by config',
-  // Retired: the session now drops and reopens the connection around a model
-  // change instead of refusing it. The code stays here so it is never reused.
-  E3006: 'The screen model cannot be changed while a host connection is open',
+  E3006: 'Input rejected: viewer is an observer',
 
   E4001: 'WebSocket message was not valid JSON',
   E4002: 'WebSocket message had an unknown type',
-  E4003: 'Input rejected: viewer is an observer',
-  E4004: 'WebSocket closed unexpectedly',
-  E4005: 'Pasted text is too large to type into a screen',
-  E4006: 'Oversize screen has more cells than b3270 can hold',
+  E4003: 'Pasted text is too large to type into a screen',
+  E4004: 'Oversize screen has more cells than b3270 can hold',
 
   E5001: 'Terminal renderer failed to initialise',
   E5002: 'WebSocket connection to the server failed',
@@ -44,20 +43,18 @@ export const ERRORS = Object.freeze({
   E5006: 'Another terminal session could not be opened',
 
   E6001: 'Static file not found',
-  E6002: 'HTTP request failed',
-  E6003: 'WebSocket upgrade path is not a session',
+  E6002: 'WebSocket upgrade path is not a session',
+  E6003: 'WebSocket closed unexpectedly',
   E6004: 'Server could not start',
 });
 
 /** @typedef {keyof typeof ERRORS} ErrorCode */
 
-/**
- * An error that carries a stable code all the way to the UI.
- */
+/** An error that carries a stable code all the way to the UI. */
 export class AppError extends Error {
   /**
    * @param {ErrorCode} code
-   * @param {string} [detail] Context for this particular occurrence.
+   * @param {string} [detail] context for this occurrence
    * @param {unknown} [cause]
    */
   constructor(code, detail, cause) {

@@ -129,7 +129,7 @@ test('two browsers share one session over the real server', async (t) => {
 
   // The observer's input is refused with its code, and nothing is forwarded.
   second.socket.send(JSON.stringify({ type: 'text', value: 'x' }));
-  await waitUntil(() => second.messages.some((m) => m['code'] === 'E4003'), 'the observer refusal');
+  await waitUntil(() => second.messages.some((m) => m['code'] === 'E3006'), 'the observer refusal');
 });
 
 test('the server refuses an unknown session and a bad upgrade path', async (t) => {
@@ -178,4 +178,23 @@ test('a path that tries to escape the public directory is refused', async (t) =>
     assert.equal(response.status, 404, `${path} must not be served`);
     assert.equal(body.code, 'E6001');
   }
+});
+
+test('an upgrade to a path that is not a session is refused with its own code', async (t) => {
+  const server = await startServer();
+  t.after(() => server.stop());
+
+  const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws/not-a-session`);
+  const body = await new Promise((resolve) => {
+    socket.on('error', () => {});
+    socket.on('unexpected-response', (_req, res) => {
+      let text = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => { text += chunk; });
+      res.on('end', () => resolve({ status: res.statusCode, text }));
+    });
+  });
+
+  assert.equal(body.status, 404);
+  assert.match(body.text, /E6002/);
 });

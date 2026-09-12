@@ -6,7 +6,7 @@ import { WebSocketServer } from 'ws';
 import { loadConfig } from './config.js';
 import { setLogLevel, logger } from './log.js';
 import { SessionRegistry } from './session.js';
-import { parseClientMessage } from './protocol.js';
+import { HEX_COLOR, parseClientMessage } from './protocol.js';
 import { AppError, describeError } from './errors.js';
 
 const config = loadConfig(process.env['TN3270_CONFIG'] ?? 'config.jsonc');
@@ -17,8 +17,8 @@ const registry = new SessionRegistry(config);
 
 const ROOT = resolve('.');
 const PUBLIC_DIR = join(ROOT, 'public');
-// ghostty-web is served straight out of node_modules so the package's own
-// layout is preserved and its wasm resolves relative to the module URL.
+// Served straight out of node_modules so its wasm resolves relative to the
+// module URL.
 const VENDOR_DIR = join(ROOT, 'node_modules', 'ghostty-web');
 
 /** @type {Readonly<Record<string, string>>} */
@@ -47,7 +47,7 @@ function sendJson(res, status, body) {
 }
 
 /**
- * Serve one file out of a directory, refusing anything that escapes it.
+ * One file out of a directory, refusing anything that escapes it.
  *
  * @param {import('node:http').ServerResponse} res
  * @param {string} dir
@@ -55,8 +55,7 @@ function sendJson(res, status, body) {
  * @returns {Promise<void>}
  */
 async function sendFile(res, dir, relative) {
-  // Decode first: a percent-encoded `..` is still a traversal attempt, and it
-  // has to be resolved before the containment check to mean anything.
+  // Decode first: a percent-encoded `..` is still a traversal attempt.
   /** @type {string} */
   let decoded;
   try {
@@ -136,8 +135,9 @@ server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
   const match = /^\/ws\/([0-9a-fA-F-]{36})$/.exec(url.pathname);
   if (match === null) {
-    log.warn('rejecting upgrade', { path: url.pathname });
-    socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
+    const err = new AppError('E6002', url.pathname);
+    log.error(err, { path: url.pathname });
+    socket.write(`HTTP/1.1 404 Not Found\r\ncontent-type: text/plain\r\n\r\n${err.message}`);
     socket.destroy();
     return;
   }
@@ -154,12 +154,11 @@ server.on('upgrade', (req, socket, head) => {
     return;
   }
 
-  // Read before the terminal exists, so the very first repaint already
-  // matches the browser's saved preference instead of flashing host colours
-  // for one frame and then correcting itself.
+  // Read before the terminal exists, so the first repaint already matches the
+  // browser's saved preference instead of flashing host colours for a frame.
   const hostColors = url.searchParams.get('hostColors') !== '0';
   const requested = url.searchParams.get('fieldColor');
-  const fieldColor = requested !== null && /^#[0-9a-fA-F]{6}$/.test(requested) ? requested : null;
+  const fieldColor = requested !== null && HEX_COLOR.test(requested) ? requested : null;
 
   wss.handleUpgrade(req, socket, head, (ws) => attachViewer(session, ws, hostColors, fieldColor));
 });
@@ -178,8 +177,6 @@ function attachViewer(session, ws, hostColors, fieldColor) {
     role: 'observer',
     hostColors,
     fieldColor,
-    // Screen output goes in binary frames, control traffic in text frames. The
-    // frame type is the discriminator, so neither needs an envelope.
     sendScreen(bytes) {
       if (ws.readyState === ws.OPEN) ws.send(Buffer.from(bytes, 'utf8'), { binary: true });
     },
@@ -215,7 +212,7 @@ function attachViewer(session, ws, hostColors, fieldColor) {
   });
 
   ws.on('error', (cause) => {
-    log.error(new AppError('E4004', viewer.id, cause), { session: session.id });
+    log.error(new AppError('E6003', viewer.id, cause), { session: session.id });
     session.detach(viewer);
   });
 }
@@ -233,8 +230,7 @@ for (const signal of /** @type {const} */ (['SIGINT', 'SIGTERM'])) {
   process.on(signal, () => {
     log.info('shutting down', { signal, viewers: wss.clients.size });
     registry.closeAll();
-    // Open WebSockets keep `server.close()` from ever calling back, so the
-    // viewers have to be dropped explicitly or the process hangs on exit.
+    // Open WebSockets keep `server.close()` from ever calling back.
     for (const client of wss.clients) client.terminate();
     server.closeAllConnections();
     server.close(() => process.exit(0));

@@ -108,7 +108,7 @@ test('an observer cannot type, and is told why in place', async (t) => {
 
   const last = observer.messages.at(-1);
   assert.equal(last?.type, 'error');
-  assert.equal(last?.type === 'error' ? last.code : '', 'E4003');
+  assert.equal(last?.type === 'error' ? last.code : '', 'E3006');
 });
 
 test('control passes on when the controller leaves', async (t) => {

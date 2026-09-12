@@ -3,26 +3,25 @@ import { AppError } from './errors.js';
 import { logger } from './log.js';
 
 /**
- * Indications we act on. b3270 emits many more (setting, thumb, tls-hello,
- * code-pages, ...); they arrive as RawIndication and are ignored by the
- * session, but still logged at debug level.
+ * The indications we act on. b3270 emits many more (setting, thumb, tls-hello,
+ * ...); those are ignored by the session but still logged at debug level.
  *
  * @typedef {object} ScreenChange
- * @property {number} column 1-based.
- * @property {string} [text] Present for character changes.
- * @property {number} [count] Present for attribute-only runs.
+ * @property {number} column 1-based
+ * @property {string} [text] for character changes
+ * @property {number} [count] for attribute-only runs
  * @property {string} [fg]
  * @property {string} [bg]
- * @property {string} [gr] Comma-separated graphic rendition list.
+ * @property {string} [gr] comma-separated graphic rendition list
  *
  * @typedef {object} ScreenRow
- * @property {number} row 1-based.
+ * @property {number} row 1-based
  * @property {ScreenChange[]} changes
  *
  * @typedef {object} ScreenCursor
  * @property {boolean} [enabled]
- * @property {number} [row] 1-based.
- * @property {number} [column] 1-based.
+ * @property {number} [row] 1-based
+ * @property {number} [column] 1-based
  *
  * @typedef {object} ScreenIndication
  * @property {ScreenCursor} [cursor]
@@ -77,9 +76,8 @@ import { logger } from './log.js';
  */
 
 /**
- * One decoded top-level indication: b3270 wraps each in a single-key object,
- * e.g. `{"screen": {...}}`. `initialize` is an array of nested indications,
- * which we flatten so the consumer sees one stream.
+ * b3270 wraps each indication in a single-key object, `{"screen": {...}}`.
+ * `initialize` is an array of nested ones, flattened here into one stream.
  *
  * @typedef {object} Indication
  * @property {string} kind
@@ -97,17 +95,16 @@ import { logger } from './log.js';
  * @typedef {object} B3270Options
  * @property {string} path
  * @property {number} model
- * @property {Record<string, string>} settings b3270 resources, passed as -xrm.
+ * @property {Record<string, string>} settings b3270 resources, passed as -xrm
  * @property {string[]} extraArgs
  * @property {string} sessionId
  * @property {B3270Handlers} handlers
  */
 
 /**
- * b3270 accepts any of its resources on the command line as
- * `-xrm "b3270.<name>: <value>"`. A bare name is qualified here; a name that
- * already carries a qualifier (`b3270.oversize`, `*oversize`) is passed as
- * written, because a few resources need a different one.
+ * Resources go on the command line as `-xrm "b3270.<name>: <value>"`. A bare
+ * name is qualified here; one that already carries a qualifier is passed as
+ * written, since a few resources need a different one.
  *
  * @param {Record<string, string>} settings
  * @returns {string[]}
@@ -119,10 +116,7 @@ function resourceArgs(settings) {
   });
 }
 
-/**
- * Turns b3270's newline-delimited JSON on stdout into a stream of indications,
- * and accepts actions on stdin.
- */
+/** b3270's newline-delimited JSON on stdout, as indications; actions on stdin. */
 export class B3270 {
   /** @param {B3270Options} options */
   constructor(options) {
@@ -141,9 +135,8 @@ export class B3270 {
     try {
       this.child = spawn(options.path, args, {
         stdio: ['pipe', 'pipe', 'pipe'],
-        // b3270 formats the `time` field of run-result with the C library's
-        // locale, so under e.g. de_DE it emits `"time":0,011` — which is not
-        // JSON and kills the line. Force the C locale for numbers.
+        // b3270 formats run-result's `time` with the C library's locale, so
+        // under de_DE it emits `"time":0,011`, which is not JSON.
         env: { ...process.env, LC_ALL: 'C', LC_NUMERIC: 'C' },
       });
     } catch (cause) {
@@ -177,13 +170,15 @@ export class B3270 {
    */
   consume(chunk) {
     this.stdoutBuffer += chunk;
+    let start = 0;
     let newline = this.stdoutBuffer.indexOf('\n');
     while (newline !== -1) {
-      const line = this.stdoutBuffer.slice(0, newline).trim();
-      this.stdoutBuffer = this.stdoutBuffer.slice(newline + 1);
+      const line = this.stdoutBuffer.slice(start, newline).trim();
       if (line.length > 0) this.handleLine(line);
-      newline = this.stdoutBuffer.indexOf('\n');
+      start = newline + 1;
+      newline = this.stdoutBuffer.indexOf('\n', start);
     }
+    this.stdoutBuffer = this.stdoutBuffer.slice(start);
   }
 
   /**
@@ -228,8 +223,8 @@ export class B3270 {
   }
 
   /**
-   * Submit one or more 3270 actions. They run asynchronously and may complete
-   * out of order, which is why each batch carries a tag.
+   * Actions run asynchronously and may complete out of order, which is why each
+   * batch carries a tag.
    *
    * @param {Array<{ action: string, args?: string[] }>} actions
    * @returns {string} the r-tag echoed back in the matching run-result
@@ -260,8 +255,7 @@ export class B3270 {
     if (this.stopped) return;
     this.stopped = true;
     this.log.info('stopping');
-    // b3270 exits on stdin EOF, which is cleaner than a signal because it lets
-    // the emulator close the host connection properly.
+    // b3270 exits on stdin EOF, which lets it close the host connection first.
     if (this.child.stdin.writable) {
       this.child.stdin.write(JSON.stringify({ run: { actions: [{ action: 'Quit' }] } }) + '\n');
       this.child.stdin.end();

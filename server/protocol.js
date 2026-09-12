@@ -1,11 +1,11 @@
 import { AppError } from './errors.js';
 
+export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+
 /**
- * The WebSocket wire format.
- *
- * Screen output travels as **binary** frames containing VT bytes; control
- * traffic travels as **text** frames containing JSON. The frame type alone
- * distinguishes them, so neither needs an envelope.
+ * The WebSocket wire format: screen output as **binary** frames of VT bytes,
+ * control traffic as **text** frames of JSON. The frame type alone tells them
+ * apart, so neither needs an envelope.
  *
  * @typedef {{ type: 'action', action: string, args?: string[] }} ActionMessage
  * @typedef {{ type: 'text', value: string }} TextMessage
@@ -27,25 +27,27 @@ import { AppError } from './errors.js';
  * @property {number} cols
  * @property {number} model
  * @property {import('./b3270.js').ModelInfo[]} models
- * @property {string} oversize `<cols>x<rows>`, or '' when the model's own size is in force
+ * @property {string} oversize `<cols>x<rows>`, or '' for the model's own size
  * @property {boolean} hostLocked The host comes from the config; the page hides it.
  * @property {'controller' | 'observer'} role
  * @property {number} viewers
  *
  * Sent whenever the grid changes size, always immediately before the repaint
- * that uses the new size — the WebSocket keeps them in that order, so a viewer
- * never writes new-sized bytes into an old-sized terminal.
+ * that uses it: the WebSocket keeps that order, so no viewer ever writes
+ * new-sized bytes into an old-sized terminal.
  *
  * @typedef {object} ScreenMessage
  * @property {'screen'} type
  * @property {number} model
  * @property {number} rows
  * @property {number} cols
- * @property {string} oversize `<cols>x<rows>`, or '' when the model's own size is in force
+ * @property {string} oversize `<cols>x<rows>`, or '' for the model's own size
  *
  * @typedef {object} StatusMessage
  * @property {'status'} type
- * @property {string} connection
+ * @property {string} connection b3270's own word for it
+ * @property {boolean} connected what that word means — decided here, so no
+ *   client has to keep its own list of which states count as connected
  * @property {string | null} host
  * @property {boolean} locked
  * @property {boolean} insert
@@ -57,9 +59,8 @@ import { AppError } from './errors.js';
  * @property {string} code
  * @property {string} message
  *
- * Answers a `copyField` request; the browser writes it straight to the
- * clipboard. There is no message for a refused request (no field under the
- * cursor, or a protected one) — the browser's clipboard is simply left alone.
+ * Answers a `copyField` request. A refused request (no field under the cursor,
+ * or a protected one) sends nothing and leaves the clipboard alone.
  *
  * @typedef {object} FieldContentMessage
  * @property {'fieldContent'} type
@@ -69,13 +70,12 @@ import { AppError } from './errors.js';
  */
 
 /**
- * Actions a client may ask for. b3270 accepts far more, including ones that
- * read files and run programs, so the set is a strict allow-list rather than a
- * pass-through.
+ * b3270 accepts far more actions than these, including ones that read files and
+ * run programs, so this is an allow-list and not a pass-through.
  *
  * @type {ReadonlySet<string>}
  */
-export const ALLOWED_ACTIONS = new Set([
+const ALLOWED_ACTIONS = new Set([
   'Enter', 'Clear', 'Reset', 'Tab', 'BackTab', 'Home', 'End',
   'Up', 'Down', 'Left', 'Right', 'Newline',
   'Backspace', 'Delete', 'DeleteField', 'DeleteWord', 'EraseEOF', 'EraseInput',
@@ -84,8 +84,8 @@ export const ALLOWED_ACTIONS = new Set([
 ]);
 
 /**
- * Parse and validate a text frame from a browser. Anything unrecognised is
- * rejected with a stable code rather than being forwarded to b3270.
+ * Parse a text frame from a browser, rejecting anything unrecognised with a
+ * stable code rather than forwarding it to b3270.
  *
  * @param {string} raw
  * @returns {ClientMessage}
@@ -126,20 +126,19 @@ export function parseClientMessage(raw) {
     return { type: 'text', value };
   }
 
-  // A paste is one keystroke for the user but arbitrarily much data for b3270,
-  // which types it a character at a time. A screenful of a model 5 is 3564
-  // characters; anything past a few of those is a mistake, not a paste.
+  // b3270 types a paste one character at a time, and a model 5 screenful is
+  // 3564 characters; a few of those over is a mistake, not a paste.
   if (type === 'paste') {
     const text = message['text'];
     if (typeof text !== 'string') throw new AppError('E4002', 'paste.text must be a string');
-    if (text.length > 16384) throw new AppError('E4005', `paste of ${text.length} characters is too large`);
+    if (text.length > 16384) throw new AppError('E4003', `paste of ${text.length} characters is too large`);
     return { type: 'paste', text };
   }
 
   if (type === 'connect') {
     const host = message['host'];
-    // With the host locked in the config the browser never learns it, so
-    // "connect" without one means the host the session already knows.
+    // A locked host never reaches the browser, so "connect" without one means
+    // the host the session already knows.
     if (host === undefined || host === null) return { type: 'connect', host: null };
     if (typeof host !== 'string' || host === '') {
       throw new AppError('E4002', 'connect.host must be a non-empty string');
@@ -155,20 +154,18 @@ export function parseClientMessage(raw) {
     return { type: 'hostColors', enabled };
   }
 
-  // The colour is picked by the browser's theme and then echoed back into VT
-  // bytes that every viewer of this session may receive, so the shape is
-  // checked here rather than trusted.
+  // Echoed back into VT bytes every viewer of this session may receive, so the
+  // shape is checked here rather than trusted.
   if (type === 'fieldColor') {
     const color = message['color'];
     if (color === null || color === undefined) return { type: 'fieldColor', color: null };
-    if (typeof color !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(color)) {
+    if (typeof color !== 'string' || !HEX_COLOR.test(color)) {
       throw new AppError('E4002', `fieldColor.color must be #rrggbb, got ${String(color)}`);
     }
     return { type: 'fieldColor', color };
   }
 
-  // The settings page draws over the terminal, so the browser needs a way to
-  // ask for the host screen back when it closes.
+  // The settings page draws over the terminal and needs the host screen back.
   if (type === 'refresh') return { type: 'refresh' };
 
   if (type === 'copyField') return { type: 'copyField' };
@@ -181,10 +178,8 @@ export function parseClientMessage(raw) {
     return { type: 'model', model };
   }
 
-  // An oversize screen is asked for as columns x rows, both at least the
-  // model's own size — b3270 checks that itself, since it is the side that
-  // knows the model. What it cannot do is stop the browser asking for a screen
-  // it has no buffer for: 16383 cells is the hard limit in its own ctlr.c.
+  // b3270 checks the size against the model itself. What it cannot check is a
+  // screen it has no buffer for: 16383 cells is the limit in its own ctlr.c.
   if (type === 'oversize') {
     const value = message['value'];
     if (typeof value !== 'string') throw new AppError('E4002', 'oversize.value must be a string');
@@ -192,7 +187,7 @@ export function parseClientMessage(raw) {
     const parts = /^(\d{1,5})x(\d{1,5})$/.exec(value);
     if (parts === null) throw new AppError('E4002', `oversize must be <cols>x<rows>, got "${value}"`);
     const cells = Number(parts[1]) * Number(parts[2]);
-    if (cells > 16383) throw new AppError('E4006', `oversize ${value} is ${cells} cells`);
+    if (cells > 16383) throw new AppError('E4004', `oversize ${value} is ${cells} cells`);
     return { type: 'oversize', value };
   }
 
@@ -200,8 +195,8 @@ export function parseClientMessage(raw) {
 }
 
 /**
- * A host is allowed when the list is empty (open, for trusted networks) or when
- * it matches an entry. Entries may omit the port to allow any port on that host.
+ * An empty list is open, for trusted networks. An entry may omit the port to
+ * allow any port on that host.
  *
  * @param {string} host as given by the client, "name" or "name:port"
  * @param {string[]} allowed

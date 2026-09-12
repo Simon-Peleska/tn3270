@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseJsonc, stripJsonComments, validateConfig, loadConfig } from '../server/config.js';
+import { parseJsonc, stripJsonc, validateConfig, loadConfig } from '../server/config.js';
 import { parseClientMessage, isHostAllowed } from '../server/protocol.js';
 import { AppError } from '../server/errors.js';
 
@@ -30,11 +30,20 @@ test('an escaped quote does not end the string early', () => {
 
 test('stripping preserves offsets so parse errors still point at the right place', () => {
   const text = '{"a": 1} // tail';
-  assert.equal(stripJsonComments(text).length, text.length);
+  assert.equal(stripJsonc(text).length, text.length);
 });
 
 test('trailing commas are tolerated', () => {
   assert.deepEqual(parseJsonc('{"a": [1, 2,], "b": 3,}'), { a: [1, 2], b: 3 });
+});
+
+test('a comment between a trailing comma and its brace is tolerated', () => {
+  assert.deepEqual(parseJsonc('{"a": 1, // done\n}'), { a: 1 });
+  assert.deepEqual(parseJsonc('[1, /* done */ ]'), [1]);
+});
+
+test('a brace inside a string does not make the comma before it trailing', () => {
+  assert.deepEqual(parseJsonc('["a", "}"]'), ['a', '}']);
 });
 
 test('the shipped config.jsonc parses and validates', () => {
@@ -142,7 +151,7 @@ test('a paste far larger than a screen is refused', () => {
   // would keep the session busy for minutes.
   assert.throws(() => parseClientMessage(JSON.stringify({ type: 'paste', text: 'x'.repeat(16385) })), (err) => {
     assert.ok(err instanceof AppError);
-    assert.equal(err.code, 'E4005');
+    assert.equal(err.code, 'E4003');
     return true;
   });
 });
