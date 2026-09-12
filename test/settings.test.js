@@ -175,6 +175,45 @@ test('a screen size change waits for Enter and warns what it costs', () => {
   assert.equal(calls.restores, 1);
 });
 
+test('the dynamic screen is one more choice after the models, asked for as an oversize', () => {
+  const { page, calls } = fixture();
+  page.setModel(5);
+  page.connected = true;
+  page.show();
+
+  page.selected = 2;
+  page.handleKey(key({ key: 'ArrowRight' }));
+
+  assert.equal(page.rows()[2]?.value, 'Dynamic - 62x160');
+  assert.equal(page.pendingOversize, '160x62');
+  assert.deepEqual(
+    page.rows().map((row) => row.key),
+    ['theme', 'font', 'model', 'hostColors'],
+    'a size asked for by name has nothing to fit to the window',
+  );
+
+  page.handleKey(key({ key: 'Enter' }));
+  assert.deepEqual(calls.oversizes, ['160x62']);
+  assert.deepEqual(calls.models, [], 'the model underneath it did not move');
+});
+
+test('leaving the dynamic screen goes back to a model on its own', () => {
+  const { page } = fixture();
+  page.setOversize('160x62');
+  page.connected = true;
+  page.show();
+
+  assert.equal(page.fitsWindow(), false, 'no window was measured for it, so nothing refits to one');
+
+  page.selected = 2;
+  page.handleKey(key({ key: 'ArrowLeft' }));
+  assert.equal(page.rows()[2]?.value, 'Model 5 - 27x132');
+  assert.equal(page.pendingOversize, '');
+
+  page.setOversize('158x60');
+  assert.equal(page.fitsWindow(), true, 'a measured screen is the one that follows the window');
+});
+
 test('fit to window asks for the screen the browser measured, on Enter', () => {
   const { page, calls } = fixture();
   page.connected = true;

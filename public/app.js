@@ -512,9 +512,9 @@ function fitSession(slot) {
  * @returns {void}
  */
 function fitIdleSessions() {
-  // An empty oversize is the operator asking for the model's own size, and that
-  // is not a preference to be second-guessed here.
-  if (settings.oversize === '') return;
+  // A model's own size, or the dynamic screen, is a size the operator asked for
+  // by name, and that is not a preference to be second-guessed here.
+  if (!settings.fitsWindow()) return;
   for (const index of panes) {
     const slot = sessions[index];
     if (slot == null || (slot.connected === true && slot.touched)) continue;
@@ -972,7 +972,7 @@ screenEl.addEventListener('paste', (event) => {
  * @returns {void}
  */
 function resetSize(slot) {
-  if (settings.oversize === '') {
+  if (!settings.fitsWindow()) {
     showError('E5007', 'Turn "Fit to window" on in the settings first.');
     return;
   }

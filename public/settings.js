@@ -179,6 +179,14 @@ const DEFAULT_FIT_FONT_SIZE = 16;
 const MIN_FIT_FONT_SIZE = 8;
 const MAX_FIT_FONT_SIZE = 32;
 
+// A screen that is not one of b3270's models: the model's own size with an
+// oversize on top, which is what makes b3270 negotiate as IBM-DYNAMIC. 62x160 is
+// the biggest an IBM host will bind, and it is offered next to the models
+// because it behaves like one — a size you ask for, with no window measured.
+const DYNAMIC_ROWS = 62;
+const DYNAMIC_COLS = 160;
+const DYNAMIC_OVERSIZE = `${DYNAMIC_COLS}x${DYNAMIC_ROWS}`;
+
 /**
  * @typedef {object} SettingsDeps
  * @property {(bytes: string) => void} write
@@ -238,6 +246,17 @@ export class SettingsPage {
   }
 
   /**
+   * Whether the screen size in force is one measured from the window, which is
+   * what makes refitting a pane the right thing to do. The model's own size and
+   * the dynamic screen are both sizes the operator asked for by name.
+   *
+   * @returns {boolean}
+   */
+  fitsWindow() {
+    return this.oversize !== '' && this.oversize !== DYNAMIC_OVERSIZE;
+  }
+
+  /**
    * The rows of the page, top to bottom, as they are both drawn and driven.
    * Two come and go, so they are built each time rather than counted off
    * against fixed indexes.
@@ -258,16 +277,24 @@ export class SettingsPage {
     }
     rows.push({ key: 'theme', label: 'Theme', value: this.theme().name });
     rows.push({ key: 'font', label: 'Font', value: this.font().name });
-    rows.push({ key: 'model', label: 'Screen model', value: this.describeModel(this.pendingModel) });
-    // A size to ask for, not one that follows the window: the host is told it
-    // once, when the connection is made.
+    const dynamic = this.pendingOversize === DYNAMIC_OVERSIZE;
     rows.push({
-      key: 'fit',
-      label: 'Fit to window',
-      value: this.pendingOversize === '' ? 'Off' : this.pendingOversize,
+      key: 'model',
+      label: 'Screen model',
+      value: dynamic ? `Dynamic - ${DYNAMIC_ROWS}x${DYNAMIC_COLS}` : this.describeModel(this.pendingModel),
     });
-    if (this.pendingOversize !== '') {
-      rows.push({ key: 'fitSize', label: 'Text size', value: `${this.fitFontSize} px` });
+    // A size to ask for, not one that follows the window: the host is told it
+    // once, when the connection is made. The dynamic screen is already a size
+    // asked for, so there is nothing here to fit.
+    if (!dynamic) {
+      rows.push({
+        key: 'fit',
+        label: 'Fit to window',
+        value: this.pendingOversize === '' ? 'Off' : this.pendingOversize,
+      });
+      if (this.pendingOversize !== '') {
+        rows.push({ key: 'fitSize', label: 'Text size', value: `${this.fitFontSize} px` });
+      }
     }
     rows.push({ key: 'hostColors', label: 'Host colors', value: this.hostColors ? 'On' : 'Off' });
     return rows;
@@ -487,9 +514,18 @@ export class SettingsPage {
       this.deps.applyFont(this.font());
       this.save();
     } else if (key === 'model') {
+      // The dynamic screen is one more choice after the models, so this row is
+      // one longer than the model list and decides the oversize as well.
       const models = this.models.length > 0 ? this.models.map((info) => info.model) : [2, 3, 4, 5];
-      const next = cycle(models.indexOf(this.pendingModel), step, models.length);
-      this.pendingModel = models[next] ?? this.pendingModel;
+      const dynamic = this.pendingOversize === DYNAMIC_OVERSIZE;
+      const current = dynamic ? models.length : models.indexOf(this.pendingModel);
+      const next = cycle(current, step, models.length + 1);
+      if (next === models.length) {
+        this.pendingOversize = DYNAMIC_OVERSIZE;
+      } else {
+        this.pendingModel = models[next] ?? this.pendingModel;
+        if (dynamic) this.pendingOversize = '';
+      }
     } else if (key === 'fit') {
       // Measured afresh: the window may have been resized since it was shown.
       this.pendingOversize = this.pendingOversize === '' ? this.fitToWindow() : '';

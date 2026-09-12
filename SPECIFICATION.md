@@ -65,11 +65,16 @@ the host.
 - Geometry follows the model: 2 = 24×80, 3 = 32×80, 4 = 43×80, 5 = 27×132.
   `b3270.model` sets the starting model; the settings page changes it afterwards.
   The list it offers is the one b3270 itself reports at startup, not a second
-  copy of the table above.
+  copy of the table above. After model 5 the list offers **Dynamic - 62x160**:
+  the model underneath it with a 160×62 oversize on top, which is the biggest
+  screen an IBM host will bind. It sits with the models because it behaves like
+  one — a size asked for by name, with no window measured for it — and it is
+  what `b3270.oversize` starts every session at.
 - **Fit to window** asks for a bigger screen than the model has: the browser
   measures how many cells the session's pane would hold at a chosen text size and
   asks for exactly that many columns and rows, which b3270 takes as an *oversize*
   and negotiates as IBM-DYNAMIC. Turning it off puts the model's own size back.
+  It is not offered on the dynamic screen, which is already a size asked for.
   The screen is never smaller than the model — b3270 refuses that and quietly
   hands back the model's own screen — and never more than the 16383 cells b3270
   has a buffer for (`E4004`); a model change that the standing size no longer fits
@@ -95,7 +100,9 @@ the host.
   and shrinks its text instead, because dropping a live connection to make a
   pane tidier is not a trade the page may make on its own. Typing counts from
   any viewer, and a session never becomes untouched again. A window drag waits
-  until the window stops moving; a split refits at once.
+  until the window stops moving; a split refits at once. This only happens while
+  the screen is one measured from the window: a model's own size and the dynamic
+  screen were asked for by name and are left alone.
 - A size change resizes the grid for **every** viewer, not just the one who
   asked.
 - The grid is drawn as large as the page allows without being cut off. Rows and
@@ -119,8 +126,8 @@ the host.
   for this session's screen back at the size of its pane, whatever it has been
   through — the way out of a pane resized under a connection the page would not
   touch on its own — and costs the host connection, the same as any other size
-  change. With fit to window off there is no size to reset to, and it says so
-  (`E5007`).
+  change. With no screen measured from the window — fit off, or the dynamic
+  screen — there is no size to reset to, and it says so (`E5007`).
 - Colours are the sixteen 3270 host colours, rendered as truecolor from x3270's
   own palette. If the host reports no colour (a 3278), the screen is rendered
   monochrome green rather than being given invented colours.
@@ -314,7 +321,7 @@ navigated away from.
 ```bash
 nix develop            # node, typescript, and an X11-free b3270
 npm install
-npm test               # 120 tests: unit, integration, and the WASM round-trip
+npm test               # 122 tests: unit, integration, and the WASM round-trip
 npm run typecheck      # tsc --strict over JSDoc; the "no any" gate
 npm start              # http://127.0.0.1:8017
 ```
