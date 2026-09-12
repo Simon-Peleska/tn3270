@@ -97,6 +97,15 @@ Node 22 treats the argument as a file path. Use the glob: `node --test
 `tsc` only picks up `tsconfig.json` automatically. The type gate is
 `tsc -p jsconfig.json`.
 
+## A pure black cell background is never painted
+
+ghostty-web's renderer skips the fill when a cell's background comes out
+`(0, 0, 0)`, taking it for the cleared canvas. On a dark theme that is invisible
+and free; on a light one it means any cell that lands on pure black — reverse
+video, the OIA bar, a host field painted black — keeps the page underneath it
+instead. A light theme therefore uses `#0d0d0d` where it means black, which is
+what `Host On-Demand White` does.
+
 ## Typing into `reverse.trc` shows nothing
 
 The input field in that trace is nondisplay. A `String` action there advances the

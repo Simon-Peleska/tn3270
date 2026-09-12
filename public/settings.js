@@ -27,6 +27,26 @@ export const THEMES = Object.freeze([
     black: '#000000', red: '#cc8400', green: '#cc8400', yellow: '#ffb000', blue: '#996300', magenta: '#cc8400', cyan: '#e69900', white: '#ffb000',
     brightBlack: '#7a5000', brightRed: '#ffb000', brightGreen: '#ffb000', brightYellow: '#ffb000', brightBlue: '#cc8400', brightMagenta: '#ffb000', brightCyan: '#ffb000', brightWhite: '#ffb000',
   } },
+  // IBM Host On-Demand's default: the saturated 3270 colour set on black, which
+  // is what most people mean by "what a 3270 looks like". Its blue really is
+  // this dark against the background — legible enough on the hardware it was
+  // chosen for, and left alone here rather than quietly corrected.
+  { name: 'Host On-Demand', colors: {
+    background: '#000000', foreground: '#00ff00', cursor: '#00ff00', cursorAccent: '#000000', selectionBackground: '#ffffff', selectionForeground: '#000000', field: '#1c1c1c',
+    black: '#000000', red: '#ff0000', green: '#00ff00', yellow: '#ffff00', blue: '#0000b3', magenta: '#c000ff', cyan: '#00ffff', white: '#ffffff',
+    brightBlack: '#808080', brightRed: '#ff8000', brightGreen: '#80ff80', brightYellow: '#ffff80', brightBlue: '#0000ff', brightMagenta: '#ff00ff', brightCyan: '#80ffff', brightWhite: '#ffffff',
+  } },
+  // The same emulator with its white background turned on, which darkens every
+  // colour to survive it and swaps the neutral pair: a field the host paints
+  // white is the readable one and a black one disappears into the page, exactly
+  // as they do the other way round above. Its black is #0d0d0d rather than
+  // #000000 because the renderer skips a pure black fill, taking it for the
+  // cleared canvas — which on a white page leaves reverse video unpainted.
+  { name: 'Host On-Demand White', colors: {
+    background: '#ffffff', foreground: '#0d0d0d', cursor: '#0d0d0d', cursorAccent: '#ffffff', selectionBackground: '#0d0d0d', selectionForeground: '#ffffff', field: '#e6e6e6',
+    black: '#ffffff', red: '#cc0000', green: '#008000', yellow: '#8a7f00', blue: '#000099', magenta: '#7700cc', cyan: '#008080', white: '#0d0d0d',
+    brightBlack: '#666666', brightRed: '#cc6600', brightGreen: '#00a300', brightYellow: '#b38f00', brightBlue: '#0000cc', brightMagenta: '#cc00cc', brightCyan: '#00a3a3', brightWhite: '#0d0d0d',
+  } },
   { name: 'Ghostty Dark', colors: {
     background: '#1e1e1e', foreground: '#d4d4d4', cursor: '#ffffff', cursorAccent: '#1e1e1e', selectionBackground: '#d4d4d4', selectionForeground: '#1e1e1e', field: '#2d2d2d',
     black: '#000000', red: '#cd3131', green: '#0dbc79', yellow: '#e5e510', blue: '#2472c8', magenta: '#bc3fbc', cyan: '#11a8cd', white: '#e5e5e5',
