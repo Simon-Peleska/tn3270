@@ -13,17 +13,33 @@ Out of scope for this build: file transfer (IND$FILE), printer sessions
 
 ## 2. Session lifecycle
 
-A **session** is one `b3270` process and one host connection.
+A **session** is one `b3270` process and one host connection. b3270 *is* one
+terminal — one screen, one host connection, one keyboard — and its JSON protocol
+has no notion of a second one, so a second session is a second process. Nothing
+can be multiplexed onto a single b3270.
+
+One page holds up to **4** sessions at once and shows one, two, three or four of
+them side by side (§5, `Ctrl-B`). Every session it holds keeps its WebSocket open
+even while it is off screen: the bytes of a background session are thrown away —
+the server holds the screen and repaints it on demand — but its viewer has to
+stay attached, or the idle timeout below would reap it.
+
+A session on screen sits in a **pane**. Panes tile the page edge to edge — no
+gaps, no frames, nothing between two screens but the theme's own background — and
+the keyboard is aimed at exactly one of them. Clicking a pane aims the keyboard
+at it; `Ctrl-B` and a digit does the same from the keyboard.
 
 | Event | Behaviour |
 |---|---|
 | Page opened with no `#fragment` | A session is created; its id goes into the URL fragment |
-| Page opened with `#<session-id>` | That session is joined if it still exists, otherwise a new one is created and `E3001` is shown |
+| Page opened with `#<ids>` | The fragment is a comma-separated list, one slot per digit (`a,,c` is session 1 and 3). Each id is joined if it still exists; ids that are gone are reported once with `E3001`, and a session is created only if none survived |
+| A digit with no session behind it is pressed | A session is created for that slot and appended to the fragment (`E5006` if the server refuses) |
 | Browser reloads or the network drops | The session is untouched; the page reconnects with backoff and receives a full repaint |
 | Last viewer detaches | The session is kept alive for `sessions.idleTimeoutMs`, then closed |
 | `b3270` exits | The session closes and every viewer is told (`E2002`) |
 
-Sharing the URL is the whole sharing mechanism. There is no separate invite step.
+Sharing the URL is the whole sharing mechanism. There is no separate invite step;
+sharing a page that holds four sessions shares all four.
 
 ## 3. Roles
 
@@ -51,12 +67,20 @@ the host.
   The list it offers is the one b3270 itself reports at startup, not a second
   copy of the table above.
 - **Fit to window** asks for a bigger screen than the model has: the browser
-  measures how many cells its window would hold at a chosen text size and asks
-  for exactly that many columns and rows, which b3270 takes as an *oversize* and
-  negotiates as IBM-DYNAMIC. Turning it off puts the model's own size back. The
-  screen is never smaller than the model — b3270 refuses that — and never more
-  than the 16383 cells b3270 has a buffer for (`E4006`); a model change that the
-  standing size no longer fits turns the oversize off rather than failing.
+  measures how many cells the session's pane would hold at a chosen text size and
+  asks for exactly that many columns and rows, which b3270 takes as an *oversize*
+  and negotiates as IBM-DYNAMIC. Turning it off puts the model's own size back.
+  The screen is never smaller than the model — b3270 refuses that and quietly
+  hands back the model's own screen — and never more than the 16383 cells b3270
+  has a buffer for (`E4006`); a model change that the standing size no longer fits
+  turns the oversize off rather than failing.
+- A pane too narrow for the model's 80 columns asks for them anyway, drawn in
+  text small enough to hold them, and asks for the extra rows that smaller text
+  makes room for. Otherwise the screen would stop short of the bottom of the pane.
+- The cell is measured at the text size being asked about rather than scaled from
+  the one on screen, so two panes of the same size always ask for the same screen,
+  and asking twice gives the same answer twice. A split is a grid of screens that
+  line up, and fitting a pane that already fits changes nothing.
 - The **text size** the fit is measured at is a row of its own, shown only while
   the fit is on, 8–32 px and saved in the browser. Bigger text means fewer cells.
   It is what the screen is measured *with*, not the font size on screen: that one
@@ -112,9 +136,38 @@ Printable characters are sent as text. Everything else:
 | Ctrl-D | Dup |
 | Ctrl-F | FieldMark |
 | Ctrl-S | SysReq |
+| Ctrl-B then 1–4 | aim the keyboard at that session |
+| Ctrl-B then Shift-1–4 | show that many sessions at once |
 
 Alt and Meta combinations are left to the browser. There is no local echo: what
 appears on screen is what the host put there.
+
+`Ctrl-B` is a prefix in the tmux sense, and it is the browser's alone — neither
+it nor the key after it ever reaches the host. While it is armed the status row
+shows which digits hold a session and which are free; a digit for a free slot
+opens a new session there, and anything that is not 1–4 cancels and puts the
+status row back. Ctrl may be held down through the digit or let go; either works.
+The digit is read from the key itself, not from what it prints, so Shift-2 is the
+2 key on every keyboard layout.
+
+**Shift** turns the same digit into the layout — how many sessions are on screen
+rather than which one is typed at:
+
+| | Panes |
+|---|---|
+| `Shift-1` | one session filling the page: the one the keyboard is already on |
+| `Shift-2` | sessions 1 and 2, side by side |
+| `Shift-3` | session 1 down the left half, 2 above 3 on the right |
+| `Shift-4` | quarters: 1 above 2 on the left, 3 above 4 on the right |
+
+A layout that names a session nobody has opened yet opens it. A session that was
+off screen takes the pane the keyboard was on.
+
+Splitting the page does **not** resize a session that has a host on it: the screen
+size is negotiated when the connection is opened (§4), so resizing would drop and
+reopen it. A connected pane keeps its screen and shrinks the text instead. A
+session between hosts is refitted to its new pane, and the settings page — which
+measures the pane, not the window — refits a connected one on purpose.
 
 A paste is typed into the screen with b3270's `PasteString`, not `String`: a
 newline moves to the next line of input instead of sending Enter, and a
@@ -228,6 +281,7 @@ and in the page.
 | `E5003` | Settings could not be read from the browser database |
 | `E5004` | Settings could not be saved to the browser database |
 | `E5005` | Clipboard could not be read for a Shift+Insert paste |
+| `E5006` | Another terminal session could not be opened |
 | `E6001` | Static file not found |
 | `E6002` | HTTP request failed |
 | `E6003` | WebSocket upgrade path is not a session |
@@ -242,7 +296,7 @@ navigated away from.
 ```bash
 nix develop            # node, typescript, and an X11-free b3270
 npm install
-npm test               # 106 tests: unit, integration, and the WASM round-trip
+npm test               # 115 tests: unit, integration, and the WASM round-trip
 npm run typecheck      # tsc --strict over JSDoc; the "no any" gate
 npm start              # http://127.0.0.1:8017
 ```

@@ -57,15 +57,34 @@ button:hover {
 
 /* The grid is sized to whatever is left over here, so this box must not grow
    with its content: min-height 0 lets it shrink, overflow hidden keeps a grid
-   that is briefly too large from bouncing the layout. */
+   that is briefly too large from bouncing the layout.
+
+   Always two columns by two rows, however many sessions are on screen: a pane
+   is given the cells it spans (see paneAreas() in sessions.js), so changing the
+   layout moves the boxes the terminals already live in instead of rebuilding
+   them. */
 .screen {
   flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  outline: none;
+  background: #000;
+}
+
+.pane {
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: 8px;
-  outline: none;
-  background: #000;
+}
+
+/* display:flex above would otherwise win over the hidden attribute's own
+   display:none, and a hidden pane would still take up its cells. */
+.pane[hidden] {
+  display: none;
 }

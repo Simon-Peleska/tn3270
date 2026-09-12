@@ -396,21 +396,42 @@ export class SettingsPage {
   }
 
   /**
-   * The screen this window would hold, as b3270 wants it written. Never
-   * smaller than the model — an oversize below it is refused — and never more
-   * than the 16383 cells b3270 has a buffer for.
+   * A measured fit as b3270 wants it written. Never smaller than the model —
+   * b3270 refuses an oversize below it and quietly gives back the model's own
+   * screen instead — and never more than the 16383 cells it has a buffer for.
+   *
+   * @param {{ cols: number, rows: number }} fit
+   * @param {number} model
+   * @returns {string}
+   */
+  fitSize(fit, model) {
+    const info = this.models.find((entry) => entry.model === model);
+    const minCols = info?.columns ?? 80;
+    const minRows = info?.rows ?? 24;
+    let rows = Math.max(minRows, fit.rows);
+    const cols = Math.max(minCols, Math.min(fit.cols, Math.floor(16383 / rows)));
+
+    // A pane too narrow for the model's columns has to draw them smaller than
+    // the text size asked for, and smaller text is more rows. Without them the
+    // screen would stop well short of the bottom of the pane. The measurement
+    // has the OIA row taken out of it already, so it goes back in to be scaled
+    // and comes out again.
+    if (cols > fit.cols) {
+      rows = Math.round(((fit.rows + 1) * cols) / fit.cols) - 1;
+      rows = Math.max(minRows, Math.min(rows, Math.floor(16383 / cols)));
+    }
+    return `${cols}x${rows}`;
+  }
+
+  /**
+   * The screen this window would hold, as b3270 wants it written.
    *
    * @returns {string}
    */
   fitToWindow() {
     const fit = this.deps.windowFit(this.fitFontSize);
     if (fit === null) return '';
-    const info = this.models.find((entry) => entry.model === this.pendingModel);
-    const minCols = info?.columns ?? 80;
-    const minRows = info?.rows ?? 24;
-    const rows = Math.max(minRows, fit.rows);
-    const cols = Math.max(minCols, Math.min(fit.cols, Math.floor(16383 / rows)));
-    return `${cols}x${rows}`;
+    return this.fitSize(fit, this.pendingModel);
   }
 
   /** @returns {void} */

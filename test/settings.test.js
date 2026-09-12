@@ -195,8 +195,9 @@ test('fit to window asks for the screen the browser measured, on Enter', () => {
 });
 
 test('fitting again turns it off, and the model is the floor', () => {
-  // b3270 refuses an oversize smaller than the model it is running, so a
-  // window too small to hold the model has to ask for the model's own size.
+  // b3270 refuses an oversize smaller than the model it is running, so a window
+  // that measured fewer columns than the model has to ask for the model's own —
+  // drawn in text small enough for them, which is rows the measurement missed.
   const { page } = fixture(() => ({ cols: 40, rows: 12 }));
   page.setModel(5);
   page.connected = true;
@@ -204,7 +205,7 @@ test('fitting again turns it off, and the model is the floor', () => {
 
   page.selected = 3;
   page.handleKey(key({ key: 'ArrowRight' }));
-  assert.equal(page.pendingOversize, '132x27');
+  assert.equal(page.pendingOversize, '132x42');
 
   page.handleKey(key({ key: 'ArrowLeft' }));
   assert.equal(page.pendingOversize, '', 'off is the model on its own');
@@ -263,6 +264,26 @@ test('a screen bigger than b3270 can hold is trimmed to fit its buffer', () => {
   const [cols, rows] = (page.pendingOversize.split('x')).map(Number);
   assert.equal(rows, 120);
   assert.ok((cols ?? 0) * (rows ?? 0) <= 16383, `${page.pendingOversize} does not fit the buffer`);
+});
+
+test('a pane too narrow for the model still asks for the model', () => {
+  // A session in a quarter of the page measures far fewer than 80 columns.
+  // b3270 refuses a screen below the model and hands back the model's own size
+  // without saying so, leaving a screen that no longer matches its pane.
+  const { page } = fixture();
+
+  // 80 columns in the width that measured 38 means text a little over half the
+  // size asked for, so the pane holds about twice the rows it measured.
+  assert.equal(page.fitSize({ cols: 38, rows: 42 }, 2), '80x90');
+  assert.equal(page.fitSize({ cols: 100, rows: 20 }, 5), '132x27');
+
+  // Nothing below the model, however little the pane can show.
+  assert.equal(page.fitSize({ cols: 38, rows: 5 }, 2), '80x24');
+
+  // And the taller screen still has to live in b3270's buffer.
+  const [cols, rows] = page.fitSize({ cols: 4, rows: 40 }, 2).split('x').map(Number);
+  assert.equal(cols, 80);
+  assert.ok((cols ?? 0) * (rows ?? 0) <= 16383, `80x${rows} does not fit the buffer`);
 });
 
 test('nothing the page draws runs off the right edge', () => {

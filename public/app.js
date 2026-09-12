@@ -2,6 +2,7 @@ import { init, Terminal } from '/vendor/dist/ghostty-web.js';
 import { mapKey } from '/keymap.js';
 import { SettingsPage } from '/settings.js';
 import { loadSettings, saveSettings } from '/store.js';
+import { MAX_SESSIONS, SessionPrefix, paneAreas, parseSessionHash, sessionHash, switcherText } from '/sessions.js';
 import { installBoxSelection } from '/box-select.js';
 import { installCursorGlyph } from '/cursor-glyph.js';
 
@@ -38,9 +39,10 @@ let errorTimer;
  *   empty string when there is nothing to show.
  */
 function errorOverlayBytes() {
-  if (activeError === null || terminal === null) return '';
-  const cols = terminal.cols;
-  const row = terminal.rows;
+  const term = activeTerminal();
+  if (activeError === null || term === null) return '';
+  const cols = term.cols;
+  const row = term.rows;
   const text = `[${activeError.code}] ${activeError.message}`.slice(0, cols).padEnd(cols, ' ');
   return `\x1b[?25l\x1b[${row};1H\x1b[0;1;38;2;255;217;217;48;2;58;29;32m${text}\x1b[0m`;
 }
@@ -59,6 +61,9 @@ function hexToRgb(hex) {
 const SETTINGS_BUTTON_LABEL = '[Settings]';
 
 /**
+ * @param {import('ghostty-web').Terminal} term the pane's own terminal: every
+ *   session on screen carries its own button, so a split is not a screen you
+ *   have to switch away from to configure.
  * @returns {string} VT bytes painting the button over the end of the OIA row,
  *   just past the cursor position, reverse-themed so it reads as clickable
  *   against plain status text. The server lays the status line out narrow
@@ -67,24 +72,70 @@ const SETTINGS_BUTTON_LABEL = '[Settings]';
  *   host update never steals the real cursor from whatever field the host put
  *   it in.
  */
-function settingsButtonBytes() {
-  if (terminal === null) return '';
+function settingsButtonBytes(term) {
   const colors = settings.theme().colors;
   const [br, bg, bb] = hexToRgb(colors['foreground'] ?? '#00ff00');
   const [fr, fg, fb] = hexToRgb(colors['background'] ?? '#000000');
-  const row = terminal.rows;
-  const col = terminal.cols - SETTINGS_BUTTON_LABEL.length + 1;
+  const row = term.rows;
+  const col = term.cols - SETTINGS_BUTTON_LABEL.length + 1;
   return `\x1b7\x1b[${row};${col}H\x1b[0;1;38;2;${fr};${fg};${fb};48;2;${br};${bg};${bb}m${SETTINGS_BUTTON_LABEL}\x1b[0m\x1b8`;
 }
 
 /**
+ * @returns {string} VT bytes painting the session switcher over the whole status
+ *   row while Ctrl-B is armed, or an empty string. It is shown only for the one
+ *   keystroke it lasts, so it costs the screen nothing the rest of the time.
+ */
+function prefixBarBytes() {
+  const term = activeTerminal();
+  if (!prefix.armed || term === null) return '';
+  const colors = settings.theme().colors;
+  const [br, bg, bb] = hexToRgb(colors['foreground'] ?? '#00ff00');
+  const [fr, fg, fb] = hexToRgb(colors['background'] ?? '#000000');
+  const ids = sessions.map((slot) => slot?.id ?? null);
+  const text = switcherText(ids, active).slice(0, term.cols).padEnd(term.cols, ' ');
+  return `\x1b[?25l\x1b[${term.rows};1H\x1b[0;1;38;2;${fr};${fg};${fb};48;2;${br};${bg};${bb}m${text}\x1b[0m`;
+}
+
+/**
+ * Both bars live on the terminal's last row and neither exists on the server, so
+ * both are reasserted after every write that lands there. The switcher goes on
+ * top: it is only up while a key is being pressed for it.
+ *
+ * @returns {string}
+ */
+function overlayBytes() {
+  return errorOverlayBytes() + prefixBarBytes();
+}
+
+/**
+ * Paint whatever overlay is up, if any. Nothing is the usual answer, and it has
+ * to stay unwritten: ghostty-web 0.4.0 asks the WASM heap for a buffer before
+ * every write, an allocation of zero bytes comes back as the pointer -1, and
+ * copying into it throws `RangeError: offset is out of bounds` — which lands in
+ * the middle of whoever was drawing and leaves the screen half painted.
+ *
+ * @returns {void}
+ */
+function writeOverlays() {
+  const slot = activeSession();
+  const bytes = overlayBytes();
+  if (bytes === '' || slot === null || slot.terminal === null) return;
+  slot.terminal.write(bytes);
+  // Which pane was painted over has to be remembered, because by the time the
+  // overlay comes off the keyboard may well be aimed at a different one.
+  overlaySlot = slot;
+}
+
+/**
+ * @param {SessionSlot} slot
  * @param {MouseEvent} event
  * @returns {{ row: number, col: number } | null} the 0-based cell under the
  *   pointer, or null before the terminal exists.
  */
-function cellAt(event) {
-  const renderer = terminal?.renderer;
-  if (terminal === null || renderer === undefined) return null;
+function cellAt(slot, event) {
+  const renderer = slot.terminal?.renderer;
+  if (renderer === undefined) return null;
   const rect = renderer.getCanvas().getBoundingClientRect();
   return {
     row: Math.floor((event.clientY - rect.top) / renderer.charHeight),
@@ -109,7 +160,7 @@ function showError(code, message) {
   if (errorTimer !== undefined) clearTimeout(errorTimer);
   errorTimer = setTimeout(clearError, 6000);
   if (settings.open) settings.draw();
-  else if (terminal !== null) terminal.write(errorOverlayBytes());
+  else writeOverlays();
 }
 
 /**
@@ -122,8 +173,25 @@ function clearError() {
   if (activeError === null) return;
   activeError = null;
   if (errorTimer !== undefined) clearTimeout(errorTimer);
-  if (settings.open) settings.draw();
-  else if (socket !== null && socket.readyState === WebSocket.OPEN) send({ type: 'refresh' });
+  repaintStatus();
+}
+
+/**
+ * Ask for the real status line back, the way the settings page asks for the real
+ * screen back when it closes. Anything painted over that row — the error bar,
+ * the session switcher — exists only in this browser, so the row can only be
+ * undone by having the server send it again.
+ *
+ * @returns {void}
+ */
+function repaintStatus() {
+  const painted = overlaySlot;
+  overlaySlot = null;
+  if (settings.open) {
+    settings.draw();
+    return;
+  }
+  if (painted?.socket?.readyState === WebSocket.OPEN) sendTo(painted, { type: 'refresh' });
 }
 
 /** @returns {Promise<{ id: string, rows: number, cols: number }>} */
@@ -135,38 +203,87 @@ async function createSession() {
 }
 
 /**
- * The session id lives in the URL fragment, so sharing the address is all it
- * takes for a second person to watch the same screen.
+ * One host session, of which the tab holds up to MAX_SESSIONS at once. Every
+ * socket stays open whether its session is on screen or not: the bytes of a
+ * session whose pane is hidden are thrown away — the server holds the screen
+ * and will repaint it on demand — but its viewer has to stay attached, or the
+ * server would reap the session out from under it after the idle timeout.
  *
- * @returns {Promise<{ id: string, rows: number, cols: number }>}
+ * A session owns its pane and the terminal drawn in it for as long as it lives.
+ * Laying the screen out differently moves panes around and hides some of them;
+ * it never hands one session's terminal to another.
+ *
+ * @typedef {object} SessionSlot
+ * @property {string} id
+ * @property {HTMLElement} pane
+ * @property {import('ghostty-web').Terminal | null} terminal built the first
+ *   time the pane is on screen with a known geometry
+ * @property {WebSocket | null} socket
+ * @property {number} backoffMs
+ * @property {number} model the model the server has confirmed, which the
+ *   settings page must agree with
+ * @property {string} oversize the fitted screen it has confirmed, likewise
+ * @property {number} cols
+ * @property {number} rows including the OIA row this side adds
+ * @property {string} connection the last connection state the server reported;
+ *   empty until the first status arrives, so that first status always counts as
+ *   a change and settles the settings page one way or the other
  */
-async function resolveSession() {
-  const existing = location.hash.slice(1);
-  if (existing !== '') {
-    const response = await fetch('/api/sessions');
-    const body = await response.json();
-    const found = (body.sessions ?? []).find((/** @type {{ id: string }} */ s) => s.id === existing);
-    if (found) return { id: existing, rows: 0, cols: 0 };
-    showError('E3001', `Session ${existing} is gone; starting a new one.`);
-  }
-  const created = await createSession();
-  location.hash = created.id;
-  return created;
+
+/** @type {(SessionSlot | null)[]} */
+const sessions = [];
+for (let index = 0; index < MAX_SESSIONS; index++) sessions.push(null);
+
+/** @type {number} The slot the keyboard is aimed at; always one of `panes`. */
+let active = 0;
+
+/** @type {number[]} The slots on screen, in pane order — one entry per pane. */
+let panes = [0];
+
+/** @type {SessionSlot | null} The pane an overlay is currently painted over. */
+let overlaySlot = null;
+
+const prefix = new SessionPrefix();
+
+/** @returns {SessionSlot | null} */
+function activeSession() {
+  return sessions[active] ?? null;
 }
 
-/** @type {import('ghostty-web').Terminal | null} */
-let terminal = null;
+/** @returns {import('ghostty-web').Terminal | null} */
+function activeTerminal() {
+  return activeSession()?.terminal ?? null;
+}
 
-/** @type {number} The model the server has confirmed, which the picker must agree with. */
-let currentModel = 0;
+/**
+ * @param {string} id
+ * @param {number} cols
+ * @param {number} rows including the OIA row
+ * @returns {SessionSlot}
+ */
+function newSlot(id, cols = 0, rows = 0) {
+  const pane = document.createElement('div');
+  pane.className = 'pane';
+  pane.hidden = true;
+  screenEl.append(pane);
+  /** @type {SessionSlot} */
+  const slot = {
+    id, pane, terminal: null, socket: null, backoffMs: 250,
+    model: 0, oversize: '', cols, rows, connection: '',
+  };
+  pane.addEventListener('click', (event) => paneClicked(slot, event));
+  return slot;
+}
 
-/** @type {string} The oversize the server has confirmed, in the same way. */
-let currentOversize = '';
-
-/** @type {boolean | null} Whether the last status the server sent was a connected
- * one; null until the first status arrives, so that first status is always
- * treated as a change and settles the settings page one way or the other. */
-let wasConnected = null;
+/**
+ * Every session the tab holds goes in the URL fragment, so sharing the address
+ * still shares all of them at once.
+ *
+ * @returns {void}
+ */
+function writeHash() {
+  location.hash = sessionHash(sessions.map((slot) => slot?.id ?? null));
+}
 
 const MIN_FONT_SIZE = 6;
 const MAX_FONT_SIZE = 64;
@@ -197,10 +314,10 @@ function connectHost(host) {
  */
 const settings = new SettingsPage({
   write: (bytes) => {
-    terminal?.write(bytes);
-    if (activeError !== null) terminal?.write(errorOverlayBytes());
+    activeTerminal()?.write(bytes);
+    writeOverlays();
   },
-  geometry: () => ({ cols: terminal?.cols ?? 80, rows: terminal?.rows ?? 25 }),
+  geometry: () => ({ cols: activeTerminal()?.cols ?? 80, rows: activeTerminal()?.rows ?? 25 }),
   applyTheme,
   applyFont,
   applyModel: (model) => send({ type: 'model', model }),
@@ -217,22 +334,25 @@ const settings = new SettingsPage({
 });
 
 /**
- * @param {number} cols
- * @param {number} rows
- * @returns {import('ghostty-web').Terminal}
+ * Build the session's terminal, or resize the one it has to the geometry the
+ * server last reported. A session with no geometry yet has nothing to build.
+ *
+ * @param {SessionSlot} slot
+ * @returns {import('ghostty-web').Terminal | null}
  */
-function ensureTerminal(cols, rows) {
-  const existing = terminal;
+function ensureTerminal(slot) {
+  if (slot.cols < 1 || slot.rows < 1) return null;
+  const existing = slot.terminal;
   if (existing !== null) {
-    if (existing.cols !== cols || existing.rows !== rows) existing.resize(cols, rows);
-    fitFontSize();
-    if (settings.open) settings.draw();
+    if (existing.cols !== slot.cols || existing.rows !== slot.rows) existing.resize(slot.cols, slot.rows);
+    fitFontSize(slot);
+    if (settings.open && slot === activeSession()) settings.draw();
     return existing;
   }
   // One extra row for the OIA status line the server paints below the screen.
   const created = new Terminal({
-    cols,
-    rows,
+    cols: slot.cols,
+    rows: slot.rows,
     cursorBlink: false,
     disableStdin: true,
     fontFamily: settings.font().family,
@@ -240,11 +360,26 @@ function ensureTerminal(cols, rows) {
     scrollback: 0,
     theme: settings.theme().colors,
   });
-  created.open(screenEl);
-  terminal = created;
-  screenEl.style.background = settings.theme().colors['background'] ?? '#000000';
-  fitFontSize();
+  created.open(slot.pane);
+  slot.terminal = created;
+  paintFrame();
+  fitFontSize(slot);
   return created;
+}
+
+/**
+ * The page around the grids is part of the picture: a black frame around an
+ * amber screen looks like a bug rather than a theme.
+ *
+ * @returns {void}
+ */
+function paintFrame() {
+  const background = settings.theme().colors['background'] ?? '#000000';
+  screenEl.style.background = background;
+  for (const slot of sessions) {
+    if (slot === null) continue;
+    slot.pane.style.background = background;
+  }
 }
 
 /**
@@ -261,30 +396,33 @@ function ensureTerminal(cols, rows) {
  * @returns {void}
  */
 function applyTheme(theme) {
-  const created = terminal;
-  const renderer = created?.renderer;
-  if (created === null || renderer === undefined) return;
+  paintFrame();
+  for (const slot of sessions) {
+    if (slot === null) continue;
+    // The server paints the typeable fields, so every session has to be told
+    // which colour this theme wants them; each repaints in answer. A theme is
+    // the whole page's, not one pane's.
+    if (slot.socket?.readyState === WebSocket.OPEN) {
+      sendTo(slot, { type: 'fieldColor', color: theme.colors['field'] ?? null });
+    }
+    const created = slot.terminal;
+    const renderer = created?.renderer;
+    if (created == null || renderer === undefined) continue;
 
-  // The server paints the typeable fields, so it has to be told which colour
-  // this theme wants them; it repaints in answer.
-  send({ type: 'fieldColor', color: theme.colors['field'] ?? null });
-
-  renderer.setTheme(theme.colors);
-  // The page around the grid is part of the picture: a black frame around an
-  // amber screen looks like a bug rather than a theme.
-  screenEl.style.background = theme.colors['background'] ?? '#000000';
-  created.options.theme = theme.colors;
-  created.reset();
-  // reset() frees the WASM terminal and builds a new one, but the selection
-  // manager holds its own reference and is never told. Copying then reads
-  // freed memory, and once the screen grows — a host switching to the
-  // alternate screen, say — the dead terminal still has the old, smaller grid,
-  // so anything outside it silently copies as nothing.
-  const selection = created['selectionManager'];
-  const wasmTerm = created.wasmTerm;
-  if (selection !== undefined && wasmTerm !== undefined) selection['wasmTerm'] = wasmTerm;
-  renderer.resize(created.cols, created.rows);
-  if (created.wasmTerm !== undefined) renderer.render(created.wasmTerm, true);
+    renderer.setTheme(theme.colors);
+    created.options.theme = theme.colors;
+    created.reset();
+    // reset() frees the WASM terminal and builds a new one, but the selection
+    // manager holds its own reference and is never told. Copying then reads
+    // freed memory, and once the screen grows — a host switching to the
+    // alternate screen, say — the dead terminal still has the old, smaller grid,
+    // so anything outside it silently copies as nothing.
+    const selection = created['selectionManager'];
+    const wasmTerm = created.wasmTerm;
+    if (selection !== undefined && wasmTerm !== undefined) selection['wasmTerm'] = wasmTerm;
+    renderer.resize(created.cols, created.rows);
+    if (created.wasmTerm !== undefined) renderer.render(created.wasmTerm, true);
+  }
 }
 
 /**
@@ -300,29 +438,45 @@ async function applyFont(font) {
     console.warn(`could not preload ${font.name}`, cause);
   }
 
-  const created = terminal;
-  if (created === null) return;
-  created.options.fontFamily = font.family;
-  fitFontSize();
+  for (const slot of sessions) {
+    if (slot?.terminal == null) continue;
+    slot.terminal.options.fontFamily = font.family;
+    fitFontSize(slot);
+  }
   if (settings.open) settings.draw();
 }
 
 /**
- * Make the grid as large as the page allows without cutting it off. The row and
+ * The room a pane leaves its terminal. A hidden pane has none, which is how a
+ * session nobody is looking at is kept out of every measurement.
+ *
+ * @param {HTMLElement} pane
+ * @returns {{ width: number, height: number } | null}
+ */
+function paneBox(pane) {
+  const style = getComputedStyle(pane);
+  const width = pane.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  const height = pane.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+  if (width < 1 || height < 1) return null;
+  return { width, height };
+}
+
+/**
+ * Make the grid as large as its pane allows without cutting it off. The row and
  * column counts belong to the 3270 model and cannot be traded away, so the font
  * size is the only thing free to move.
  *
+ * @param {SessionSlot} slot
  * @returns {void}
  */
-function fitFontSize() {
-  const created = terminal;
+function fitFontSize(slot) {
+  const created = slot.terminal;
   const renderer = created?.renderer;
-  if (created === null || renderer === undefined) return;
+  if (created == null || renderer === undefined) return;
 
-  const style = getComputedStyle(screenEl);
-  const width = screenEl.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
-  const height = screenEl.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
-  if (width < 1 || height < 1) return;
+  const box = paneBox(slot.pane);
+  if (box === null) return;
+  const { width, height } = box;
 
   // A cell measures ceil(fontSize x something), so the ratio below lands on the
   // answer or a pixel above it; starting one size high and walking down costs a
@@ -351,35 +505,92 @@ function fitFontSize() {
 }
 
 /**
- * How big a screen this window would hold with text `fontSize` pixels tall —
- * the inverse of fitFontSize(), where the grid is fixed and the text scales.
- * The answer is what the settings page asks the host for as an oversize screen.
- *
- * Cell metrics are measured at the font size currently in force, so they are
- * scaled rather than re-measured: making the terminal lay itself out again
- * just to count cells would flash the screen for nothing, and being a cell out
- * either way is invisible.
+ * How big a screen this session's pane would hold with text `fontSize` pixels
+ * tall — the inverse of fitFontSize(), where the grid is fixed and the text
+ * scales. The answer is what the settings page asks the host for as an oversize
+ * screen, which is why it measures the pane and not the window: in a split, a
+ * session gets the screen its own quarter or half of the page can show.
  *
  * @param {number} fontSize
  * @returns {{ cols: number, rows: number } | null}
  */
 function windowFit(fontSize) {
-  const created = terminal;
+  const slot = activeSession();
+  return slot === null ? null : paneFit(slot, fontSize);
+}
+
+/**
+ * @param {SessionSlot} slot
+ * @param {number} fontSize
+ * @returns {{ cols: number, rows: number } | null}
+ */
+function paneFit(slot, fontSize) {
+  const created = slot.terminal;
   const renderer = created?.renderer;
-  if (created === null || renderer === undefined) return null;
+  if (created == null || renderer === undefined) return null;
 
-  const style = getComputedStyle(screenEl);
-  const width = screenEl.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
-  const height = screenEl.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
-  if (width < 1 || height < 1) return null;
+  const box = paneBox(slot.pane);
+  if (box === null) return null;
 
-  const scale = fontSize / created.options.fontSize;
-  const cols = Math.floor(width / (renderer.charWidth * scale));
+  // The cell is measured at the size being asked about rather than scaled from
+  // the size in force. ghostty rounds a cell up to whole pixels, so scaling a
+  // rounded cell lands near the answer and somewhere slightly different for
+  // every pane — which is four panes of the same size that never agree on a
+  // screen, and a fit that walks a column or two every time it is asked for.
+  // Assigning the size is what re-measures; the terminal is not redrawn until
+  // something asks it to be.
+  const drawn = created.options.fontSize;
+  created.options.fontSize = fontSize;
+  const cellWidth = renderer.charWidth;
+  const cellHeight = renderer.charHeight;
+  created.options.fontSize = drawn;
+
+  const cols = Math.floor(box.width / cellWidth);
   // One row of the grid is the OIA, which this side paints and the host knows
   // nothing about.
-  const rows = Math.floor(height / (renderer.charHeight * scale)) - 1;
+  const rows = Math.floor(box.height / cellHeight) - 1;
   if (cols < 1 || rows < 1) return null;
   return { cols, rows };
+}
+
+/**
+ * Give a session with no host on it a screen the size of the pane it now sits
+ * in, which is what keeps a split from being four screens of unreadable text.
+ * The size is negotiated when the connection is opened, so a session between
+ * hosts is the only one where it is free: asking a *connected* session to
+ * resize drops and reopens its connection, and losing the host's idea of where
+ * the operator was just because the screen was split would be indefensible. A
+ * connected pane keeps its screen and shrinks the text instead, and the
+ * settings page — which measures the pane, not the window — is there to refit
+ * it on purpose.
+ *
+ * Only a layout change calls this. A single pane is the whole page, which is
+ * the size the server handed out in the first place.
+ *
+ * @returns {void}
+ */
+function fitIdleSessions() {
+  // An empty oversize is the operator asking for the model's own size, and that
+  // is not a preference to be second-guessed here.
+  if (settings.oversize === '') return;
+  for (const index of panes) {
+    const slot = sessions[index];
+    if (slot == null || slot.connection !== 'not-connected') continue;
+    if (slot.socket?.readyState !== WebSocket.OPEN) continue;
+    const fit = paneFit(slot, settings.fitFontSize);
+    if (fit === null) continue;
+    const value = settings.fitSize(fit, slot.model);
+    if (value === slot.oversize) continue;
+    sendTo(slot, { type: 'oversize', value });
+  }
+}
+
+/** @returns {void} Refit every terminal the page is showing. */
+function fitPanes() {
+  for (const index of panes) {
+    const slot = sessions[index];
+    if (slot != null) fitFontSize(slot);
+  }
 }
 
 // The screen box is sized by the page, so its own resizes — the window, the
@@ -391,20 +602,28 @@ new ResizeObserver(() => {
   fitScheduled = true;
   requestAnimationFrame(() => {
     fitScheduled = false;
-    fitFontSize();
+    fitPanes();
   });
 }).observe(screenEl);
 
-/** @type {WebSocket | null} */
-let socket = null;
-/** @type {number} */
-let backoffMs = 250;
-
 /**
+ * Everything the user types is aimed at the session the keyboard is on; the
+ * other panes are being watched, not typed at.
+ *
  * @param {import('../server/protocol.js').ClientMessage} message
  * @returns {void}
  */
 function send(message) {
+  sendTo(activeSession(), message);
+}
+
+/**
+ * @param {SessionSlot | null} slot
+ * @param {import('../server/protocol.js').ClientMessage} message
+ * @returns {void}
+ */
+function sendTo(slot, message) {
+  const socket = slot?.socket ?? null;
   if (socket === null || socket.readyState !== WebSocket.OPEN) {
     showError('E5002', 'Not connected to the server; your input was not sent.');
     return;
@@ -413,10 +632,10 @@ function send(message) {
 }
 
 /**
- * @param {string} sessionId
+ * @param {SessionSlot} slot
  * @returns {void}
  */
-function connectSocket(sessionId) {
+function connectSocket(slot) {
   const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
   // Passed on the URL, not a follow-up message, so the very first repaint the
   // server sends already matches the saved preference instead of flashing
@@ -425,30 +644,33 @@ function connectSocket(sessionId) {
   if (!settings.hostColors) query.set('hostColors', '0');
   const field = settings.theme().colors['field'];
   if (field !== undefined) query.set('fieldColor', field);
-  const ws = new WebSocket(`${scheme}://${location.host}/ws/${sessionId}?${query}`);
+  const ws = new WebSocket(`${scheme}://${location.host}/ws/${slot.id}?${query}`);
   ws.binaryType = 'arraybuffer';
-  socket = ws;
+  slot.socket = ws;
 
   let opened = false;
   ws.addEventListener('open', () => {
     opened = true;
-    backoffMs = 250;
+    slot.backoffMs = 250;
   });
 
   ws.addEventListener('message', (event) => {
     // Binary frames are screen bytes, text frames are control messages. The
     // hello that sizes the terminal always precedes the first screen bytes.
     if (event.data instanceof ArrayBuffer) {
-      // The settings page owns the screen while it is open. Dropping the host's
-      // bytes is safe because the server is asked for a full repaint on close.
-      if (terminal !== null && !settings.open) {
-        terminal.write(new Uint8Array(event.data));
-        terminal.write(settingsButtonBytes());
-        if (activeError !== null) terminal.write(errorOverlayBytes());
-      }
+      // Only a session with a pane on screen is painted. The settings page owns
+      // the pane it is drawn in while it is open, and a hidden session has no
+      // pane at all; dropping either one's bytes is safe because the server is
+      // asked for a full repaint when it comes back into view.
+      const term = slot.terminal;
+      const covered = settings.open && slot === activeSession();
+      if (term === null || slot.pane.hidden || covered) return;
+      term.write(new Uint8Array(event.data));
+      term.write(settingsButtonBytes(term));
+      if (slot === activeSession()) writeOverlays();
       return;
     }
-    handleServerMessage(JSON.parse(String(event.data)));
+    handleServerMessage(slot, JSON.parse(String(event.data)));
   });
 
   ws.addEventListener('error', () => {
@@ -460,65 +682,80 @@ function connectSocket(sessionId) {
     // exactly where it was — no state to restore here.
     //
     // Unless the socket never opened at all: then the session is probably gone
-    // (the server restarted), and retrying the same id would 404 forever.
+    // (the server restarted), and retrying the same id would 404 forever, so the
+    // slot is given a fresh session instead.
     setTimeout(() => {
       if (opened) {
-        connectSocket(sessionId);
+        connectSocket(slot);
         return;
       }
-      resolveSession().then(
-        (session) => connectSocket(session.id),
-        () => connectSocket(sessionId),
+      createSession().then(
+        (created) => {
+          slot.id = created.id;
+          slot.cols = created.cols;
+          slot.rows = created.rows + 1;
+          writeHash();
+          connectSocket(slot);
+        },
+        () => connectSocket(slot),
       );
-    }, backoffMs);
-    backoffMs = Math.min(backoffMs * 2, 8000);
+    }, slot.backoffMs);
+    slot.backoffMs = Math.min(slot.backoffMs * 2, 8000);
   });
 }
 
 /**
+ * @param {SessionSlot} slot the session the message came from, which is not
+ *   necessarily the one on screen: all of them keep running and keep reporting.
  * @param {import('../server/protocol.js').ServerMessage} message
  * @returns {void}
  */
-function handleServerMessage(message) {
-  if (message.type === 'hello') {
-    currentModel = message.model;
-    settings.models = message.models;
-    settings.setModel(message.model);
-    currentOversize = message.oversize;
-    settings.setOversize(message.oversize);
-    ensureTerminal(message.cols, message.rows + 1);
-    // A host that comes from the config is the operator's business, not the
-    // browser's: it is neither shown nor editable here.
-    settings.setHostLocked(message.hostLocked);
-    screenEl.focus();
-    return;
-  }
-  if (message.type === 'screen') {
-    currentModel = message.model;
-    settings.setModel(message.model);
-    currentOversize = message.oversize;
-    settings.setOversize(message.oversize);
-    ensureTerminal(message.cols, message.rows + 1);
+function handleServerMessage(slot, message) {
+  const onScreen = slot === activeSession();
+
+  if (message.type === 'hello' || message.type === 'screen') {
+    slot.model = message.model;
+    slot.oversize = message.oversize;
+    slot.cols = message.cols;
+    slot.rows = message.rows + 1;
+    if (message.type === 'hello') settings.models = message.models;
+    if (!slot.pane.hidden) ensureTerminal(slot);
+    if (!onScreen) return;
+    settings.setModel(slot.model);
+    settings.setOversize(slot.oversize);
+    if (message.type === 'hello') {
+      // A host that comes from the config is the operator's business, not the
+      // browser's: it is neither shown nor editable here.
+      settings.setHostLocked(message.hostLocked);
+      screenEl.focus();
+    }
     return;
   }
   if (message.type === 'fieldContent') {
-    navigator.clipboard.writeText(message.text);
+    if (onScreen) navigator.clipboard.writeText(message.text);
     return;
   }
   if (message.type === 'status') {
-    settings.connected = message.connection !== 'not-connected';
+    const connected = message.connection.startsWith('connected');
+    const changed = slot.connection === '' || connected !== slot.connection.startsWith('connected');
+    slot.connection = message.connection;
     // A real 3270 swaps the solid block cursor for an underline in insert
-    // mode, since it is otherwise the only way to tell the two apart.
-    terminal?.renderer?.setCursorStyle(message.insert ? 'underline' : 'block');
+    // mode, since it is otherwise the only way to tell the two apart. Insert is
+    // the session's own state, so this is not just the focused pane's business.
+    slot.terminal?.renderer?.setCursorStyle(message.insert ? 'underline' : 'block');
+    // A session opened to fill a new pane is only reachable once its socket has
+    // said hello, which is well after the layout that made the pane was applied.
+    if (changed && !connected && !slot.pane.hidden && panes.length > 1) fitIdleSessions();
+    if (!onScreen) return;
+    settings.connected = message.connection !== 'not-connected';
     // b3270 reports the host without its port, so filling the field from it
     // would quietly destroy what the user typed. Only use it to seed an empty
     // field, which is what a viewer joining someone else's session needs.
     if (message.host !== null && settings.host === '' && !settings.hostLocked) settings.setHost(message.host);
-    const connected = message.connection.startsWith('connected');
     // Only the moment the connection changes opens or closes the settings page
     // — once it has, it stays exactly where the user or the connection left it
     // across every unrelated status update (lock state, insert mode, ...).
-    if (connected !== wasConnected) {
+    if (changed) {
       if (connected) {
         settings.close();
         clearError();
@@ -526,20 +763,199 @@ function handleServerMessage(message) {
         settings.show();
       }
     }
-    wasConnected = connected;
     return;
   }
-  // A refused change leaves the settings page showing something the server
-  // never accepted, so put it back to the size actually in force.
-  settings.setModel(currentModel);
-  settings.setOversize(currentOversize);
-  showError(message.code, message.message);
+  if (onScreen) {
+    // A refused change leaves the settings page showing something the server
+    // never accepted, so put it back to the size actually in force.
+    settings.setModel(slot.model);
+    settings.setOversize(slot.oversize);
+    showError(message.code, message.message);
+    return;
+  }
+  // A session nobody is looking at can still die, and swallowing that would
+  // leave the operator switching to a screen that stopped ages ago.
+  showError(message.code, `Session ${sessions.indexOf(slot) + 1}: ${message.message}`);
+}
+
+/**
+ * Ask the server to paint a session's pane again. The screen lives entirely on
+ * the server, so this is the only way to get back a pane this side has drawn
+ * over — the settings page, the error bar, the switcher — or one that has been
+ * out of sight while its bytes were being dropped.
+ *
+ * @param {SessionSlot} slot
+ * @returns {void}
+ */
+function repaint(slot) {
+  if (settings.open && slot === activeSession()) {
+    settings.draw();
+    return;
+  }
+  if (slot.socket?.readyState === WebSocket.OPEN) {
+    sendTo(slot, { type: 'refresh' });
+    return;
+  }
+  // A session still opening has nothing to repaint yet, and whatever is on its
+  // terminal is older than the pane it now sits in.
+  slot.terminal?.write('\x1b[2J');
+}
+
+/**
+ * Give every pane its place in the grid, hide the sessions the layout leaves
+ * out, and mark the one the keyboard is aimed at. A pane coming back into sight
+ * is built if it has never been drawn in and repainted either way, since its
+ * bytes were thrown away while it was hidden.
+ *
+ * @returns {void}
+ */
+function applyLayout() {
+  const areas = paneAreas(panes.length);
+  /** @type {SessionSlot[]} */
+  const revealed = [];
+
+  for (let index = 0; index < MAX_SESSIONS; index++) {
+    const slot = sessions[index];
+    if (slot == null) continue;
+    const position = panes.indexOf(index);
+    if (position < 0) {
+      slot.pane.hidden = true;
+      continue;
+    }
+    if (slot.pane.hidden) revealed.push(slot);
+    slot.pane.hidden = false;
+    slot.pane.style.gridArea = areas[position];
+  }
+  paintFrame();
+
+  // The panes have to be laid out before a terminal can be fitted into one, and
+  // built before there is anything to repaint.
+  for (const slot of revealed) ensureTerminal(slot);
+  fitPanes();
+  for (const slot of revealed) repaint(slot);
+}
+
+/**
+ * Aim the keyboard at a session. In a split it is already on screen and this is
+ * only a change of focus; otherwise it takes over the pane the keyboard was on,
+ * so the session you switch to is always the session you see.
+ *
+ * @param {number} index
+ * @returns {void}
+ */
+function focusSlot(index) {
+  const slot = sessions[index] ?? null;
+  if (slot === null || index === active) return;
+
+  // Closed before the switch, so the pane the page was drawn over is the one
+  // that gets asked for its screen back.
+  if (settings.open) settings.close();
+
+  if (!panes.includes(index)) {
+    const here = Math.max(0, panes.indexOf(active));
+    panes[here] = index;
+  }
+  active = index;
+  settings.setModel(slot.model);
+  settings.setOversize(slot.oversize);
+  settings.connected = slot.connection !== '' && slot.connection !== 'not-connected';
+  applyLayout();
+  screenEl.focus();
+
+  if (slot.connection === 'not-connected') settings.show();
+}
+
+/** @type {boolean} One creation at a time; two fast keystrokes are one session. */
+let opening = false;
+
+/**
+ * @param {number} index
+ * @returns {Promise<SessionSlot>} the session in that slot, opening one first if
+ *   the slot is still empty.
+ */
+async function ensureSlot(index) {
+  const existing = sessions[index];
+  if (existing != null) return existing;
+  const created = await createSession();
+  const slot = newSlot(created.id, created.cols, created.rows + 1);
+  sessions[index] = slot;
+  writeHash();
+  connectSocket(slot);
+  return slot;
+}
+
+/**
+ * @param {number} index
+ * @returns {void}
+ */
+function switchTo(index) {
+  if (sessions[index] != null) {
+    focusSlot(index);
+    return;
+  }
+  if (opening) return;
+  opening = true;
+  ensureSlot(index).then(() => {
+    focusSlot(index);
+  }).catch((cause) => {
+    showError('E5006', `Another session could not be opened: ${String(cause)}`);
+  }).finally(() => {
+    opening = false;
+  });
+}
+
+/**
+ * Split the screen between the first `count` sessions, opening the ones that do
+ * not exist yet. One pane is the exception: it shows the session the keyboard is
+ * already on rather than jumping back to the first.
+ *
+ * @param {number} count
+ * @returns {void}
+ */
+function changeLayout(count) {
+  if (opening) return;
+  opening = true;
+  (async () => {
+    for (let index = 0; count > 1 && index < count; index++) await ensureSlot(index);
+    panes = [];
+    if (count === 1) panes.push(active);
+    else for (let index = 0; index < count; index++) panes.push(index);
+    if (!panes.includes(active)) active = panes[0];
+    applyLayout();
+    fitIdleSessions();
+    screenEl.focus();
+  })().catch((cause) => {
+    showError('E5006', `Another session could not be opened: ${String(cause)}`);
+  }).finally(() => {
+    opening = false;
+  });
 }
 
 // Alt+Space has to work wherever the focus is, so the settings page gets first
 // refusal on every key in the page. It swallows everything while it is open, so
 // the host cannot be typed at through a screen nobody can see.
+//
+// The session switcher comes before even that: a session that is not connected
+// has the settings page open over it, and being unable to switch away from there
+// would be a trap.
 window.addEventListener('keydown', (event) => {
+  const decision = prefix.handleKey(event);
+  if (decision.action !== 'ignore') {
+    event.preventDefault();
+    event.stopPropagation();
+    if (decision.action === 'arm') {
+      writeOverlays();
+      return;
+    }
+    // The bar has done its job either way, and the pane under it is the one to
+    // ask for its status row back — which is not necessarily the pane the
+    // keyboard is about to end up on.
+    clearError();
+    repaintStatus();
+    if (decision.action === 'switch') switchTo(decision.index);
+    else if (decision.action === 'layout') changeLayout(decision.panes);
+    return;
+  }
   if (!settings.handleKey(event)) return;
   event.preventDefault();
   event.stopPropagation();
@@ -557,8 +973,9 @@ screenEl.addEventListener('keydown', (event) => {
   if (event.ctrlKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === 'c') {
     event.preventDefault();
     event.stopPropagation();
-    if (terminal !== null && terminal.hasSelection()) {
-      navigator.clipboard.writeText(terminal.getSelection());
+    const term = activeTerminal();
+    if (term !== null && term.hasSelection()) {
+      navigator.clipboard.writeText(term.getSelection());
     } else {
       send({ type: 'copyField' });
     }
@@ -602,13 +1019,23 @@ screenEl.addEventListener('paste', (event) => {
   if (text !== '') send({ type: 'paste', text });
 }, true);
 
-screenEl.addEventListener('click', (event) => {
+/**
+ * A click is both "type here" and, in a split, "type at this session from now
+ * on" — the pane is the only thing a mouse can aim at.
+ *
+ * @param {SessionSlot} slot
+ * @param {MouseEvent} event
+ * @returns {void}
+ */
+function paneClicked(slot, event) {
   screenEl.focus();
-  if (settings.open || terminal === null) return;
-  const cell = cellAt(event);
+  focusSlot(sessions.indexOf(slot));
+  const term = slot.terminal;
+  if (settings.open || term === null) return;
+  const cell = cellAt(slot, event);
   if (cell === null) return;
 
-  if (cell.row === terminal.rows - 1 && cell.col >= terminal.cols - SETTINGS_BUTTON_LABEL.length) {
+  if (cell.row === term.rows - 1 && cell.col >= term.cols - SETTINGS_BUTTON_LABEL.length) {
     settings.toggle();
     return;
   }
@@ -616,11 +1043,11 @@ screenEl.addEventListener('click', (event) => {
   // Clicking a cell puts the cursor there, the way every other 3270 client
   // works. The status line under the screen is ours, not the host's, and a
   // click that ends a drag was aiming at the selection, not at a field.
-  if (cell.row < 0 || cell.row >= terminal.rows - 1) return;
-  if (cell.col < 0 || cell.col >= terminal.cols) return;
-  if (terminal.hasSelection()) return;
-  send({ type: 'action', action: 'MoveCursor1', args: [String(cell.row + 1), String(cell.col + 1)] });
-});
+  if (cell.row < 0 || cell.row >= term.rows - 1) return;
+  if (cell.col < 0 || cell.col >= term.cols) return;
+  if (term.hasSelection()) return;
+  sendTo(slot, { type: 'action', action: 'MoveCursor1', args: [String(cell.row + 1), String(cell.col + 1)] });
+}
 
 try {
   await init();
@@ -645,6 +1072,33 @@ try {
 const storedHost = localStorage.getItem('tn3270.host');
 if (storedHost !== null) settings.setHost(storedHost);
 
-const session = await resolveSession();
-if (session.cols > 0) ensureTerminal(session.cols, session.rows + 1);
-connectSocket(session.id);
+const wanted = parseSessionHash(location.hash);
+if (wanted.some((id) => id !== null)) {
+  const response = await fetch('/api/sessions');
+  const body = await response.json();
+  const live = new Set((body.sessions ?? []).map((/** @type {{ id: string }} */ s) => s.id));
+  const gone = [];
+  for (let index = 0; index < MAX_SESSIONS; index++) {
+    const id = wanted[index];
+    if (id == null) continue;
+    if (live.has(id)) sessions[index] = newSlot(id);
+    else gone.push(index + 1);
+  }
+  if (gone.length > 0) showError('E3001', `Session ${gone.join(', ')} is gone; starting a new one.`);
+}
+
+if (!sessions.some((slot) => slot !== null)) {
+  const created = await createSession();
+  sessions[0] = newSlot(created.id, created.cols, created.rows + 1);
+}
+writeHash();
+
+// The page opens on one session filling the screen; a split is a keystroke away
+// (Ctrl-B and a shifted digit) and is not worth restoring across a reload, when
+// the sessions behind it may not have survived either.
+active = Math.max(0, sessions.findIndex((slot) => slot !== null));
+panes = [active];
+applyLayout();
+for (const slot of sessions) {
+  if (slot !== null) connectSocket(slot);
+}
