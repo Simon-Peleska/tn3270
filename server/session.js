@@ -61,6 +61,18 @@ export class Session {
     this.lastHost = null;
     /** @type {number | null} A model waiting for the connection to go away. */
     this.pendingModel = null;
+    /** @type {string} The oversize screen in force, `<cols>x<rows>`, or '' for
+     * the model's own size. b3270 takes it as a resource, which the config may
+     * write bare or qualified. */
+    this.oversize = config.b3270.settings['oversize']
+      ?? config.b3270.settings['b3270.oversize']
+      ?? config.b3270.settings['*oversize']
+      ?? '';
+    /** @type {string | null} An oversize waiting for the connection to go away. */
+    this.pendingOversize = null;
+    /** @type {string} What b3270 has actually been told, which is not always
+     * what was asked for — see sizeActions(). */
+    this.b3270Oversize = this.oversize;
 
     /** @type {string} */
     this.oiaText = '';
@@ -164,7 +176,73 @@ export class Session {
     }
 
     this.log.info('changing model', { model, from: this.model });
-    this.b3270.runActions([{ action: 'Set', args: ['model', String(model)] }]);
+    this.b3270.runActions(this.sizeActions(model));
+  }
+
+  /**
+   * Ask for a screen bigger than the model's own. This is what makes b3270
+   * negotiate as IBM-DYNAMIC, and like the model it is settled when the
+   * connection is made, so it changes the same way: drop, set, reopen. b3270
+   * can defer it instead (`Set("-defer", "oversize", ...)`) but the host would
+   * go on using the old size until the connection dropped anyway.
+   *
+   * @param {string} value `<cols>x<rows>`, or '' for the model's own size
+   * @returns {void}
+   */
+  setOversize(value) {
+    if (value === this.oversize) return;
+    this.log.info('changing oversize', { oversize: value, from: this.oversize });
+    this.oversize = value;
+
+    if (this.oia.connectionState !== 'not-connected') {
+      this.pendingOversize = value;
+      this.b3270.runActions([{ action: 'Disconnect' }]);
+      return;
+    }
+
+    this.b3270.runActions(this.sizeActions(this.model));
+  }
+
+  /**
+   * The one action that puts b3270 on a given model at the size asked for.
+   *
+   * Model and oversize are a single setting to the emulator: an oversize is
+   * only legal against the model it was measured for, and setting the model
+   * alone with an oversize left over from a bigger one fails outright
+   * ("Invalid oversize rows (24): Less than model 4 rows (43)"). b3270 takes
+   * both in one `Set()`, which reconciles them before applying either, so
+   * that is how they are always sent.
+   *
+   * Turning the oversize off is asked for as the model's own size rather than
+   * as nothing, because b3270 4.5 clears the resource but forgets to resize
+   * the screen: Common/model.c only calls `set_rows_cols()` for a non-empty
+   * oversize. Fixed after 4.5ga5; the same size either way, so this costs
+   * nothing but the terminal still negotiating as IBM-DYNAMIC.
+   *
+   * @param {number} model
+   * @returns {Array<{ action: string, args?: string[] }>}
+   */
+  sizeActions(model) {
+    const info = this.models.find((entry) => entry.model === model);
+    const asked = /^(\d+)x(\d+)$/.exec(this.oversize);
+    const fits = asked !== null && info !== undefined
+      && Number(asked[1]) >= info.columns && Number(asked[2]) >= info.rows;
+
+    let oversize = this.oversize;
+    if (!fits) {
+      // A screen the new model has outgrown is no screen size at all: say so,
+      // rather than leaving the browser showing a number nothing is using.
+      oversize = this.b3270Oversize === '' || info === undefined ? '' : `${info.columns}x${info.rows}`;
+      this.oversize = '';
+    }
+
+    /** @type {string[]} */
+    const args = [];
+    if (model !== this.model) args.push('model', String(model));
+    if (oversize !== this.b3270Oversize) args.push('oversize', oversize);
+    this.b3270Oversize = oversize;
+
+    return args.length > 0 ? [{ action: 'Set', args }] : [];
   }
 
   /**
@@ -190,7 +268,7 @@ export class Session {
       this.screen.applyErase(/** @type {import('./b3270.js').EraseIndication} */ (body));
       if (`${this.screen.rows}x${this.screen.cols}` !== before) {
         this.log.info('screen size changed', { rows: this.screen.rows, cols: this.screen.cols });
-        this.sendToAll({ type: 'screen', model: this.model, rows: this.screen.rows, cols: this.screen.cols });
+        this.sendToAll({ type: 'screen', model: this.model, rows: this.screen.rows, cols: this.screen.cols, oversize: this.oversize });
         this.repaintAll();
       }
       this.fieldsStale = true;
@@ -204,7 +282,7 @@ export class Session {
       this.screen.applyScreenMode(mode);
       if (`${this.screen.rows}x${this.screen.cols}` !== before) {
         this.log.info('screen mode changed', { model: this.model, rows: this.screen.rows, cols: this.screen.cols });
-        this.sendToAll({ type: 'screen', model: this.model, rows: this.screen.rows, cols: this.screen.cols });
+        this.sendToAll({ type: 'screen', model: this.model, rows: this.screen.rows, cols: this.screen.cols, oversize: this.oversize });
         this.repaintAll();
       }
       this.markReady();
@@ -235,13 +313,17 @@ export class Session {
       this.oia.applyConnection(connection);
       this.broadcastStatus();
       this.scheduleFlush();
-      if (connection.state === 'not-connected' && this.pendingModel !== null) {
-        const model = this.pendingModel;
+      if (connection.state === 'not-connected' && (this.pendingModel !== null || this.pendingOversize !== null)) {
+        const model = this.pendingModel ?? this.model;
+        this.log.info('applying the screen size the restart was for', {
+          model,
+          oversize: this.oversize,
+          host: this.lastHost ?? '',
+        });
         this.pendingModel = null;
-        /** @type {Array<{ action: string, args?: string[] }>} */
-        const actions = [{ action: 'Set', args: ['model', String(model)] }];
+        this.pendingOversize = null;
+        const actions = this.sizeActions(model);
         if (this.lastHost !== null) actions.push({ action: 'Open', args: [this.lastHost] });
-        this.log.info('applying the model the restart was for', { model, host: this.lastHost ?? '' });
         this.b3270.runActions(actions);
       }
       return;
@@ -394,6 +476,7 @@ export class Session {
       cols: this.screen.cols,
       model: this.model,
       models: this.models,
+      oversize: this.oversize,
       hostLocked: this.config.b3270.defaultHost !== null,
       role: viewer.role,
       viewers: this.viewers.size,
@@ -509,6 +592,9 @@ export class Session {
         return;
       case 'model':
         this.setModel(message.model);
+        return;
+      case 'oversize':
+        this.setOversize(message.value);
         return;
       case 'copyField': {
         const tag = this.b3270.runActions([{ action: 'ReadBuffer', args: ['Ascii', 'Field'] }]);

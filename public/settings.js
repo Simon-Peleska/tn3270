@@ -196,6 +196,15 @@ function paint(fg, bg, bold = false) {
 const FIELD_WIDTH = 26;
 const PANEL_WIDTH = 62;
 
+// The text size "fit to window" measures against. The font on screen floats to
+// fill the window with whatever grid the host gave us, so measuring at that
+// size would only ever answer with the grid already there. Asking at a size the
+// operator picks is what makes the question mean something: how much screen do
+// I get at text this big.
+const DEFAULT_FIT_FONT_SIZE = 16;
+const MIN_FIT_FONT_SIZE = 8;
+const MAX_FIT_FONT_SIZE = 32;
+
 /**
  * @typedef {object} SettingsDeps
  * @property {(bytes: string) => void} write
@@ -203,10 +212,13 @@ const PANEL_WIDTH = 62;
  * @property {(theme: Theme) => void} applyTheme
  * @property {(font: { name: string, family: string }) => void} applyFont
  * @property {(model: number) => void} applyModel
+ * @property {(value: string) => void} applyOversize `<cols>x<rows>`, or '' for the model's own size
+ * @property {(fontSize: number) => { cols: number, rows: number } | null} windowFit
+ *   the screen this browser window would hold with text that many pixels tall
  * @property {(enabled: boolean) => void} applyHostColors
  * @property {(host: string | null) => void} connect
  * @property {() => void} restore called when the page closes, to get the host screen back
- * @property {(settings: { theme: string, font: string, model: number, hostColors: boolean }) => void} persist
+ * @property {(settings: import('./store.js').StoredSettings) => void} persist
  */
 
 export class SettingsPage {
@@ -215,7 +227,7 @@ export class SettingsPage {
     this.deps = deps;
     /** @type {boolean} */
     this.open = false;
-    /** @type {number} 0 = theme, 1 = font, 2 = screen size, 3 = host colours */
+    /** @type {number} Index into rows(), which is not a fixed list. */
     this.selected = 0;
     /** @type {number} */
     this.themeIndex = 0;
@@ -225,6 +237,14 @@ export class SettingsPage {
     this.model = 2;
     /** @type {number} What the user has dialled up but not applied yet. */
     this.pendingModel = 2;
+    /** @type {string} The oversize screen the server has, `<cols>x<rows>`, or
+     * '' when the model's own size is in force. */
+    this.oversize = '';
+    /** @type {string} What the user has dialled up but not applied yet. */
+    this.pendingOversize = '';
+    /** @type {number} How tall the text is in the screen "fit to window"
+     * measures. Not the font size on screen — that one floats with the window. */
+    this.fitFontSize = DEFAULT_FIT_FONT_SIZE;
     /** @type {import('../server/b3270.js').ModelInfo[]} */
     this.models = [];
     /** @type {boolean} */
@@ -251,9 +271,48 @@ export class SettingsPage {
     return !this.connected;
   }
 
+  /**
+   * The rows of the page, top to bottom, as they are both drawn and driven.
+   * Two of them come and go — the host is only worth a row while there is
+   * nothing connected, and the text size only means anything while the screen
+   * is being fitted to the window — so they are built each time rather than
+   * counted off against fixed indexes.
+   *
+   * @returns {{ key: string, label: string, value: string }[]}
+   */
+  rows() {
+    /** @type {{ key: string, label: string, value: string }[]} */
+    const rows = [];
+    if (this.showsConnect()) {
+      rows.push({
+        key: 'host',
+        label: 'Host',
+        value: this.hostLocked
+          ? '(set by the server)'
+          : this.host + (this.selected === 0 ? '_' : ''),
+      });
+    }
+    rows.push({ key: 'theme', label: 'Theme', value: this.theme().name });
+    rows.push({ key: 'font', label: 'Font', value: this.font().name });
+    rows.push({ key: 'model', label: 'Screen model', value: this.describeModel(this.pendingModel) });
+    // The host is told the screen size once, when the connection is made, so
+    // this is a size to ask for rather than something that can follow the
+    // window around as it is dragged.
+    rows.push({
+      key: 'fit',
+      label: 'Fit to window',
+      value: this.pendingOversize === '' ? 'Off' : this.pendingOversize,
+    });
+    if (this.pendingOversize !== '') {
+      rows.push({ key: 'fitSize', label: 'Text size', value: `${this.fitFontSize} px` });
+    }
+    rows.push({ key: 'hostColors', label: 'Host colors', value: this.hostColors ? 'On' : 'Off' });
+    return rows;
+  }
+
   /** @returns {number} */
   fieldCount() {
-    return this.showsConnect() ? 5 : 4;
+    return this.rows().length;
   }
 
   /**
@@ -288,7 +347,7 @@ export class SettingsPage {
    * Take up saved values by name, so reordering the lists later cannot scramble
    * what somebody chose months ago.
    *
-   * @param {{ theme?: string, font?: string, hostColors?: boolean }} saved
+   * @param {Partial<import('./store.js').StoredSettings>} saved
    * @returns {void}
    */
   restoreSaved(saved) {
@@ -297,6 +356,9 @@ export class SettingsPage {
     const font = FONTS.findIndex((entry) => entry.name === saved.font);
     if (font !== -1) this.fontIndex = font;
     if (typeof saved.hostColors === 'boolean') this.hostColors = saved.hostColors;
+    if (typeof saved.fitFontSize === 'number') {
+      this.fitFontSize = Math.max(MIN_FIT_FONT_SIZE, Math.min(MAX_FIT_FONT_SIZE, saved.fitFontSize));
+    }
   }
 
   /** @returns {void} */
@@ -306,6 +368,7 @@ export class SettingsPage {
       font: this.font().name,
       model: this.model,
       hostColors: this.hostColors,
+      fitFontSize: this.fitFontSize,
     });
   }
 
@@ -322,6 +385,34 @@ export class SettingsPage {
     if (this.open) this.draw();
   }
 
+  /**
+   * @param {string} value `<cols>x<rows>`, or '' for the model's own size
+   * @returns {void}
+   */
+  setOversize(value) {
+    this.oversize = value;
+    this.pendingOversize = value;
+    if (this.open) this.draw();
+  }
+
+  /**
+   * The screen this window would hold, as b3270 wants it written. Never
+   * smaller than the model — an oversize below it is refused — and never more
+   * than the 16383 cells b3270 has a buffer for.
+   *
+   * @returns {string}
+   */
+  fitToWindow() {
+    const fit = this.deps.windowFit(this.fitFontSize);
+    if (fit === null) return '';
+    const info = this.models.find((entry) => entry.model === this.pendingModel);
+    const minCols = info?.columns ?? 80;
+    const minRows = info?.rows ?? 24;
+    const rows = Math.max(minRows, fit.rows);
+    const cols = Math.max(minCols, Math.min(fit.cols, Math.floor(16383 / rows)));
+    return `${cols}x${rows}`;
+  }
+
   /** @returns {void} */
   toggle() {
     if (this.open) this.close();
@@ -333,6 +424,7 @@ export class SettingsPage {
     this.open = true;
     this.selected = 0;
     this.pendingModel = this.model;
+    this.pendingOversize = this.oversize;
     this.draw();
   }
 
@@ -363,7 +455,7 @@ export class SettingsPage {
 
     // The connection row is a text field, not a value to cycle, so it takes
     // its own keys ahead of the generic ones below.
-    const onConnectRow = this.showsConnect() && this.selected === 0;
+    const onConnectRow = this.rows()[this.selected]?.key === 'host';
     if (onConnectRow && !this.hostLocked) {
       if (event.key === 'Backspace') {
         this.host = this.host.slice(0, -1);
@@ -394,6 +486,7 @@ export class SettingsPage {
         return true;
       }
       if (this.pendingModel !== this.model) this.deps.applyModel(this.pendingModel);
+      if (this.pendingOversize !== this.oversize) this.deps.applyOversize(this.pendingOversize);
       this.save();
       this.close();
       return true;
@@ -413,21 +506,33 @@ export class SettingsPage {
    * @returns {void}
    */
   change(step) {
-    // The connection row, when shown, pushes every other field down by one.
-    const field = this.selected - (this.showsConnect() ? 1 : 0);
-    if (field === 0) {
+    const key = this.rows()[this.selected]?.key;
+    if (key === 'theme') {
       this.themeIndex = (this.themeIndex + step + THEMES.length) % THEMES.length;
       this.deps.applyTheme(this.theme());
       this.save();
-    } else if (field === 1) {
+    } else if (key === 'font') {
       this.fontIndex = (this.fontIndex + step + FONTS.length) % FONTS.length;
       this.deps.applyFont(this.font());
       this.save();
-    } else if (field === 2) {
+    } else if (key === 'model') {
       const models = this.models.length > 0 ? this.models.map((info) => info.model) : [2, 3, 4, 5];
       const current = models.indexOf(this.pendingModel);
       const next = (current + step + models.length) % models.length;
       this.pendingModel = models[next] ?? this.pendingModel;
+    } else if (key === 'fit') {
+      // Two states, and the "on" one is measured afresh every time it is
+      // picked: the window may well have been resized since it was last shown.
+      this.pendingOversize = this.pendingOversize === '' ? this.fitToWindow() : '';
+    } else if (key === 'fitSize') {
+      // Bigger text, fewer cells. The size stops at both ends rather than
+      // wrapping round, so holding an arrow down lands somewhere sensible.
+      this.fitFontSize = Math.max(
+        MIN_FIT_FONT_SIZE,
+        Math.min(MAX_FIT_FONT_SIZE, this.fitFontSize + step),
+      );
+      this.pendingOversize = this.fitToWindow();
+      this.save();
     } else {
       // Only two states, so either arrow key just flips it.
       this.hostColors = !this.hostColors;
@@ -461,19 +566,10 @@ export class SettingsPage {
     const chosen = mix(field, foreground, 0.3);
     const warn = rgb(background)[0] > 128 ? '#a02c00' : '#ffcc00';
 
-    const showsConnect = this.showsConnect();
-    const labels = showsConnect
-      ? ['Host', 'Theme', 'Font', 'Screen size', 'Host colors']
-      : ['Theme', 'Font', 'Screen size', 'Host colors'];
-    const hostValue = this.hostLocked
-      ? '(set by the server)'
-      : this.host + (showsConnect && this.selected === 0 ? '_' : '');
-    const values = showsConnect
-      ? [hostValue, this.theme().name, this.font().name, this.describeModel(this.pendingModel), this.hostColors ? 'On' : 'Off']
-      : [this.theme().name, this.font().name, this.describeModel(this.pendingModel), this.hostColors ? 'On' : 'Off'];
+    const fields = this.rows();
 
     const left = Math.max(1, Math.floor((cols - PANEL_WIDTH) / 2) + 1);
-    const top = Math.max(1, Math.floor((rows - (18 + (labels.length - 4) * 2)) / 2) + 1);
+    const top = Math.max(1, Math.floor((rows - (18 + (fields.length - 4) * 2)) / 2) + 1);
 
     /** @type {string[]} */
     const out = [`${ESC}[?25l`, paint(foreground, background), `${ESC}[2J`];
@@ -481,19 +577,19 @@ export class SettingsPage {
     out.push(at(top, left), paint(foreground, background, true), 'TN3270 SETTINGS');
     out.push(at(top + 1, left), paint(dim, background), '='.repeat(PANEL_WIDTH));
 
-    for (let index = 0; index < labels.length; index++) {
+    for (let index = 0; index < fields.length; index++) {
+      const entry = fields[index];
       const row = top + 3 + index * 2;
       const active = index === this.selected;
-      const isConnectRow = showsConnect && index === 0;
       out.push(at(row, left), paint(active ? foreground : dim, background, active));
-      out.push(`${active ? '>' : ' '} ${(labels[index] ?? '').padEnd(14)}`);
+      out.push(`${active ? '>' : ' '} ${(entry?.label ?? '').padEnd(14)}`);
       out.push(paint(foreground, active ? chosen : field));
-      out.push(` ${(values[index] ?? '').padEnd(FIELD_WIDTH - 2)} `);
-      out.push(paint(dim, background), active ? (isConnectRow ? '  Enter' : '  < >') : '');
+      out.push(` ${(entry?.value ?? '').padEnd(FIELD_WIDTH - 2)} `);
+      out.push(paint(dim, background), active ? (entry?.key === 'host' ? '  Enter' : '  < >') : '');
     }
 
-    let row = top + 3 + labels.length * 2 + 1;
-    if (this.pendingModel !== this.model) {
+    let row = top + 3 + fields.length * 2 + 1;
+    if (this.pendingModel !== this.model || this.pendingOversize !== this.oversize) {
       // Two lines: the panel is 62 columns wide and autowrap is off, so a longer
       // sentence would simply be cut in half at the right edge.
       out.push(at(row, left), paint(warn, background, true));

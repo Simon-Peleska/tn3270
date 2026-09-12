@@ -160,6 +160,9 @@ let terminal = null;
 /** @type {number} The model the server has confirmed, which the picker must agree with. */
 let currentModel = 0;
 
+/** @type {string} The oversize the server has confirmed, in the same way. */
+let currentOversize = '';
+
 /** @type {boolean | null} Whether the last status the server sent was a connected
  * one; null until the first status arrives, so that first status is always
  * treated as a change and settles the settings page one way or the other. */
@@ -201,6 +204,8 @@ const settings = new SettingsPage({
   applyTheme,
   applyFont,
   applyModel: (model) => send({ type: 'model', model }),
+  applyOversize: (value) => send({ type: 'oversize', value }),
+  windowFit,
   applyHostColors: (enabled) => send({ type: 'hostColors', enabled }),
   connect: connectHost,
   restore: () => send({ type: 'refresh' }),
@@ -345,6 +350,38 @@ function fitFontSize() {
   if (created.wasmTerm !== undefined) renderer.render(created.wasmTerm, true);
 }
 
+/**
+ * How big a screen this window would hold with text `fontSize` pixels tall —
+ * the inverse of fitFontSize(), where the grid is fixed and the text scales.
+ * The answer is what the settings page asks the host for as an oversize screen.
+ *
+ * Cell metrics are measured at the font size currently in force, so they are
+ * scaled rather than re-measured: making the terminal lay itself out again
+ * just to count cells would flash the screen for nothing, and being a cell out
+ * either way is invisible.
+ *
+ * @param {number} fontSize
+ * @returns {{ cols: number, rows: number } | null}
+ */
+function windowFit(fontSize) {
+  const created = terminal;
+  const renderer = created?.renderer;
+  if (created === null || renderer === undefined) return null;
+
+  const style = getComputedStyle(screenEl);
+  const width = screenEl.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  const height = screenEl.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+  if (width < 1 || height < 1) return null;
+
+  const scale = fontSize / created.options.fontSize;
+  const cols = Math.floor(width / (renderer.charWidth * scale));
+  // One row of the grid is the OIA, which this side paints and the host knows
+  // nothing about.
+  const rows = Math.floor(height / (renderer.charHeight * scale)) - 1;
+  if (cols < 1 || rows < 1) return null;
+  return { cols, rows };
+}
+
 // The screen box is sized by the page, so its own resizes — the window, the
 // error bar appearing — are the signal to refit. Coalesced into a frame because
 // a drag fires this continuously.
@@ -447,6 +484,8 @@ function handleServerMessage(message) {
     currentModel = message.model;
     settings.models = message.models;
     settings.setModel(message.model);
+    currentOversize = message.oversize;
+    settings.setOversize(message.oversize);
     ensureTerminal(message.cols, message.rows + 1);
     // A host that comes from the config is the operator's business, not the
     // browser's: it is neither shown nor editable here.
@@ -457,6 +496,8 @@ function handleServerMessage(message) {
   if (message.type === 'screen') {
     currentModel = message.model;
     settings.setModel(message.model);
+    currentOversize = message.oversize;
+    settings.setOversize(message.oversize);
     ensureTerminal(message.cols, message.rows + 1);
     return;
   }
@@ -488,9 +529,10 @@ function handleServerMessage(message) {
     wasConnected = connected;
     return;
   }
-  // A refused model change leaves the settings page showing something the
-  // server never accepted, so put it back to the model actually in force.
+  // A refused change leaves the settings page showing something the server
+  // never accepted, so put it back to the size actually in force.
   settings.setModel(currentModel);
+  settings.setOversize(currentOversize);
   showError(message.code, message.message);
 }
 

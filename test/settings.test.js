@@ -23,16 +23,33 @@ function key(init) {
   });
 }
 
-function fixture() {
+/**
+ * The browser measures its own window; here it is a window of a fixed pixel
+ * size, with cells that grow with the text the way a monospace font's do.
+ *
+ * @param {number} width
+ * @param {number} height
+ * @returns {(fontSize: number) => { cols: number, rows: number }}
+ */
+function windowOf(width, height) {
+  return (fontSize) => ({
+    cols: Math.floor(width / (fontSize * 0.6)),
+    rows: Math.floor(height / (fontSize * 1.2)) - 1,
+  });
+}
+
+/** @param {(fontSize: number) => { cols: number, rows: number } | null} [fit] what the window would hold */
+function fixture(fit = () => ({ cols: 158, rows: 60 })) {
   const calls = {
     /** @type {string[]} */ written: [],
     /** @type {string[]} */ themes: [],
     /** @type {string[]} */ fonts: [],
     /** @type {number[]} */ models: [],
+    /** @type {string[]} */ oversizes: [],
     /** @type {boolean[]} */ hostColors: [],
     /** @type {(string | null)[]} */ hosts: [],
     /** @type {number} */ restores: 0,
-    /** @type {{ theme: string, font: string, model: number, hostColors: boolean }[]} */ saved: [],
+    /** @type {import('../public/store.js').StoredSettings[]} */ saved: [],
   };
   const page = new SettingsPage({
     write: (bytes) => calls.written.push(bytes),
@@ -40,6 +57,8 @@ function fixture() {
     applyTheme: (theme) => calls.themes.push(theme.name),
     applyFont: (font) => calls.fonts.push(font.name),
     applyModel: (model) => calls.models.push(model),
+    applyOversize: (value) => calls.oversizes.push(value),
+    windowFit: fit,
     applyHostColors: (enabled) => calls.hostColors.push(enabled),
     connect: (host) => calls.hosts.push(host),
     restore: () => { calls.restores += 1; },
@@ -96,6 +115,7 @@ test('theme and font apply as you scroll through them and are saved by name', ()
     font: FONTS[1]?.name,
     model: 2,
     hostColors: true,
+    fitFontSize: 16,
   });
   assert.deepEqual(calls.models, [], 'the screen size must not have moved');
 });
@@ -116,7 +136,7 @@ test('host colours default on, and either arrow key flips the saved toggle', () 
 
   page.connected = true;
   page.show();
-  page.selected = 3;
+  page.selected = 4;
   page.handleKey(key({ key: 'ArrowRight' }));
 
   assert.equal(page.hostColors, false);
@@ -126,6 +146,7 @@ test('host colours default on, and either arrow key flips the saved toggle', () 
     font: FONTS[0]?.name,
     model: 2,
     hostColors: false,
+    fitFontSize: 16,
   });
 
   page.restoreSaved({ hostColors: false });
@@ -154,6 +175,96 @@ test('a screen size change waits for Enter and warns what it costs', () => {
   assert.equal(calls.restores, 1);
 });
 
+test('fit to window asks for the screen the browser measured, on Enter', () => {
+  const { page, calls } = fixture();
+  page.connected = true;
+  page.show();
+
+  page.selected = 3;
+  page.handleKey(key({ key: 'ArrowRight' }));
+
+  assert.equal(page.pendingOversize, '158x60');
+  assert.deepEqual(calls.oversizes, [], 'nothing may happen before Enter');
+  const drawn = calls.written.at(-1) ?? '';
+  assert.match(drawn, /158x60/);
+  assert.match(drawn, /The host connection is dropped and reopened/);
+
+  page.handleKey(key({ key: 'Enter' }));
+  assert.deepEqual(calls.oversizes, ['158x60']);
+  assert.deepEqual(calls.models, [], 'the model itself did not move');
+});
+
+test('fitting again turns it off, and the model is the floor', () => {
+  // b3270 refuses an oversize smaller than the model it is running, so a
+  // window too small to hold the model has to ask for the model's own size.
+  const { page } = fixture(() => ({ cols: 40, rows: 12 }));
+  page.setModel(5);
+  page.connected = true;
+  page.show();
+
+  page.selected = 3;
+  page.handleKey(key({ key: 'ArrowRight' }));
+  assert.equal(page.pendingOversize, '132x27');
+
+  page.handleKey(key({ key: 'ArrowLeft' }));
+  assert.equal(page.pendingOversize, '', 'off is the model on its own');
+});
+
+test('the text size appears with the fit and drives what it measures', () => {
+  const { page, calls } = fixture(windowOf(1600, 800));
+  page.connected = true;
+  page.show();
+
+  page.selected = 3;
+  assert.equal(page.rows().length, 5, 'the text size is not offered while the fit is off');
+
+  page.handleKey(key({ key: 'ArrowRight' }));
+  assert.equal(page.pendingOversize, '166x40');
+  assert.equal(page.rows().length, 6);
+  assert.equal(page.rows()[4]?.key, 'fitSize');
+  assert.equal(page.rows()[4]?.value, '16 px');
+
+  page.handleKey(key({ key: 'ArrowDown' }));
+  page.handleKey(key({ key: 'ArrowRight' }));
+  assert.equal(page.fitFontSize, 17);
+  assert.equal(page.pendingOversize, '156x38', 'bigger text, fewer cells');
+  assert.equal(calls.saved.at(-1)?.fitFontSize, 17, 'the text size is remembered');
+
+  page.handleKey(key({ key: 'Enter' }));
+  assert.deepEqual(calls.oversizes, ['156x38']);
+});
+
+test('the text size stops at both ends instead of wrapping round', () => {
+  const { page } = fixture(windowOf(1600, 800));
+  page.connected = true;
+  page.show();
+
+  page.selected = 3;
+  page.handleKey(key({ key: 'ArrowRight' }));
+  page.selected = 4;
+
+  for (let step = 0; step < 30; step++) page.handleKey(key({ key: 'ArrowLeft' }));
+  assert.equal(page.fitFontSize, 8);
+  for (let step = 0; step < 60; step++) page.handleKey(key({ key: 'ArrowRight' }));
+  assert.equal(page.fitFontSize, 32);
+});
+
+test('a screen bigger than b3270 can hold is trimmed to fit its buffer', () => {
+  // 16383 cells is the whole 3270 buffer b3270 allocates; asking for more is
+  // refused outright, which would be a mystery from a page that just measured
+  // a very large window.
+  const { page } = fixture(() => ({ cols: 400, rows: 120 }));
+  page.connected = true;
+  page.show();
+
+  page.selected = 3;
+  page.handleKey(key({ key: 'ArrowRight' }));
+
+  const [cols, rows] = (page.pendingOversize.split('x')).map(Number);
+  assert.equal(rows, 120);
+  assert.ok((cols ?? 0) * (rows ?? 0) <= 16383, `${page.pendingOversize} does not fit the buffer`);
+});
+
 test('nothing the page draws runs off the right edge', () => {
   // Autowrap is off, so a line wider than the screen is silently cut in half
   // rather than wrapping — which is exactly how the size warning first shipped.
@@ -163,6 +274,7 @@ test('nothing the page draws runs off the right edge', () => {
   page.show();
   page.selected = 2;
   page.pendingModel = 5;
+  page.pendingOversize = '166x40';
   page.draw();
 
   const drawn = calls.written.at(-1) ?? '';

@@ -18,6 +18,8 @@ const KEY = 'ui';
  * @property {string} font
  * @property {number} model
  * @property {boolean} hostColors
+ * @property {number} fitFontSize how tall the text is in the screen that "fit
+ *   to window" measures; not the font size on screen, which floats
  */
 
 /** @type {Promise<IDBDatabase> | null} */

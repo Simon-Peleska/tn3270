@@ -13,11 +13,12 @@ import { AppError } from './errors.js';
  * @typedef {{ type: 'connect', host: string | null }} ConnectMessage
  * @typedef {{ type: 'disconnect' }} DisconnectMessage
  * @typedef {{ type: 'model', model: number }} ModelMessage
+ * @typedef {{ type: 'oversize', value: string }} OversizeMessage `<cols>x<rows>`, or '' for the model's own size
  * @typedef {{ type: 'refresh' }} RefreshMessage
  * @typedef {{ type: 'hostColors', enabled: boolean }} HostColorsMessage
  * @typedef {{ type: 'copyField' }} CopyFieldMessage
  * @typedef {{ type: 'fieldColor', color: string | null }} FieldColorMessage
- * @typedef {ActionMessage | TextMessage | PasteMessage | ConnectMessage | DisconnectMessage | ModelMessage | RefreshMessage | HostColorsMessage | CopyFieldMessage | FieldColorMessage} ClientMessage
+ * @typedef {ActionMessage | TextMessage | PasteMessage | ConnectMessage | DisconnectMessage | ModelMessage | OversizeMessage | RefreshMessage | HostColorsMessage | CopyFieldMessage | FieldColorMessage} ClientMessage
  *
  * @typedef {object} HelloMessage
  * @property {'hello'} type
@@ -26,6 +27,7 @@ import { AppError } from './errors.js';
  * @property {number} cols
  * @property {number} model
  * @property {import('./b3270.js').ModelInfo[]} models
+ * @property {string} oversize `<cols>x<rows>`, or '' when the model's own size is in force
  * @property {boolean} hostLocked The host comes from the config; the page hides it.
  * @property {'controller' | 'observer'} role
  * @property {number} viewers
@@ -39,6 +41,7 @@ import { AppError } from './errors.js';
  * @property {number} model
  * @property {number} rows
  * @property {number} cols
+ * @property {string} oversize `<cols>x<rows>`, or '' when the model's own size is in force
  *
  * @typedef {object} StatusMessage
  * @property {'status'} type
@@ -176,6 +179,21 @@ export function parseClientMessage(raw) {
       throw new AppError('E4002', `model must be a whole number between 2 and 5, got ${String(model)}`);
     }
     return { type: 'model', model };
+  }
+
+  // An oversize screen is asked for as columns x rows, both at least the
+  // model's own size — b3270 checks that itself, since it is the side that
+  // knows the model. What it cannot do is stop the browser asking for a screen
+  // it has no buffer for: 16383 cells is the hard limit in its own ctlr.c.
+  if (type === 'oversize') {
+    const value = message['value'];
+    if (typeof value !== 'string') throw new AppError('E4002', 'oversize.value must be a string');
+    if (value === '') return { type: 'oversize', value };
+    const parts = /^(\d{1,5})x(\d{1,5})$/.exec(value);
+    if (parts === null) throw new AppError('E4002', `oversize must be <cols>x<rows>, got "${value}"`);
+    const cells = Number(parts[1]) * Number(parts[2]);
+    if (cells > 16383) throw new AppError('E4006', `oversize ${value} is ${cells} cells`);
+    return { type: 'oversize', value };
   }
 
   throw new AppError('E4002', `unknown message type "${String(type)}"`);

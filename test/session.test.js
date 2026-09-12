@@ -187,7 +187,7 @@ test('changing the model resizes the grid and tells every viewer before repainti
     assert.notEqual(at, -1, `${viewer.id} must be told the new size`);
     const event = viewer.events[at];
     assert.deepEqual(event?.kind === 'message' ? event.message : null, {
-      type: 'screen', model: 2, rows: 24, cols: 80,
+      type: 'screen', model: 2, rows: 24, cols: 80, oversize: '',
     });
 
     // A repaint is meaningless to a viewer still holding a 43-row terminal, so
@@ -222,7 +222,7 @@ test('a host that only ever erases the default screen shrinks the grid to match'
   );
   assert.notEqual(at, -1, 'the viewer must be told the grid shrank to what the host actually uses');
   assert.deepEqual(viewer.events[at]?.kind === 'message' ? viewer.events[at].message : null, {
-    type: 'screen', model: 4, rows: 24, cols: 80,
+    type: 'screen', model: 4, rows: 24, cols: 80, oversize: '',
   });
 
   const next = viewer.events[at + 1];
@@ -372,6 +372,72 @@ test('a b3270 resource set in the config reaches the emulator', async (t) => {
 
   assert.equal(session.screen.rows, 30);
   assert.equal(session.screen.cols, 90);
+});
+
+test('fitting the screen to the window grows it while disconnected, and off puts it back', async (t) => {
+  const session = new Session(testConfig());
+  t.after(() => session.close());
+  await session.ready;
+  assert.equal(session.screen.rows, 43, 'the fixture starts on a model 4');
+
+  const controller = collectingViewer('controller');
+  session.attach(controller);
+
+  session.handleClientMessage(controller, { type: 'oversize', value: '120x50' });
+  await waitUntil(() => session.screen.rows === 50, 'the grid to grow to what the browser asked for');
+  assert.equal(session.screen.cols, 120);
+
+  const at = controller.events.findIndex((event) => event.kind === 'message' && event.message.type === 'screen');
+  assert.notEqual(at, -1, 'the viewer must be told the new size');
+  assert.deepEqual(controller.events[at]?.kind === 'message' ? controller.events[at].message : null, {
+    type: 'screen', model: 4, rows: 50, cols: 120, oversize: '120x50',
+  });
+
+  session.handleClientMessage(controller, { type: 'oversize', value: '' });
+  await waitUntil(() => session.screen.rows === 43, 'the model\'s own size to come back');
+  assert.equal(session.screen.cols, 80);
+});
+
+test('a model too wide for the fitted screen falls back to its own size', async (t) => {
+  // b3270 refuses a model whose columns the standing oversize is under
+  // ("Invalid oversize rows (24): Less than model 4 rows (43)"), so the two
+  // have to be reconciled here before either is sent.
+  const session = new Session(testConfig());
+  t.after(() => session.close());
+  await session.ready;
+
+  const controller = collectingViewer('controller');
+  session.attach(controller);
+
+  session.handleClientMessage(controller, { type: 'oversize', value: '100x50' });
+  await waitUntil(() => session.screen.cols === 100, 'the fitted screen');
+
+  session.handleClientMessage(controller, { type: 'model', model: 5 });
+  await waitUntil(() => session.screen.cols === 132, 'the model 5 screen');
+  assert.equal(session.screen.rows, 27);
+  assert.equal(session.oversize, '', 'a screen the model outgrew is no screen size at all');
+});
+
+test('fitting the screen under a live connection drops it and reopens the same host', async (t) => {
+  const fixture = await startTracedSession('test/traces/reverse.trc');
+  t.after(() => fixture.close());
+  const { session, host } = fixture;
+  await waitUntil(() => session.screen.rowText(0).includes('_____'), 'the screen to be drawn');
+  const expectedHost = `127.0.0.1:${host.port}`;
+
+  const controller = collectingViewer('controller');
+  session.attach(controller);
+  session.handleClientMessage(controller, { type: 'oversize', value: '100x50' });
+
+  // The host is told the screen size once, when the connection is made, so
+  // there is no way to change it but to make the connection again.
+  await waitUntil(() => session.screen.cols === 100, 'the grid to become the size asked for');
+  await waitUntil(
+    () => session.oia.connectionState !== 'not-connected',
+    'the host connection to come back',
+  );
+  assert.equal(session.oversize, '100x50');
+  assert.equal(session.lastHost, expectedHost);
 });
 
 test('the registry refuses to exceed maxSessions', () => {

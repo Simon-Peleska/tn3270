@@ -47,19 +47,29 @@ the host.
 ## 4. The screen
 
 - Geometry follows the model: 2 = 24×80, 3 = 32×80, 4 = 43×80, 5 = 27×132.
-  `b3270.model` sets the starting model; the picker in the toolbar changes it
-  afterwards. The list in the picker is the one b3270 itself reports at startup,
-  not a second copy of the table above.
-- A model is negotiated with the host when the connection is opened, so it can
-  only be changed while disconnected. The picker is disabled whenever there is a
-  connection, and a change asked for anyway is refused with `E3006` and the
-  picker snaps back to the model actually in force. Observers cannot change it
-  either (`E4003`).
-- Changing the model resizes the grid for **every** viewer, not just the one who
+  `b3270.model` sets the starting model; the settings page changes it afterwards.
+  The list it offers is the one b3270 itself reports at startup, not a second
+  copy of the table above.
+- **Fit to window** asks for a bigger screen than the model has: the browser
+  measures how many cells its window would hold at a chosen text size and asks
+  for exactly that many columns and rows, which b3270 takes as an *oversize* and
+  negotiates as IBM-DYNAMIC. Turning it off puts the model's own size back. The
+  screen is never smaller than the model — b3270 refuses that — and never more
+  than the 16383 cells b3270 has a buffer for (`E4006`); a model change that the
+  standing size no longer fits turns the oversize off rather than failing.
+- The **text size** the fit is measured at is a row of its own, shown only while
+  the fit is on, 8–32 px and saved in the browser. Bigger text means fewer cells.
+  It is what the screen is measured *with*, not the font size on screen: that one
+  goes on floating so the grid fills the window however it is resized afterwards.
+- The size is negotiated with the host once, when the connection is opened, so
+  changing either the model or the fit **drops the connection and reopens the
+  same host**. The settings page says so before it does it. Observers cannot
+  change the size (`E4003`).
+- A size change resizes the grid for **every** viewer, not just the one who
   asked.
 - The grid is drawn as large as the page allows without being cut off. Rows and
-  columns belong to the model and cannot be traded away, so the font size is
-  what scales — on a window resize, on a model change, and when the error bar
+  columns belong to the session and cannot be traded away, so the font size is
+  what scales — on a window resize, on a size change, and when the error bar
   appears or is dismissed.
 - Below the screen is one extra row, the **OIA** (Operator Information Area):
 
@@ -129,16 +139,17 @@ One WebSocket at `/ws/<session-id>`.
 terminal. Text frames are JSON:
 
 ```jsonc
-{"type":"hello","sessionId":"…","rows":43,"cols":80,"model":4,"models":[{"model":2,"rows":24,"columns":80}],"role":"controller","viewers":1}
-{"type":"screen","model":2,"rows":24,"cols":80}
+{"type":"hello","sessionId":"…","rows":43,"cols":80,"model":4,"oversize":"","models":[{"model":2,"rows":24,"columns":80}],"role":"controller","viewers":1}
+{"type":"screen","model":2,"rows":24,"cols":80,"oversize":""}
 {"type":"status","connection":"connected-tn3270e","host":"mainframe:23","locked":false,"role":"controller","viewers":2}
 {"type":"error","code":"E4003","message":"This session is being controlled by someone else."}
 ```
 
 `screen` is sent whenever the grid changes size, always immediately before the
-repaint that assumes the new size. One ordered WebSocket keeps them in that
-order, which is what stops a viewer writing new-sized bytes into an old-sized
-terminal.
+repaint that assumes the new size. `oversize` is the fitted screen in force,
+`<cols>x<rows>`, or empty when the model is at its own size. One ordered
+WebSocket keeps them in that order, which is what stops a viewer writing
+new-sized bytes into an old-sized terminal.
 
 **Browser → server.** Text frames only:
 
@@ -149,6 +160,7 @@ terminal.
 {"type":"connect","host":"mainframe:23"}
 {"type":"disconnect"}
 {"type":"model","model":4}
+{"type":"oversize","value":"158x60"}
 ```
 
 ### HTTP
@@ -172,7 +184,7 @@ Errors are JSON: `{"code":"E6001","message":"…"}` with a matching status.
 | `server.host` | `127.0.0.1` | Listen address |
 | `server.port` | `8017` | Listen port |
 | `b3270.path` | `b3270` | Executable, resolved from `PATH` |
-| `b3270.model` | `2` | 3270 model a session starts on, 2–5; changeable from the page while disconnected |
+| `b3270.model` | `2` | 3270 model a session starts on, 2–5; changeable from the settings page |
 | `b3270.defaultHost` | `null` | Connect new sessions here; `null` starts disconnected |
 | `b3270.extraArgs` | `[]` | Appended verbatim, e.g. `["-cafile","/path/ca.pem"]` |
 | `sessions.maxSessions` | `16` | Refuses more with `E3002` |
@@ -204,13 +216,18 @@ and in the page.
 | `E3003` | Session has too many viewers |
 | `E3004` | Screen indication referenced a cell outside the screen |
 | `E3005` | Host address is not allowed by config |
-| `E3006` | The screen model cannot be changed while a host connection is open |
+| `E3006` | *Retired* — the screen model can now be changed under a connection |
 | `E4001` | WebSocket message was not valid JSON |
 | `E4002` | WebSocket message had an unknown type |
 | `E4003` | Input rejected: viewer is an observer |
 | `E4004` | WebSocket closed unexpectedly |
+| `E4005` | Pasted text is too large to type into a screen |
+| `E4006` | Oversize screen has more cells than b3270 can hold |
 | `E5001` | Terminal renderer failed to initialise |
 | `E5002` | WebSocket connection to the server failed |
+| `E5003` | Settings could not be read from the browser database |
+| `E5004` | Settings could not be saved to the browser database |
+| `E5005` | Clipboard could not be read for a Shift+Insert paste |
 | `E6001` | Static file not found |
 | `E6002` | HTTP request failed |
 | `E6003` | WebSocket upgrade path is not a session |
@@ -225,7 +242,7 @@ navigated away from.
 ```bash
 nix develop            # node, typescript, and an X11-free b3270
 npm install
-npm test               # 54 tests: unit, integration, and the WASM round-trip
+npm test               # 106 tests: unit, integration, and the WASM round-trip
 npm run typecheck      # tsc --strict over JSDoc; the "no any" gate
 npm start              # http://127.0.0.1:8017
 ```

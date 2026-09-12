@@ -34,6 +34,7 @@ export const ERRORS = Object.freeze({
   E4003: 'Input rejected: viewer is an observer',
   E4004: 'WebSocket closed unexpectedly',
   E4005: 'Pasted text is too large to type into a screen',
+  E4006: 'Oversize screen has more cells than b3270 can hold',
 
   E5001: 'Terminal renderer failed to initialise',
   E5002: 'WebSocket connection to the server failed',
