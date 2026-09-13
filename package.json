@@ -4,6 +4,7 @@
   "description": "Web TN3270 terminal: b3270 backend, ghostty-web frontend",
   "type": "module",
   "private": true,
+  "license": "MIT",
   "scripts": {
     "start": "node server/main.js",
     "fakehost": "node test/fakehost.js test/traces/fields.trc 4001",
