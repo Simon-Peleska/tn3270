@@ -120,7 +120,7 @@ export function logger(scope, context = {}) {
     error: (err, f) => {
       const { code, summary } = describeError(err);
       emit("error", scope, context, `[${code}] ${summary}`, f);
-      if (RANK.error >= RANK[threshold] && err instanceof Error) {
+      if (err instanceof Error) {
         write(`${err.stack ?? err.message}\n`);
         if (err.cause) write(`  caused by: ${String(err.cause)}\n`);
       }

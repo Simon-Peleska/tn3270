@@ -29,7 +29,9 @@ b3270 answers `Model` with "Unknown action: Model". The working call is
 `{"action":"Set","args":["model","2"]}`, which emits `screen-mode` and `erase`.
 It is refused while a host connection is open — _"Cannot change model or oversize
 while connected"_ — because the model is negotiated during connection setup, so
-`Session#setModel` checks the connection state itself and answers `E3006`.
+`Session#setModel` checks the connection state itself: rather than surfacing the
+emulator's wording it parks the choice in `pendingModel`, disconnects, and
+applies it when the connection is gone, reopening the same host.
 
 ## b3270 announces its geometry a few milliseconds after it starts
 

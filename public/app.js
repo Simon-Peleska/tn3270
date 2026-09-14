@@ -84,18 +84,12 @@ function errorOverlayBytes() {
 function prefixBarBytes() {
   const term = activeTerminal();
   if (!prefix.armed || term === null) return "";
-  const colors = settings.theme().colors;
+  const { background, foreground } = settings.theme().colors;
   const text = switcherText(
     sessions.map((slot) => slot?.id ?? null),
     active,
   );
-  return barBytes(
-    term.rows,
-    term.cols,
-    text,
-    colors["background"] ?? "#000000",
-    colors["foreground"] ?? "#00ff00",
-  );
+  return barBytes(term.rows, term.cols, text, background, foreground);
 }
 
 /**
@@ -105,11 +99,9 @@ function prefixBarBytes() {
  * @returns {string}
  */
 function buttonBytes(term) {
-  const colors = settings.theme().colors;
-  const fg = colors["background"] ?? "#000000";
-  const bg = colors["foreground"] ?? "#00ff00";
+  const { background, foreground } = settings.theme().colors;
   const col = term.cols - BUTTONS.length + 1;
-  return `${ESC}7${ESC}[${term.rows};${col}H${paint(fg, bg, true)}${BUTTONS}${ESC}[0m${ESC}8`;
+  return `${ESC}7${ESC}[${term.rows};${col}H${paint(background, foreground, true)}${BUTTONS}${ESC}[0m${ESC}8`;
 }
 
 /**
@@ -583,18 +575,21 @@ function repaintCanvas(created) {
 }
 
 /**
+ * Build the session's terminal, or resize the one it has to the geometry the
+ * server last reported. A session with no geometry yet has nothing to build.
+ *
  * @param {SessionSlot} slot
- * @returns {import('ghostty-web').Terminal | null}
+ * @returns {void}
  */
 function ensureTerminal(slot) {
-  if (slot.cols < 1 || slot.rows < 1) return null;
+  if (slot.cols < 1 || slot.rows < 1) return;
   const existing = slot.terminal;
   if (existing !== null) {
     if (existing.cols !== slot.cols || existing.rows !== slot.rows)
       existing.resize(slot.cols, slot.rows);
     fitFontSize(slot);
     if (slot === activeSession()) openPanel()?.draw();
-    return existing;
+    return;
   }
   const created = new Terminal({
     cols: slot.cols,
@@ -610,12 +605,11 @@ function ensureTerminal(slot) {
   slot.terminal = created;
   paintFrame();
   fitFontSize(slot);
-  return created;
 }
 
 /** @returns {void} */
 function paintFrame() {
-  const background = settings.theme().colors["background"] ?? "#000000";
+  const background = settings.theme().colors.background;
   screenEl.style.background = background;
   for (const slot of sessions) {
     if (slot === null) continue;
@@ -632,18 +626,17 @@ function paintFrame() {
  */
 function applyTheme(theme) {
   paintFrame();
+  const colors = terminalColors(theme);
   for (const slot of sessions) {
     if (slot === null) continue;
-    sendQuietly(slot, {
-      type: "fieldColor",
-      color: theme.colors["field"] ?? null,
-    });
+    // The server paints the typeable fields, so every session is told which
+    // colour this theme wants them. A theme is the page's, not one pane's.
+    sendQuietly(slot, { type: "fieldColor", color: theme.colors.field });
 
     const created = slot.terminal;
     const renderer = created?.renderer;
     if (created == null || renderer === undefined) continue;
 
-    const colors = terminalColors(theme);
     renderer.setTheme(colors);
     created.options.theme = colors;
     created.reset();
@@ -682,15 +675,8 @@ async function applyFont(font) {
  * @returns {{ width: number, height: number } | null}
  */
 function paneBox(pane) {
-  const style = getComputedStyle(pane);
-  const width =
-    pane.clientWidth -
-    parseFloat(style.paddingLeft) -
-    parseFloat(style.paddingRight);
-  const height =
-    pane.clientHeight -
-    parseFloat(style.paddingTop) -
-    parseFloat(style.paddingBottom);
+  const width = pane.clientWidth;
+  const height = pane.clientHeight;
   if (width < 1 || height < 1) return null;
   return { width, height };
 }
@@ -871,8 +857,7 @@ function connectSocket(slot) {
   // On the URL so the first repaint already has the saved colours.
   const query = new URLSearchParams();
   if (!settings.hostColors) query.set("hostColors", "0");
-  const field = settings.theme().colors["field"];
-  if (field !== undefined) query.set("fieldColor", field);
+  query.set("fieldColor", settings.theme().colors.field);
   const ws = new WebSocket(
     `${scheme}://${location.host}/ws/${slot.id}?${query}`,
   );

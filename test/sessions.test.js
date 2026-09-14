@@ -8,23 +8,7 @@ import {
   sessionHash,
   switcherText,
 } from "../public/sessions.js";
-
-/**
- * @param {{ key?: string, code?: string, ctrlKey?: boolean, altKey?: boolean,
- *   metaKey?: boolean, shiftKey?: boolean }} init
- * @returns {KeyboardEvent}
- */
-function key(init) {
-  return /** @type {KeyboardEvent} */ ({
-    key: init.key ?? "",
-    code: init.code ?? "",
-    ctrlKey: init.ctrlKey ?? false,
-    altKey: init.altKey ?? false,
-    metaKey: init.metaKey ?? false,
-    shiftKey: init.shiftKey ?? false,
-    repeat: false,
-  });
-}
+import { key } from "./keyevent.js";
 
 test("Ctrl-B and a digit picks a session", () => {
   const prefix = new SessionPrefix();

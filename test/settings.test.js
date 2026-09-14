@@ -1,22 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { SettingsPage, THEMES, FONTS } from "../public/settings.js";
-
-/**
- * @param {{ key?: string, code?: string, altKey?: boolean, ctrlKey?: boolean, metaKey?: boolean }} init
- * @returns {KeyboardEvent}
- */
-function key(init) {
-  return /** @type {KeyboardEvent} */ ({
-    key: init.key ?? "",
-    code: init.code ?? "",
-    altKey: init.altKey ?? false,
-    ctrlKey: init.ctrlKey ?? false,
-    metaKey: init.metaKey ?? false,
-    shiftKey: false,
-    repeat: false,
-  });
-}
+import { key } from "./keyevent.js";
 
 /**
  * A fixed-pixel window whose cells grow with the text, as a monospace font's do.

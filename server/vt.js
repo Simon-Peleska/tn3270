@@ -186,8 +186,6 @@ export function delta(
   hostColors = true,
   fieldColor = null,
 ) {
-  if (dirtyRows.length === 0 && !oiaChanged) return encodeCursor(screen);
-
   const fieldTint = fieldTintSgr(fieldColor);
   let out = "";
   for (const row of dirtyRows) {

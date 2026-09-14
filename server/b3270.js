@@ -49,7 +49,6 @@ import { logger } from "./log.js";
  * @typedef {object} OiaIndication
  * @property {string} field
  * @property {string | boolean | number} [value]
- * @property {string} [lu]
  *
  * @typedef {object} ConnectionIndication
  * @property {string} state

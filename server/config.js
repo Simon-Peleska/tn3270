@@ -127,32 +127,44 @@ function section(source, path) {
 }
 
 /**
- * @param {Record<string, unknown>} obj
+ * What the config file calls this option, for the error message.
+ *
+ * @param {string} path the containing section, or '' for the root
  * @param {string} key
- * @param {string} name
+ * @returns {string}
+ */
+function named(path, key) {
+  return path === "" ? key : `${path}.${key}`;
+}
+
+/**
+ * @param {Record<string, unknown>} obj
+ * @param {string} path
+ * @param {string} key
  * @param {string} fallback
  * @returns {string}
  */
-function str(obj, key, name, fallback) {
+function str(obj, path, key, fallback) {
   const value = obj[key];
   if (value === undefined) return fallback;
   if (typeof value !== "string")
-    throw new AppError("E1003", `"${name}" must be a string`);
+    throw new AppError("E1003", `"${named(path, key)}" must be a string`);
   return value;
 }
 
 /**
  * @param {Record<string, unknown>} obj
+ * @param {string} path
  * @param {string} key
- * @param {string} name
  * @param {number} fallback
  * @param {number} min
  * @param {number} max
  * @returns {number}
  */
-function num(obj, key, name, fallback, min, max) {
+function num(obj, path, key, fallback, min, max) {
   const value = obj[key];
   if (value === undefined) return fallback;
+  const name = named(path, key);
   if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new AppError("E1003", `"${name}" must be a number`);
   }
@@ -167,29 +179,30 @@ function num(obj, key, name, fallback, min, max) {
 
 /**
  * @param {Record<string, unknown>} obj
+ * @param {string} path
  * @param {string} key
- * @param {string} name
  * @param {boolean} fallback
  * @returns {boolean}
  */
-function bool(obj, key, name, fallback) {
+function bool(obj, path, key, fallback) {
   const value = obj[key];
   if (value === undefined) return fallback;
   if (typeof value !== "boolean")
-    throw new AppError("E1003", `"${name}" must be a boolean`);
+    throw new AppError("E1003", `"${named(path, key)}" must be a boolean`);
   return value;
 }
 
 /**
  * @param {Record<string, unknown>} obj
+ * @param {string} path
  * @param {string} key
- * @param {string} name
  * @param {string[]} fallback
  * @returns {string[]}
  */
-function strArray(obj, key, name, fallback) {
+function strArray(obj, path, key, fallback) {
   const value = obj[key];
   if (value === undefined) return fallback;
+  const name = named(path, key);
   if (!Array.isArray(value))
     throw new AppError("E1003", `"${name}" must be an array of strings`);
   return value.map((entry, index) => {
@@ -205,13 +218,14 @@ function strArray(obj, key, name, fallback) {
  * full (`*oversize`) is passed to the emulator as given.
  *
  * @param {Record<string, unknown>} obj
+ * @param {string} path
  * @param {string} key
- * @param {string} name
  * @returns {Record<string, string>}
  */
-function resources(obj, key, name) {
+function resources(obj, path, key) {
   const value = obj[key];
   if (value === undefined) return {};
+  const name = named(path, key);
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new AppError(
       "E1003",
@@ -257,14 +271,7 @@ export function validateConfig(raw) {
   const sessionsSection = section(root, "sessions");
   const securitySection = section(root, "security");
 
-  const model = num(
-    b3270Section,
-    "model",
-    "b3270.model",
-    DEFAULTS.b3270.model,
-    2,
-    5,
-  );
+  const model = num(b3270Section, "b3270", "model", DEFAULTS.b3270.model, 2, 5);
   if (!Number.isInteger(model))
     throw new AppError("E1004", '"b3270.model" must be a whole number');
 
@@ -277,7 +284,7 @@ export function validateConfig(raw) {
     throw new AppError("E1003", '"b3270.defaultHost" must be a string or null');
   }
 
-  const logLevel = str(root, "logLevel", "logLevel", DEFAULTS.logLevel);
+  const logLevel = str(root, "", "logLevel", DEFAULTS.logLevel);
   if (
     logLevel !== "debug" &&
     logLevel !== "info" &&
@@ -292,85 +299,85 @@ export function validateConfig(raw) {
 
   return {
     server: {
-      host: str(serverSection, "host", "server.host", DEFAULTS.server.host),
+      host: str(serverSection, "server", "host", DEFAULTS.server.host),
       port: num(
         serverSection,
+        "server",
         "port",
-        "server.port",
         DEFAULTS.server.port,
         1,
         65535,
       ),
     },
     b3270: {
-      path: str(b3270Section, "path", "b3270.path", DEFAULTS.b3270.path),
+      path: str(b3270Section, "b3270", "path", DEFAULTS.b3270.path),
       model,
       defaultHost: rawDefaultHost === undefined ? null : rawDefaultHost,
-      settings: resources(b3270Section, "settings", "b3270.settings"),
+      settings: resources(b3270Section, "b3270", "settings"),
       extraArgs: strArray(
         b3270Section,
+        "b3270",
         "extraArgs",
-        "b3270.extraArgs",
         DEFAULTS.b3270.extraArgs,
       ),
     },
     sessions: {
       maxSessions: num(
         sessionsSection,
+        "sessions",
         "maxSessions",
-        "sessions.maxSessions",
         DEFAULTS.sessions.maxSessions,
         1,
         1000,
       ),
       maxViewersPerSession: num(
         sessionsSection,
+        "sessions",
         "maxViewersPerSession",
-        "sessions.maxViewersPerSession",
         DEFAULTS.sessions.maxViewersPerSession,
         1,
         1000,
       ),
       idleTimeoutMs: num(
         sessionsSection,
+        "sessions",
         "idleTimeoutMs",
-        "sessions.idleTimeoutMs",
         DEFAULTS.sessions.idleTimeoutMs,
         0,
         86400000,
       ),
       allowMultipleControllers: bool(
         sessionsSection,
+        "sessions",
         "allowMultipleControllers",
-        "sessions.allowMultipleControllers",
         DEFAULTS.sessions.allowMultipleControllers,
       ),
       allowAutomation: bool(
         sessionsSection,
+        "sessions",
         "allowAutomation",
-        "sessions.allowAutomation",
         DEFAULTS.sessions.allowAutomation,
       ),
     },
     security: {
       allowedHosts: strArray(
         securitySection,
+        "security",
         "allowedHosts",
-        "security.allowedHosts",
         DEFAULTS.security.allowedHosts,
       ),
       trustProxyHeaders: bool(
         securitySection,
+        "security",
         "trustProxyHeaders",
-        "security.trustProxyHeaders",
         DEFAULTS.security.trustProxyHeaders,
       ),
     },
     logLevel,
-    logFile: str(root, "logFile", "logFile", DEFAULTS.logFile),
+    logFile: str(root, "", "logFile", DEFAULTS.logFile),
     logMaxBytes: num(
       root,
-      "logMaxBytes",
+      "",
       "logMaxBytes",
       DEFAULTS.logMaxBytes,
       4096,

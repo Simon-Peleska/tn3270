@@ -66,8 +66,9 @@ export class Session {
       config.b3270.settings["b3270.oversize"] ??
       config.b3270.settings["*oversize"] ??
       "";
-    /** @type {string | null} An oversize waiting for the connection to go away. */
-    this.pendingOversize = null;
+    /** @type {boolean} Whether an oversize is waiting for the connection to go
+     * away. The size itself is already in `oversize`. */
+    this.pendingOversize = false;
     /** @type {string} What b3270 was told, not always what was asked for. */
     this.b3270Oversize = this.oversize;
 
@@ -95,13 +96,12 @@ export class Session {
     this.recording = null;
 
     /** @type {() => void} */
-    let announce = () => {};
+    this.markReady = () => {};
     /** @type {Promise<void>} b3270 reports its geometry and model list a few ms
      * after spawn; describing the session earlier hands out a placeholder 24x80. */
     this.ready = new Promise((resolve) => {
-      announce = resolve;
+      this.markReady = resolve;
     });
-    this.markReady = announce;
 
     this.b3270 = new B3270({
       path: config.b3270.path,
@@ -185,7 +185,7 @@ export class Session {
     this.oversize = value;
 
     if (this.oia.connectionState !== "not-connected") {
-      this.pendingOversize = value;
+      this.pendingOversize = true;
       this.b3270.runActions([{ action: "Disconnect" }]);
       return;
     }
@@ -236,10 +236,14 @@ export class Session {
     const { kind, body } = indication;
 
     if (kind === "screen") {
-      this.screen.applyScreen(
-        /** @type {import('./b3270.js').ScreenIndication} */ (body),
+      const update = /** @type {import('./b3270.js').ScreenIndication} */ (
+        body
       );
-      this.fieldsStale = true;
+      this.screen.applyScreen(update);
+      // An indication carrying only a cursor move — an arrow key, Tab, a click —
+      // cannot have moved a field boundary, and re-reading the buffer for one is
+      // the most expensive thing on the keystroke path.
+      if ((update.rows ?? []).length > 0) this.fieldsStale = true;
       this.scheduleFlush();
       return;
     }
@@ -294,7 +298,7 @@ export class Session {
       this.scheduleFlush();
       if (
         connection.state === "not-connected" &&
-        (this.pendingModel !== null || this.pendingOversize !== null)
+        (this.pendingModel !== null || this.pendingOversize)
       ) {
         const model = this.pendingModel ?? this.model;
         this.log.info("applying the screen size the restart was for", {
@@ -303,7 +307,7 @@ export class Session {
           host: this.lastHost ?? "",
         });
         this.pendingModel = null;
-        this.pendingOversize = null;
+        this.pendingOversize = false;
         const actions = this.sizeActions(model);
         if (this.lastHost !== null)
           actions.push({ action: "Open", args: [this.lastHost] });
@@ -420,7 +424,7 @@ export class Session {
         );
         encoded.set(key, bytes);
       }
-      if (bytes !== "") viewer.sendScreen(bytes);
+      viewer.sendScreen(bytes);
     }
   }
 
@@ -501,18 +505,9 @@ export class Session {
 
   /** @returns {void} */
   repaintAll() {
-    this.oiaText = this.oia.render(this.screen.cols, this.screen.cursor);
+    // Pending deltas are about to be painted over, and are against the old size.
     this.screen.takeDirtyRows();
-    for (const viewer of this.viewers) {
-      viewer.sendScreen(
-        fullRepaint(
-          this.screen,
-          this.oiaText,
-          viewer.hostColors,
-          viewer.fieldColor,
-        ),
-      );
-    }
+    for (const viewer of this.viewers) this.repaint(viewer);
   }
 
   /**
@@ -598,6 +593,11 @@ export class Session {
       user: viewer.user ?? "",
       total: this.viewers.size,
     });
+
+    // Its copy request will never be answered to anyone now.
+    for (const [tag, waiting] of this.pendingFieldReads) {
+      if (waiting === viewer) this.pendingFieldReads.delete(tag);
+    }
 
     // Or the session would be permanently read-only.
     if (viewer.role === "controller" && !this.allowSharedEditing) {

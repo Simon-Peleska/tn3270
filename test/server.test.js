@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { WebSocket } from "ws";
 import { INIT_SEQUENCE } from "../server/vt.js";
 import { FakeHost } from "./fakehost.js";
-import { waitUntil } from "./helpers.js";
+import { testConfig, waitUntil } from "./helpers.js";
 
 /** @returns {Promise<number>} a port that was free a moment ago */
 function freePort() {
@@ -32,16 +32,18 @@ async function startServer(logLevel = "warn", trustProxyHeaders = false) {
   const port = await freePort();
   const configFile = `test/.tmp-config-${port}.jsonc`;
   const logFile = `test/.tmp-log-${port}.log`;
+  // The same config the in-process tests use, so the model the traces were
+  // recorded on is stated once.
   await writeFile(
     configFile,
-    JSON.stringify({
-      server: { host: "127.0.0.1", port },
-      b3270: { path: "b3270", model: 4 },
-      sessions: { idleTimeoutMs: 0 },
-      security: { trustProxyHeaders },
-      logLevel,
-      logFile,
-    }),
+    JSON.stringify(
+      testConfig({
+        server: { host: "127.0.0.1", port },
+        security: { trustProxyHeaders },
+        logLevel,
+        logFile,
+      }),
+    ),
   );
 
   const child = spawn("node", ["server/main.js"], {

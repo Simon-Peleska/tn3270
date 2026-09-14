@@ -5,8 +5,11 @@ import { Panel, cycle } from "./panel.js";
 /**
  * @typedef {object} Theme
  * @property {string} name
- * @property {Record<string, string>} colors ghostty's chrome and ANSI slots,
- *   plus `field`, the tint of a typeable field; ghostty ignores that extra key
+ * @property {{ background: string, foreground: string, field: string } & Record<string, string>} colors
+ *   ghostty's chrome and ANSI slots, plus `field`, the tint of a typeable
+ *   field; ghostty ignores that extra key. The three named here are the ones
+ *   this page and the bars draw with, so a theme that leaves one out is a type
+ *   error rather than a silent default.
  */
 
 /** @type {readonly Theme[]} */
@@ -591,11 +594,6 @@ export class SettingsPage extends Panel {
     this.hints = false;
   }
 
-  /** @returns {boolean} */
-  showsConnect() {
-    return !this.connected;
-  }
-
   /**
    * Whether the size in force was measured from the window, not asked for by name.
    *
@@ -613,7 +611,7 @@ export class SettingsPage extends Panel {
   rows() {
     /** @type {SettingsRow[]} */
     const rows = [];
-    if (this.showsConnect()) {
+    if (!this.connected) {
       rows.push({
         key: "host",
         label: "Host",
@@ -851,7 +849,7 @@ export class SettingsPage extends Panel {
     this.pendingModel = this.model;
     this.pendingOversize = this.oversize;
     // A session with nowhere to connect is why this panel opened itself.
-    if (this.showsConnect()) this.onCommand = false;
+    if (!this.connected) this.onCommand = false;
     this.draw();
   }
 

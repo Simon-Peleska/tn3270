@@ -36,8 +36,6 @@ export class OiaModel {
     this.insert = false;
     /** @type {boolean} */
     this.typeahead = false;
-    /** @type {string} */
-    this.lu = "";
   }
 
   /**
@@ -55,9 +53,6 @@ export class OiaModel {
         break;
       case "typeahead":
         this.typeahead = value === true || value === "true";
-        break;
-      case "lu":
-        this.lu = typeof value === "string" ? value : "";
         break;
       default:
         break;
@@ -105,17 +100,16 @@ export class OiaModel {
     const position = `${String(cursor.row + 1).padStart(2, "0")}/${String(cursor.col + 1).padStart(3, "0")}`;
 
     const right = [flags, position].filter(Boolean).join("  ");
-    const middle = lock;
 
     let line = left.slice(0, width);
     const centreStart = Math.max(
       line.length + 2,
-      Math.floor((width - middle.length) / 2),
+      Math.floor((width - lock.length) / 2),
     );
-    if (middle && centreStart + middle.length <= width - right.length - 2) {
-      line = line.padEnd(centreStart, " ") + middle;
-    } else if (middle) {
-      line = `${line}  ${middle}`;
+    if (lock && centreStart + lock.length <= width - right.length - 2) {
+      line = line.padEnd(centreStart, " ") + lock;
+    } else if (lock) {
+      line = `${line}  ${lock}`;
     }
 
     if (right.length + 1 <= width) {

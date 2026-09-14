@@ -182,9 +182,11 @@ guarantee; `test/session.test.js` asserts the two events are adjacent and in tha
 order, for the controller and the observer alike.
 
 b3270 also refuses a model change while connected — the model is negotiated with
-the host — so `Session#setModel` checks the connection state first and answers
-with `E3006` rather than letting the emulator's own wording surface. The picker
-in the page is disabled at the same time, but the server does not rely on that.
+the host — so `Session#setModel` checks the connection state first rather than
+letting the emulator's own wording surface. A connected session parks the choice
+in `pendingModel`, disconnects, applies it once the connection is gone, and
+reopens the same host; `setOversize` does the same with `pendingOversize`. The
+settings page warns before it does this, but the server does not rely on that.
 
 The model list in the picker comes from b3270's `models` indication at startup,
 so the frontend holds no copy of the 3270 model table.
@@ -242,7 +244,7 @@ a second keybinding set, and a second fit-to-window problem are exactly the
 complexity this rule avoids. One renderer, one input path, one thing to keep
 sized and focused.
 
-The pattern (see `errorOverlayBytes()` and `settingsButtonBytes()` in
+The pattern (see `errorOverlayBytes()` and `buttonBytes()` in
 `public/app.js`): build a string of VT escapes, wrap the cursor move in
 `ESC 7` / `ESC 8` (save/restore) so painting chrome never steals the real 3270
 cursor, and re-write it after every host update so it survives the next

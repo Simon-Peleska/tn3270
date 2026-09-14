@@ -74,9 +74,7 @@ test("the screen model matches the model 4 geometry the traces were recorded at"
 });
 
 test("a malformed data stream does not bring the session down", async (t) => {
-  const fixture = await startTracedSession("test/traces/short_sba.trc", {
-    records: 1,
-  });
+  const fixture = await startTracedSession("test/traces/short_sba.trc");
   t.after(() => fixture.close());
 
   // The trace ends mid-order, which b3270 reports without dying.

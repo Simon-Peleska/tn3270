@@ -159,11 +159,12 @@ test("a keystroke moves the cursor and the delta carries it", async (t) => {
   );
 
   const bytes = delta(screen, screen.takeDirtyRows(), "", false);
-  const terminal = ghostty.createTerminal(screen.cols, screen.rows + 1);
-  terminal.write(fullRepaint(screen, ""));
-  terminal.write(bytes);
-
-  const cursor = terminal.getCursor();
+  const { cursor } = render(
+    ghostty,
+    screen.cols,
+    screen.rows + 1,
+    fullRepaint(screen, "") + bytes,
+  );
   assert.equal(cursor.y, screen.cursor.row);
   assert.equal(cursor.x, screen.cursor.col);
 });

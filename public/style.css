@@ -20,7 +20,6 @@
 :root {
   color-scheme: dark;
   --bg: #12141a;
-  --line: #2b303b;
   --text: #d8dce6;
 }
 
@@ -41,20 +40,6 @@ body {
     14px/1.4 ui-sans-serif,
     system-ui,
     sans-serif;
-}
-
-button {
-  font: inherit;
-  color: inherit;
-  background: #262a34;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 4px 10px;
-  cursor: pointer;
-}
-
-button:hover {
-  background: #313644;
 }
 
 /* min-height 0 and overflow hidden stop a briefly too-large grid from bouncing

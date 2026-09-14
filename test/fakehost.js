@@ -91,10 +91,9 @@ export class FakeHost {
 
   /**
    * @param {number} [count]
-   * @param {{ timingMark?: boolean }} [options]
    * @returns {Promise<void>}
    */
-  async sendRecords(count = 1, options = {}) {
+  async sendRecords(count = 1) {
     await this.waitForConnection();
     const socket = this.socket;
     if (socket === null) throw new Error("no connection");
@@ -108,7 +107,7 @@ export class FakeHost {
     if (remaining > 0)
       throw new Error(`trace ran out before ${count} record(s) were sent`);
 
-    if (options.timingMark !== false) await this.sendTimingMark();
+    await this.sendTimingMark();
   }
 
   /**
