@@ -5,13 +5,12 @@
  * into the terminal, exactly like settings.js and macros.js.
  */
 
-import { ESC, at, mix, paint } from './settings.js';
+import { cycle, drawListPanel } from './settings.js';
 
 /** @typedef {import('../server/protocol.js').RecorderStep} RecorderStep */
 
 const LABEL_WIDTH = 26;
 const FIELD_WIDTH = 28;
-const PANEL_WIDTH = 62;
 
 /**
  * @typedef {object} RecorderDeps
@@ -149,9 +148,8 @@ export class RecorderPage {
       return true;
     }
     if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-      const count = this.rows().length;
       const step = event.key === 'ArrowUp' ? -1 : 1;
-      this.selected = (this.selected + step + count) % count;
+      this.selected = cycle(this.selected, step, this.rows().length);
       this.draw();
       return true;
     }
@@ -166,40 +164,20 @@ export class RecorderPage {
 
   /** @returns {void} */
   draw() {
-    const { cols, rows } = this.deps.geometry();
-    const colors = this.deps.theme().colors;
-    const background = colors['background'] ?? '#000000';
-    const foreground = colors['foreground'] ?? '#00ff00';
-    const dim = mix(background, foreground, 0.55);
-    const field = colors['field'] ?? mix(background, foreground, 0.12);
-    const chosen = mix(field, foreground, 0.3);
-
-    const fields = this.rows();
-    const left = Math.max(1, Math.floor((cols - PANEL_WIDTH) / 2) + 1);
-    const top = Math.max(1, Math.floor((rows - (10 + fields.length * 2)) / 2) + 1);
-
-    /** @type {string[]} */
-    const out = [`${ESC}[?25l`, paint(foreground, background), `${ESC}[2J`];
-
-    out.push(at(top, left), paint(foreground, background, true), 'TN3270 RECORDER');
-    out.push(at(top + 1, left), paint(dim, background), '='.repeat(PANEL_WIDTH));
-
-    for (let index = 0; index < fields.length; index++) {
-      const entry = fields[index];
-      const row = top + 3 + index * 2;
-      const active = index === this.selected;
-      out.push(at(row, left), paint(active ? foreground : dim, background, active));
-      out.push(`${active ? '>' : ' '} ${(entry?.label ?? '').slice(0, LABEL_WIDTH).padEnd(LABEL_WIDTH)}`);
-      out.push(paint(foreground, active ? chosen : field));
-      out.push(` ${(entry?.value ?? '').slice(0, FIELD_WIDTH - 2).padEnd(FIELD_WIDTH - 2)} `);
-    }
-
-    const helpRow = top + 3 + fields.length * 2 + 1;
-    out.push(at(helpRow, left), paint(dim, background));
-    out.push('Up/Down select   Enter start/stop/export   Esc close');
-    out.push(at(helpRow + 1, left), paint(dim, background));
-    out.push('A password field is never recorded, only noted.');
-
-    this.deps.write(out.join(''));
+    drawListPanel({
+      write: this.deps.write,
+      geometry: this.deps.geometry,
+      theme: this.deps.theme(),
+      title: 'TN3270 RECORDER',
+      fields: this.rows(),
+      selected: this.selected,
+      labelWidth: LABEL_WIDTH,
+      fieldWidth: FIELD_WIDTH,
+      heightBase: 10,
+      helpLines: [
+        'Up/Down select   Enter start/stop/export   Esc close',
+        'A password field is never recorded, only noted.',
+      ],
+    });
   }
 }

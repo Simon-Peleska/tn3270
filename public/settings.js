@@ -203,12 +203,70 @@ export function paint(fg, bg, bold = false) {
  * @param {number} length
  * @returns {number}
  */
-function cycle(index, step, length) {
+export function cycle(index, step, length) {
   return (index + step + length) % length;
 }
 
 const FIELD_WIDTH = 26;
 const PANEL_WIDTH = 62;
+
+/**
+ * The label/value list panel that macros.js and recorder.js both draw: a
+ * title, a divider, one row per field with the selected row highlighted, and
+ * a help line or two underneath. settings.js draws its own — it has a
+ * per-row trailing hint and a variable-width label column that this shape
+ * does not.
+ *
+ * @param {object} args
+ * @param {(bytes: string) => void} args.write
+ * @param {() => { cols: number, rows: number }} args.geometry
+ * @param {Theme} args.theme
+ * @param {string} args.title
+ * @param {{ label: string, value: string }[]} args.fields
+ * @param {number} args.selected
+ * @param {number} args.labelWidth
+ * @param {number} args.fieldWidth
+ * @param {number} args.heightBase rows the panel needs beyond its fields, for
+ *   vertical centering
+ * @param {string[]} args.helpLines
+ * @returns {void}
+ */
+export function drawListPanel({ write, geometry, theme, title, fields, selected, labelWidth, fieldWidth, heightBase, helpLines }) {
+  const { cols, rows } = geometry();
+  const colors = theme.colors;
+  const background = colors['background'] ?? '#000000';
+  const foreground = colors['foreground'] ?? '#00ff00';
+  const dim = mix(background, foreground, 0.55);
+  const field = colors['field'] ?? mix(background, foreground, 0.12);
+  const chosen = mix(field, foreground, 0.3);
+
+  const left = Math.max(1, Math.floor((cols - PANEL_WIDTH) / 2) + 1);
+  const top = Math.max(1, Math.floor((rows - (heightBase + fields.length * 2)) / 2) + 1);
+
+  /** @type {string[]} */
+  const out = [`${ESC}[?25l`, paint(foreground, background), `${ESC}[2J`];
+
+  out.push(at(top, left), paint(foreground, background, true), title);
+  out.push(at(top + 1, left), paint(dim, background), '='.repeat(PANEL_WIDTH));
+
+  for (let index = 0; index < fields.length; index++) {
+    const entry = fields[index];
+    const row = top + 3 + index * 2;
+    const active = index === selected;
+    out.push(at(row, left), paint(active ? foreground : dim, background, active));
+    out.push(`${active ? '>' : ' '} ${(entry?.label ?? '').slice(0, labelWidth).padEnd(labelWidth)}`);
+    out.push(paint(foreground, active ? chosen : field));
+    out.push(` ${(entry?.value ?? '').slice(0, fieldWidth - 2).padEnd(fieldWidth - 2)} `);
+  }
+
+  let helpRow = top + 3 + fields.length * 2 + 1;
+  for (const line of helpLines) {
+    out.push(at(helpRow, left), paint(dim, background), line);
+    helpRow += 1;
+  }
+
+  write(out.join(''));
+}
 
 // The font on screen floats to fill the window with the grid the host gave us,
 // so measuring at that size would only answer with the grid already there.
@@ -550,7 +608,7 @@ export class SettingsPage {
 
     if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
       const step = event.key === 'ArrowUp' ? -1 : 1;
-      this.selected = (this.selected + step + this.fieldCount()) % this.fieldCount();
+      this.selected = cycle(this.selected, step, this.fieldCount());
       this.draw();
       return true;
     }
