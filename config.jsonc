@@ -21,7 +21,7 @@
 
     // Host to connect to when a session is created without an explicit one.
     // null means the session starts disconnected and waits for the user.
-    "defaultHost": null,
+    "defaultHost": "tn3270.plexb.pta.at:992",
 
     // Any b3270 resource, passed as -xrm "b3270.<name>: <value>". This is the
     // general escape hatch: every setting b3270 has can be set here, whether or

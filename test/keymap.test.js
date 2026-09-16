@@ -40,7 +40,7 @@ test('holding down any other AID key is dropped the same way, but ordinary keys 
   // of leaving a host like TSO keyboard-locked on a blank screen.
   assert.equal(mapKey(key({ key: 'Escape', code: 'Escape', repeat: true })), null);
   assert.equal(mapKey(key({ key: 'F3', code: 'F3', repeat: true })), null);
-  assert.equal(mapKey(key({ key: '1', code: 'Digit1', ctrlKey: true, repeat: true })), null);
+  assert.equal(mapKey(key({ key: 'Insert', code: 'Insert', altKey: true, repeat: true })), null);
 
   assert.deepEqual(mapKey(key({ key: 'Escape', code: 'Escape' })), { kind: 'action', action: 'Attn', args: [] });
 
@@ -51,10 +51,8 @@ test('holding down any other AID key is dropped the same way, but ordinary keys 
   });
 });
 
-test('left Control still means the control bindings', () => {
-  assert.deepEqual(mapKey(key({ key: 'a', code: 'KeyA', ctrlKey: true })), {
-    kind: 'action', action: 'Attn', args: [],
-  });
+test('plain Ctrl combinations are left to the browser, PCOMM does not use them', () => {
+  assert.equal(mapKey(key({ key: 'a', code: 'KeyA', ctrlKey: true })), null);
 });
 
 test('function keys are PF keys, shifted ones are the high twelve', () => {
@@ -64,8 +62,45 @@ test('function keys are PF keys, shifted ones are the high twelve', () => {
   });
 });
 
-test('a printable key is text and Alt is left to the page', () => {
+test('Escape is Attn, Shift-Escape is SysReq, PCOMM-style', () => {
+  assert.deepEqual(mapKey(key({ key: 'Escape' })), { kind: 'action', action: 'Attn', args: [] });
+  assert.deepEqual(mapKey(key({ key: 'Escape', shiftKey: true })), {
+    kind: 'action', action: 'SysReq', args: [],
+  });
+});
+
+test('Pause is Clear and Caps Lock is Reset, PCOMM-style', () => {
+  assert.deepEqual(mapKey(key({ key: 'Pause' })), { kind: 'action', action: 'Clear', args: [] });
+  assert.deepEqual(mapKey(key({ key: 'CapsLock' })), { kind: 'action', action: 'Reset', args: [] });
+});
+
+test('End is EraseEOF, Alt-End is EraseInput', () => {
+  assert.deepEqual(mapKey(key({ key: 'End' })), { kind: 'action', action: 'EraseEOF', args: [] });
+  assert.deepEqual(mapKey(key({ key: 'End', altKey: true })), {
+    kind: 'action', action: 'EraseInput', args: [],
+  });
+});
+
+test('Insert and Home carry Dup/FieldMark on Shift and PA1/PA2 on Alt', () => {
+  assert.deepEqual(mapKey(key({ key: 'Insert' })), { kind: 'action', action: 'ToggleInsert', args: [] });
+  assert.deepEqual(mapKey(key({ key: 'Insert', shiftKey: true })), { kind: 'action', action: 'Dup', args: [] });
+  assert.deepEqual(mapKey(key({ key: 'Insert', altKey: true })), { kind: 'action', action: 'PA', args: ['1'] });
+
+  assert.deepEqual(mapKey(key({ key: 'Home' })), { kind: 'action', action: 'Home', args: [] });
+  assert.deepEqual(mapKey(key({ key: 'Home', shiftKey: true })), {
+    kind: 'action', action: 'FieldMark', args: [],
+  });
+  assert.deepEqual(mapKey(key({ key: 'Home', altKey: true })), { kind: 'action', action: 'PA', args: ['2'] });
+});
+
+test('Shift-PageUp is PA3, plain PageUp is unbound', () => {
+  assert.deepEqual(mapKey(key({ key: 'PageUp', shiftKey: true })), { kind: 'action', action: 'PA', args: ['3'] });
+  assert.equal(mapKey(key({ key: 'PageUp' })), null);
+});
+
+test('a printable key is text and Alt is otherwise left to the page', () => {
   assert.deepEqual(mapKey(key({ key: 'x', code: 'KeyX' })), { kind: 'text', value: 'x' });
-  // Alt+Space opens the settings page, so nothing with Alt may reach the host.
+  // Alt+Space opens the settings page; mapKey never sees it in practice, but
+  // it must still refuse it since PCOMM has no function on the space bar.
   assert.equal(mapKey(key({ key: ' ', code: 'Space', altKey: true })), null);
 });
