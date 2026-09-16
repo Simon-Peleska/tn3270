@@ -2,6 +2,7 @@ import { init, Terminal } from '/vendor/dist/ghostty-web.js';
 import { mapKey } from '/keymap.js';
 import { ESC, SettingsPage, paint, terminalColors } from '/settings.js';
 import { MacrosPage } from '/macros.js';
+import { RecorderPage } from '/recorder.js';
 import { loadSettings, saveSettings, loadMacros, saveMacros } from '/store.js';
 import { MAX_SESSIONS, SessionPrefix, paneAreas, parseSessionHash, sessionHash, switcherText } from '/sessions.js';
 import { installBoxSelection } from '/box-select.js';
@@ -33,10 +34,11 @@ const MAX_FONT_SIZE = 64;
 
 const RESET_LABEL = '[Reset]';
 const MACROS_LABEL = '[Macros]';
+const RECORD_LABEL = '[Record]';
 const SETTINGS_LABEL = '[Settings]';
 /** Exactly one narrower than BUTTON_COLUMNS in server/oia.js, which holds these
  *  columns of the status line clear for them. */
-const BUTTONS = `${RESET_LABEL} ${MACROS_LABEL} ${SETTINGS_LABEL}`;
+const BUTTONS = `${RESET_LABEL} ${MACROS_LABEL} ${RECORD_LABEL} ${SETTINGS_LABEL}`;
 
 /** @type {{ code: string, message: string } | null} */
 let activeError = null;
@@ -128,6 +130,7 @@ function showError(code, message) {
   errorTimer = setTimeout(clearError, 6000);
   if (settings.open) settings.draw();
   else if (macros.open) macros.draw();
+  else if (recorder.open) recorder.draw();
   else writeOverlays();
 }
 
@@ -154,6 +157,10 @@ function repaintStatus() {
   }
   if (macros.open) {
     macros.draw();
+    return;
+  }
+  if (recorder.open) {
+    recorder.draw();
     return;
   }
   sendQuietly(painted, { type: 'refresh' });
@@ -300,7 +307,8 @@ function waitForUnlock(slot) {
  * @returns {void}
  */
 function downloadFile(filename, content) {
-  const blob = new Blob([content], { type: 'application/xml' });
+  const type = filename.endsWith('.json') ? 'application/json' : 'application/xml';
+  const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
@@ -376,6 +384,18 @@ const macros = new MacrosPage({
   error: showError,
 });
 
+const recorder = new RecorderPage({
+  write: (bytes) => {
+    activeTerminal()?.write(bytes);
+    writeOverlays();
+  },
+  geometry: () => ({ cols: activeTerminal()?.cols ?? 80, rows: activeTerminal()?.rows ?? 25 }),
+  theme: () => settings.theme(),
+  dispatch: (message) => sendTo(activeSession(), message),
+  restore: () => send({ type: 'refresh' }),
+  exportFile: downloadFile,
+});
+
 /**
  * ghostty-web 0.4.0 resizes the canvas in CSS pixels after a font or theme
  * change, discarding the device-pixel backing store its own resize() set up.
@@ -406,6 +426,7 @@ function ensureTerminal(slot) {
     fitFontSize(slot);
     if (settings.open && slot === activeSession()) settings.draw();
     if (macros.open && slot === activeSession()) macros.draw();
+    if (recorder.open && slot === activeSession()) recorder.draw();
     return existing;
   }
   const created = new Terminal({
@@ -718,7 +739,7 @@ function connectSocket(slot) {
     // the pane it is drawn in. Dropping the rest is safe because the server is
     // asked for a full repaint when they come back into view.
     const term = slot.terminal;
-    const covered = (settings.open || macros.open) && slot === activeSession();
+    const covered = (settings.open || macros.open || recorder.open) && slot === activeSession();
     if (term === null || slot.pane.hidden || covered) return;
     term.write(new Uint8Array(event.data));
     term.write(buttonBytes(term));
@@ -790,6 +811,10 @@ function handleServerMessage(slot, message) {
     if (onScreen) navigator.clipboard.writeText(message.text);
     return;
   }
+  if (message.type === 'recorderStep') {
+    recorder.record(message.step);
+    return;
+  }
   if (message.type === 'status') {
     const changed = slot.connected !== message.connected;
     slot.connection = message.connection;
@@ -826,6 +851,7 @@ function handleServerMessage(slot, message) {
       if (message.connected) {
         settings.close();
         macros.close();
+        recorder.close();
         clearError();
       } else {
         settings.show();
@@ -861,6 +887,10 @@ function repaint(slot) {
   }
   if (macros.open && slot === activeSession()) {
     macros.draw();
+    return;
+  }
+  if (recorder.open && slot === activeSession()) {
+    recorder.draw();
     return;
   }
   // A session still opening has nothing to repaint yet, and whatever is on its
@@ -917,6 +947,7 @@ function focusSlot(index) {
   // asked for its screen back.
   if (settings.open) settings.close();
   if (macros.open) macros.close();
+  if (recorder.open) recorder.close();
 
   if (!panes.includes(index)) {
     const here = Math.max(0, panes.indexOf(active));
@@ -1027,23 +1058,38 @@ window.addEventListener('keydown', (event) => {
     else if (decision.action === 'layout') changeLayout(decision.panes);
     return;
   }
-  // Each page's own toggle key closes the other one first, so a keystroke
-  // never leaves both drawn over the terminal at once.
-  if (event.altKey && event.code === 'Space' && macros.open) macros.close();
-  if (event.altKey && event.code === 'KeyM' && settings.open) settings.close();
+  // Each page's own toggle key closes the other two first, so a keystroke
+  // never leaves more than one drawn over the terminal at once.
+  if (event.altKey && event.code === 'Space' && (macros.open || recorder.open)) {
+    macros.close();
+    recorder.close();
+  }
+  if (event.altKey && event.code === 'KeyM' && (settings.open || recorder.open)) {
+    settings.close();
+    recorder.close();
+  }
+  if (event.altKey && event.code === 'KeyR' && (settings.open || macros.open)) {
+    settings.close();
+    macros.close();
+  }
 
   if (settings.handleKey(event)) {
     event.preventDefault();
     event.stopPropagation();
     return;
   }
-  if (!macros.handleKey(event)) return;
+  if (macros.handleKey(event)) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+  if (!recorder.handleKey(event)) return;
   event.preventDefault();
   event.stopPropagation();
 }, true);
 
 screenEl.addEventListener('keydown', (event) => {
-  if (settings.open || macros.open) return;
+  if (settings.open || macros.open || recorder.open) return;
   // A keystroke aimed at the live host is also the operator saying "I've seen
   // it", exactly how a real 3270 clears an operator-error condition.
   clearError();
@@ -1090,7 +1136,7 @@ screenEl.addEventListener('keydown', (event) => {
 screenEl.addEventListener('paste', (event) => {
   event.preventDefault();
   event.stopPropagation();
-  if (settings.open || macros.open) return;
+  if (settings.open || macros.open || recorder.open) return;
   clearError();
   const text = event.clipboardData?.getData('text/plain') ?? '';
   if (text !== '') send({ type: 'paste', text });
@@ -1126,18 +1172,23 @@ function paneClicked(slot, event) {
   focusSlot(sessions.indexOf(slot));
   const term = slot.terminal;
   const renderer = term?.renderer;
-  if (settings.open || macros.open || term === null || renderer === undefined) return;
+  if (settings.open || macros.open || recorder.open || term === null || renderer === undefined) return;
 
   const rect = renderer.getCanvas().getBoundingClientRect();
   const row = Math.floor((event.clientY - rect.top) / renderer.charHeight);
   const col = Math.floor((event.clientX - rect.left) / renderer.charWidth);
 
   const settingsStart = term.cols - SETTINGS_LABEL.length;
-  const macrosStart = settingsStart - 1 - MACROS_LABEL.length;
+  const recordStart = settingsStart - 1 - RECORD_LABEL.length;
+  const macrosStart = recordStart - 1 - MACROS_LABEL.length;
   const resetStart = term.cols - BUTTONS.length;
 
   if (row === term.rows - 1 && col >= settingsStart) {
     settings.toggle();
+    return;
+  }
+  if (row === term.rows - 1 && col >= recordStart) {
+    recorder.toggle();
     return;
   }
   if (row === term.rows - 1 && col >= macrosStart) {

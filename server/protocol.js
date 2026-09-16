@@ -21,7 +21,8 @@ export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
  * @typedef {{ type: 'sharing', allowView: boolean, allowEdit: boolean }} SharingMessage
  *   The controller's own call: allowView lets a second viewer attach at all,
  *   allowEdit lets one who has typed.
- * @typedef {ActionMessage | TextMessage | PasteMessage | ConnectMessage | DisconnectMessage | ModelMessage | OversizeMessage | RefreshMessage | HostColorsMessage | CopyFieldMessage | FieldColorMessage | SharingMessage} ClientMessage
+ * @typedef {{ type: 'recorder', action: 'start' | 'stop' }} RecorderMessage
+ * @typedef {ActionMessage | TextMessage | PasteMessage | ConnectMessage | DisconnectMessage | ModelMessage | OversizeMessage | RefreshMessage | HostColorsMessage | CopyFieldMessage | FieldColorMessage | SharingMessage | RecorderMessage} ClientMessage
  *
  * @typedef {object} HelloMessage
  * @property {'hello'} type
@@ -76,7 +77,23 @@ export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
  * @property {'fieldContent'} type
  * @property {string} text
  *
- * @typedef {HelloMessage | ScreenMessage | StatusMessage | ErrorMessage | FieldContentMessage} ServerMessage
+ * One step of a recording in progress, sent to every viewer the moment it
+ * happens so a `RecorderPage` can build up its export without polling.
+ *
+ * @typedef {object} RecorderStep
+ * @property {string[]} screen The screen, one plain-text line per row, as it
+ *   stood right before this step was applied.
+ * @property {string} [action] A b3270 action name — omitted for a password
+ *   marker, which carries no action of its own.
+ * @property {string[]} [args]
+ * @property {true} [password] A whole run of keystrokes into a password field,
+ *   collapsed to this one marker so none of them are ever recorded.
+ *
+ * @typedef {object} RecorderStepMessage
+ * @property {'recorderStep'} type
+ * @property {RecorderStep} step
+ *
+ * @typedef {HelloMessage | ScreenMessage | StatusMessage | ErrorMessage | FieldContentMessage | RecorderStepMessage} ServerMessage
  */
 
 /**
@@ -187,6 +204,14 @@ export function parseClientMessage(raw) {
       throw new AppError('E4002', 'sharing.allowView and allowEdit must be booleans');
     }
     return { type: 'sharing', allowView, allowEdit };
+  }
+
+  if (type === 'recorder') {
+    const action = message['action'];
+    if (action !== 'start' && action !== 'stop') {
+      throw new AppError('E4002', `recorder.action must be "start" or "stop", got ${String(action)}`);
+    }
+    return { type: 'recorder', action };
   }
 
   if (type === 'model') {

@@ -22,6 +22,7 @@
       "/cursor-glyph.js": ["public/cursor-glyph.js"],
       "/settings.js": ["public/settings.js"],
       "/macros.js": ["public/macros.js"],
+      "/recorder.js": ["public/recorder.js"],
       "/sessions.js": ["public/sessions.js"],
       "/store.js": ["public/store.js"]
     }
