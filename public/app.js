@@ -128,9 +128,8 @@ function showError(code, message) {
   activeError = { code, message };
   if (errorTimer !== undefined) clearTimeout(errorTimer);
   errorTimer = setTimeout(clearError, 6000);
-  if (settings.open) settings.draw();
-  else if (macros.open) macros.draw();
-  else if (recorder.open) recorder.draw();
+  const page = openOverlayPage();
+  if (page) page.draw();
   else writeOverlays();
 }
 
@@ -151,16 +150,9 @@ function clearError() {
 function repaintStatus() {
   const painted = overlaySlot;
   overlaySlot = null;
-  if (settings.open) {
-    settings.draw();
-    return;
-  }
-  if (macros.open) {
-    macros.draw();
-    return;
-  }
-  if (recorder.open) {
-    recorder.draw();
+  const page = openOverlayPage();
+  if (page) {
+    page.draw();
     return;
   }
   sendQuietly(painted, { type: 'refresh' });
@@ -396,6 +388,25 @@ const recorder = new RecorderPage({
   exportFile: downloadFile,
 });
 
+// Drawn as VT bytes into whichever pane is on screen, and mutually exclusive:
+// each toggles the others closed, so at most one is ever open at once.
+const overlayPages = [settings, macros, recorder];
+
+/** @returns {typeof overlayPages[number] | null} */
+function openOverlayPage() {
+  return overlayPages.find((page) => page.open) ?? null;
+}
+
+/** @returns {boolean} */
+function anyOverlayOpen() {
+  return overlayPages.some((page) => page.open);
+}
+
+/** @returns {void} */
+function closeOverlayPages() {
+  for (const page of overlayPages) page.close();
+}
+
 /**
  * ghostty-web 0.4.0 resizes the canvas in CSS pixels after a font or theme
  * change, discarding the device-pixel backing store its own resize() set up.
@@ -424,9 +435,7 @@ function ensureTerminal(slot) {
   if (existing !== null) {
     if (existing.cols !== slot.cols || existing.rows !== slot.rows) existing.resize(slot.cols, slot.rows);
     fitFontSize(slot);
-    if (settings.open && slot === activeSession()) settings.draw();
-    if (macros.open && slot === activeSession()) macros.draw();
-    if (recorder.open && slot === activeSession()) recorder.draw();
+    if (slot === activeSession()) openOverlayPage()?.draw();
     return existing;
   }
   const created = new Terminal({
@@ -739,7 +748,7 @@ function connectSocket(slot) {
     // the pane it is drawn in. Dropping the rest is safe because the server is
     // asked for a full repaint when they come back into view.
     const term = slot.terminal;
-    const covered = (settings.open || macros.open || recorder.open) && slot === activeSession();
+    const covered = anyOverlayOpen() && slot === activeSession();
     if (term === null || slot.pane.hidden || covered) return;
     term.write(new Uint8Array(event.data));
     term.write(buttonBytes(term));
@@ -849,9 +858,7 @@ function handleServerMessage(slot, message) {
     // that it stays where the user or the connection left it.
     if (changed) {
       if (message.connected) {
-        settings.close();
-        macros.close();
-        recorder.close();
+        closeOverlayPages();
         clearError();
       } else {
         settings.show();
@@ -881,16 +888,9 @@ function handleServerMessage(slot, message) {
  * @returns {void}
  */
 function repaint(slot) {
-  if (settings.open && slot === activeSession()) {
-    settings.draw();
-    return;
-  }
-  if (macros.open && slot === activeSession()) {
-    macros.draw();
-    return;
-  }
-  if (recorder.open && slot === activeSession()) {
-    recorder.draw();
+  const page = slot === activeSession() ? openOverlayPage() : null;
+  if (page) {
+    page.draw();
     return;
   }
   // A session still opening has nothing to repaint yet, and whatever is on its
@@ -945,9 +945,7 @@ function focusSlot(index) {
 
   // Closed before the switch, so the pane the page was drawn over is the one
   // asked for its screen back.
-  if (settings.open) settings.close();
-  if (macros.open) macros.close();
-  if (recorder.open) recorder.close();
+  closeOverlayPages();
 
   if (!panes.includes(index)) {
     const here = Math.max(0, panes.indexOf(active));
@@ -1060,36 +1058,23 @@ window.addEventListener('keydown', (event) => {
   }
   // Each page's own toggle key closes the other two first, so a keystroke
   // never leaves more than one drawn over the terminal at once.
-  if (event.altKey && event.code === 'Space' && (macros.open || recorder.open)) {
-    macros.close();
-    recorder.close();
-  }
-  if (event.altKey && event.code === 'KeyM' && (settings.open || recorder.open)) {
-    settings.close();
-    recorder.close();
-  }
-  if (event.altKey && event.code === 'KeyR' && (settings.open || macros.open)) {
-    settings.close();
-    macros.close();
+  for (const [code, page] of [['Space', settings], ['KeyM', macros], ['KeyR', recorder]]) {
+    if (event.altKey && event.code === code) {
+      for (const other of overlayPages) if (other !== page) other.close();
+    }
   }
 
-  if (settings.handleKey(event)) {
-    event.preventDefault();
-    event.stopPropagation();
-    return;
+  for (const page of overlayPages) {
+    if (page.handleKey(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
   }
-  if (macros.handleKey(event)) {
-    event.preventDefault();
-    event.stopPropagation();
-    return;
-  }
-  if (!recorder.handleKey(event)) return;
-  event.preventDefault();
-  event.stopPropagation();
 }, true);
 
 screenEl.addEventListener('keydown', (event) => {
-  if (settings.open || macros.open || recorder.open) return;
+  if (anyOverlayOpen()) return;
   // A keystroke aimed at the live host is also the operator saying "I've seen
   // it", exactly how a real 3270 clears an operator-error condition.
   clearError();
@@ -1136,7 +1121,7 @@ screenEl.addEventListener('keydown', (event) => {
 screenEl.addEventListener('paste', (event) => {
   event.preventDefault();
   event.stopPropagation();
-  if (settings.open || macros.open || recorder.open) return;
+  if (anyOverlayOpen()) return;
   clearError();
   const text = event.clipboardData?.getData('text/plain') ?? '';
   if (text !== '') send({ type: 'paste', text });
@@ -1172,7 +1157,7 @@ function paneClicked(slot, event) {
   focusSlot(sessions.indexOf(slot));
   const term = slot.terminal;
   const renderer = term?.renderer;
-  if (settings.open || macros.open || recorder.open || term === null || renderer === undefined) return;
+  if (anyOverlayOpen() || term === null || renderer === undefined) return;
 
   const rect = renderer.getCanvas().getBoundingClientRect();
   const row = Math.floor((event.clientY - rect.top) / renderer.charHeight);
@@ -1183,21 +1168,21 @@ function paneClicked(slot, event) {
   const macrosStart = recordStart - 1 - MACROS_LABEL.length;
   const resetStart = term.cols - BUTTONS.length;
 
-  if (row === term.rows - 1 && col >= settingsStart) {
-    settings.toggle();
-    return;
-  }
-  if (row === term.rows - 1 && col >= recordStart) {
-    recorder.toggle();
-    return;
-  }
-  if (row === term.rows - 1 && col >= macrosStart) {
-    macros.toggle();
-    return;
-  }
-  if (row === term.rows - 1 && col >= resetStart) {
-    resetSize(slot);
-    return;
+  if (row === term.rows - 1) {
+    // Widest button first: each start is further left than the last, so a
+    // click right of any of them is also right of the ones still to check.
+    const buttons = [
+      { start: settingsStart, action: () => settings.toggle() },
+      { start: recordStart, action: () => recorder.toggle() },
+      { start: macrosStart, action: () => macros.toggle() },
+      { start: resetStart, action: () => resetSize(slot) },
+    ];
+    for (const button of buttons) {
+      if (col >= button.start) {
+        button.action();
+        return;
+      }
+    }
   }
 
   // Clicking a cell puts the cursor there, the way every other 3270 client

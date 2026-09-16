@@ -96,7 +96,7 @@ test('recording captures typed text and actions, ignoring anything else sent whi
 
   page.stopRecording();
   assert.equal(page.isRecording(), false);
-  assert.deepEqual(page.pendingSave?.steps, [
+  assert.deepEqual(page.naming?.kind === 'save' ? page.naming.steps : undefined, [
     { text: 'AB', action: 'Tab', args: [] },
     { text: 'pasted', action: 'Enter', args: [] },
   ]);
@@ -107,7 +107,7 @@ test('a leftover run of typed text with no trailing action becomes its own final
   page.startRecording();
   page.record({ type: 'text', value: 'hi' });
   page.stopRecording();
-  assert.deepEqual(page.pendingSave?.steps, [{ text: 'hi', action: '', args: [] }]);
+  assert.deepEqual(page.naming?.kind === 'save' ? page.naming.steps : undefined, [{ text: 'hi', action: '', args: [] }]);
 });
 
 test('stopping a recording asks for a name, and enter saves it', () => {
@@ -116,7 +116,7 @@ test('stopping a recording asks for a name, and enter saves it', () => {
   page.record({ type: 'action', action: 'Enter', args: [] });
   page.show(); // reopen the page to reach the control row and stop it
   page.handleKey(key({ key: 'Enter' })); // stop, via the control row
-  assert.equal(page.pendingSave !== null, true);
+  assert.equal(page.naming?.kind, 'save');
 
   const defaultLength = page.nameBuffer.length;
   for (let i = 0; i < defaultLength; i++) page.handleKey(key({ key: 'Backspace' }));
@@ -134,7 +134,7 @@ test('escape while naming a fresh recording discards it, not the whole page', ()
   page.stopRecording();
   page.show();
   page.handleKey(key({ key: 'Escape' }));
-  assert.equal(page.pendingSave, null);
+  assert.equal(page.naming, null);
   assert.equal(page.open, true, 'only the naming step was cancelled');
 });
 
@@ -145,7 +145,7 @@ test('a blank name is refused, leaving the page waiting for a real one', () => {
   page.nameBuffer = '';
   page.show();
   page.handleKey(key({ key: 'Enter' }));
-  assert.equal(page.pendingSave !== null, true, 'nothing was saved');
+  assert.equal(page.naming !== null, true, 'nothing was saved');
 });
 
 test('a duplicate name is disambiguated automatically', () => {
@@ -164,7 +164,7 @@ test('renaming an existing macro updates it in place', () => {
   page.show();
   page.selected = 1;
   page.handleKey(key({ key: 'r' }));
-  assert.equal(page.renaming, 0);
+  assert.deepEqual(page.naming, { kind: 'rename', index: 0 });
 
   page.handleKey(key({ key: 'Backspace' }));
   page.handleKey(key({ key: 'Backspace' }));
@@ -173,14 +173,14 @@ test('renaming an existing macro updates it in place', () => {
   page.handleKey(key({ key: 'Enter' }));
 
   assert.equal(page.macros[0]?.name, 'New');
-  assert.equal(page.renaming, null);
+  assert.equal(page.naming, null);
   assert.deepEqual(calls.saved.at(-1), page.macros);
 });
 
 test('renaming a macro to its own name is not treated as a collision with itself', () => {
   const { page } = fixture();
   page.macros.push({ name: 'Keep', steps: [] });
-  page.renaming = 0;
+  page.naming = { kind: 'rename', index: 0 };
   page.nameBuffer = 'Keep';
   page.confirmName();
   assert.equal(page.macros[0]?.name, 'Keep');

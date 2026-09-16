@@ -5,7 +5,7 @@
  * already a renderer and a keyboard aimed at it here.
  */
 
-import { ESC, at, mix, paint } from './settings.js';
+import { cycle, drawListPanel } from './settings.js';
 import { macrosToXml, parseMacrosXml } from './macro-xml.js';
 
 /** @typedef {import('./macro-xml.js').Macro} Macro */
@@ -13,7 +13,6 @@ import { macrosToXml, parseMacrosXml } from './macro-xml.js';
 
 const LABEL_WIDTH = 22;
 const FIELD_WIDTH = 32;
-const PANEL_WIDTH = 62;
 
 /**
  * @param {string} name
@@ -57,11 +56,10 @@ export class MacrosPage {
     this.recording = null;
     /** @type {{ macro: Macro, active: boolean } | null} */
     this.playing = null;
-    /** @type {{ steps: MacroStep[] } | null} a finished recording awaiting a name */
-    this.pendingSave = null;
-    /** @type {number | null} index into this.macros currently being renamed */
-    this.renaming = null;
-    /** @type {string} text being typed for pendingSave or renaming */
+    /** @type {{ kind: 'save', steps: MacroStep[] } | { kind: 'rename', index: number } | null}
+     * a finished recording awaiting a name, or an existing macro being renamed */
+    this.naming = null;
+    /** @type {string} text being typed for this.naming */
     this.nameBuffer = '';
     /** @type {Set<number>} indices marked for a batch export */
     this.marked = new Set();
@@ -127,7 +125,7 @@ export class MacrosPage {
     const steps = this.recording.steps.slice();
     if (this.recording.pendingText !== '') steps.push({ text: this.recording.pendingText, action: '', args: [] });
     this.recording = null;
-    this.pendingSave = { steps };
+    this.naming = { kind: 'save', steps };
     this.nameBuffer = this.uniqueName(`Macro ${this.macros.length + 1}`);
     this.selected = 0;
   }
@@ -213,17 +211,15 @@ export class MacrosPage {
   /** @returns {void} */
   confirmName() {
     const name = this.nameBuffer.trim();
-    if (name === '') return;
-    if (this.pendingSave !== null) {
-      this.macros.push({ name: this.uniqueName(name), steps: this.pendingSave.steps });
-      this.pendingSave = null;
-      this.persist();
-    } else if (this.renaming !== null) {
-      const macro = this.macros[this.renaming];
-      if (macro) macro.name = this.uniqueName(name, this.renaming);
-      this.renaming = null;
-      this.persist();
+    if (name === '' || this.naming === null) return;
+    if (this.naming.kind === 'save') {
+      this.macros.push({ name: this.uniqueName(name), steps: this.naming.steps });
+    } else {
+      const macro = this.macros[this.naming.index];
+      if (macro) macro.name = this.uniqueName(name, this.naming.index);
     }
+    this.naming = null;
+    this.persist();
     this.nameBuffer = '';
   }
 
@@ -239,7 +235,7 @@ export class MacrosPage {
     if (this.recording !== null) {
       const count = this.recording.steps.length;
       rows.push({ key: 'control', label: 'Recording...', value: `${count} step${count === 1 ? '' : 's'} - Enter stops` });
-    } else if (this.pendingSave !== null) {
+    } else if (this.naming?.kind === 'save') {
       rows.push({ key: 'name', label: 'Save as', value: `${this.nameBuffer}_` });
     } else if (this.playing !== null) {
       rows.push({ key: 'control', label: `Playing "${this.playing.macro.name}"`, value: 'Enter stops' });
@@ -247,7 +243,7 @@ export class MacrosPage {
       rows.push({ key: 'new', label: 'Record new macro', value: 'Enter starts' });
     }
     this.macros.forEach((macro, index) => {
-      if (this.renaming === index) {
+      if (this.naming?.kind === 'rename' && this.naming.index === index) {
         rows.push({ key: 'name', label: 'Rename', value: `${this.nameBuffer}_` });
         return;
       }
@@ -324,14 +320,8 @@ export class MacrosPage {
     if (event.ctrlKey || event.metaKey) return false;
 
     if (event.key === 'Escape') {
-      if (this.pendingSave !== null) {
-        this.pendingSave = null;
-        this.nameBuffer = '';
-        this.draw();
-        return true;
-      }
-      if (this.renaming !== null) {
-        this.renaming = null;
+      if (this.naming !== null) {
+        this.naming = null;
         this.nameBuffer = '';
         this.draw();
         return true;
@@ -341,7 +331,7 @@ export class MacrosPage {
     }
 
     // A name field, not a value to cycle, so it takes its own keys first.
-    if (this.pendingSave !== null || this.renaming !== null) {
+    if (this.naming !== null) {
       if (event.key === 'Backspace') {
         this.nameBuffer = this.nameBuffer.slice(0, -1);
         this.draw();
@@ -361,9 +351,8 @@ export class MacrosPage {
     }
 
     if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-      const count = this.rows().length;
       const step = event.key === 'ArrowUp' ? -1 : 1;
-      this.selected = (this.selected + step + count) % count;
+      this.selected = cycle(this.selected, step, this.rows().length);
       this.draw();
       return true;
     }
@@ -383,7 +372,7 @@ export class MacrosPage {
     if (event.key === 'r' || event.key === 'R') {
       const index = this.macroIndexAt(this.selected);
       if (index !== null) {
-        this.renaming = index;
+        this.naming = { kind: 'rename', index };
         this.nameBuffer = this.macros[index]?.name ?? '';
         this.draw();
       }
@@ -409,40 +398,20 @@ export class MacrosPage {
 
   /** @returns {void} */
   draw() {
-    const { cols, rows } = this.deps.geometry();
-    const colors = this.deps.theme().colors;
-    const background = colors['background'] ?? '#000000';
-    const foreground = colors['foreground'] ?? '#00ff00';
-    const dim = mix(background, foreground, 0.55);
-    const field = colors['field'] ?? mix(background, foreground, 0.12);
-    const chosen = mix(field, foreground, 0.3);
-
-    const fields = this.rows();
-    const left = Math.max(1, Math.floor((cols - PANEL_WIDTH) / 2) + 1);
-    const top = Math.max(1, Math.floor((rows - (16 + fields.length * 2)) / 2) + 1);
-
-    /** @type {string[]} */
-    const out = [`${ESC}[?25l`, paint(foreground, background), `${ESC}[2J`];
-
-    out.push(at(top, left), paint(foreground, background, true), 'TN3270 MACROS');
-    out.push(at(top + 1, left), paint(dim, background), '='.repeat(PANEL_WIDTH));
-
-    for (let index = 0; index < fields.length; index++) {
-      const entry = fields[index];
-      const row = top + 3 + index * 2;
-      const active = index === this.selected;
-      out.push(at(row, left), paint(active ? foreground : dim, background, active));
-      out.push(`${active ? '>' : ' '} ${(entry?.label ?? '').slice(0, LABEL_WIDTH).padEnd(LABEL_WIDTH)}`);
-      out.push(paint(foreground, active ? chosen : field));
-      out.push(` ${(entry?.value ?? '').slice(0, FIELD_WIDTH - 2).padEnd(FIELD_WIDTH - 2)} `);
-    }
-
-    const helpRow = top + 3 + fields.length * 2 + 1;
-    out.push(at(helpRow, left), paint(dim, background));
-    out.push('Up/Down select   Enter start/stop/play   Space mark');
-    out.push(at(helpRow + 1, left), paint(dim, background));
-    out.push('R rename   Del remove   E export   I import   Esc close');
-
-    this.deps.write(out.join(''));
+    drawListPanel({
+      write: this.deps.write,
+      geometry: this.deps.geometry,
+      theme: this.deps.theme(),
+      title: 'TN3270 MACROS',
+      fields: this.rows(),
+      selected: this.selected,
+      labelWidth: LABEL_WIDTH,
+      fieldWidth: FIELD_WIDTH,
+      heightBase: 16,
+      helpLines: [
+        'Up/Down select   Enter start/stop/play   Space mark',
+        'R rename   Del remove   E export   I import   Esc close',
+      ],
+    });
   }
 }

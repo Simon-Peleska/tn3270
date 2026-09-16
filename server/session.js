@@ -413,16 +413,23 @@ export class Session {
   }
 
   /**
+   * @param {import('./protocol.js').RecorderStep} step
+   * @returns {void}
+   */
+  pushRecorderStep(step) {
+    if (this.recording === null) return;
+    this.recording.steps.push(step);
+    this.sendToAll({ type: 'recorderStep', step });
+  }
+
+  /**
    * @param {string} action
    * @param {string[]} [args]
    * @returns {void}
    */
   record(action, args = []) {
     if (this.recording === null) return;
-    /** @type {import('./protocol.js').RecorderStep} */
-    const step = { screen: this.screenLines(), action, args };
-    this.recording.steps.push(step);
-    this.sendToAll({ type: 'recorderStep', step });
+    this.pushRecorderStep({ screen: this.screenLines(), action, args });
   }
 
   /**
@@ -434,10 +441,7 @@ export class Session {
     if (this.recording === null) return;
     const steps = this.recording.steps;
     if (steps.length > 0 && steps[steps.length - 1].password === true) return;
-    /** @type {import('./protocol.js').RecorderStep} */
-    const step = { screen: this.screenLines(), password: true };
-    steps.push(step);
-    this.sendToAll({ type: 'recorderStep', step });
+    this.pushRecorderStep({ screen: this.screenLines(), password: true });
   }
 
   /**
