@@ -1079,10 +1079,11 @@ screenEl.addEventListener('keydown', (event) => {
   // it", exactly how a real 3270 clears an operator-error condition.
   clearError();
 
-  // Ctrl+C is copy, not a 3270 action: with a selection, copy that; with none,
-  // copy the field the cursor sits in (the server decides that last part — it
-  // is the only side that knows where fields are).
-  if (event.ctrlKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === 'c') {
+  // Ctrl+C and Ctrl+Insert are copy, not a 3270 action: with a selection, copy
+  // that; with none, copy the field the cursor sits in (the server decides
+  // that last part — it is the only side that knows where fields are).
+  if (event.ctrlKey && !event.altKey && !event.metaKey
+    && (event.key.toLowerCase() === 'c' || event.key === 'Insert')) {
     event.preventDefault();
     event.stopPropagation();
     const term = activeTerminal();
