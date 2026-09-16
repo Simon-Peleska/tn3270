@@ -1,5 +1,5 @@
 diff --git a/node_modules/ghostty-web/dist/ghostty-web.js b/node_modules/ghostty-web/dist/ghostty-web.js
-index a4ca427..d83d1a4 100644
+index a4ca427..c92f287 100644
 --- a/node_modules/ghostty-web/dist/ghostty-web.js
 +++ b/node_modules/ghostty-web/dist/ghostty-web.js
 @@ -1363,7 +1363,7 @@ class $ {
@@ -11,3 +11,22 @@ index a4ca427..d83d1a4 100644
      return { width: E, height: D, baseline: i };
    }
    /**
+@@ -1945,16 +1945,14 @@ const L = class Y {
+     }), this.boundMouseUpHandler = (B) => {
+       if (this.isSelecting) {
+         this.isSelecting = !1, this.stopAutoScroll();
+-        const g = this.getSelection();
+-        g && (this.copyToClipboard(g), this.selectionChangedEmitter.fire());
++        this.hasSelection() && this.selectionChangedEmitter.fire();
+       }
+     }, document.addEventListener("mouseup", this.boundMouseUpHandler), A.addEventListener("dblclick", (B) => {
+       const g = this.pixelToCell(B.offsetX, B.offsetY), E = this.getWordAtCell(g.col, g.row);
+       if (E) {
+         const C = this.viewportRowToAbsolute(g.row);
+         this.selectionStart = { col: E.startCol, absoluteRow: C }, this.selectionEnd = { col: E.endCol, absoluteRow: C }, this.requestRender();
+-        const I = this.getSelection();
+-        I && (this.copyToClipboard(I), this.selectionChangedEmitter.fire());
++        this.hasSelection() && this.selectionChangedEmitter.fire();
+       }
+     }), this.boundContextMenuHandler = (B) => {
+       if (this.renderer.getCanvas().getBoundingClientRect(), this.textarea.style.position = "fixed", this.textarea.style.left = `${B.clientX}px`, this.textarea.style.top = `${B.clientY}px`, this.textarea.style.width = "1px", this.textarea.style.height = "1px", this.textarea.style.zIndex = "1000", this.textarea.style.opacity = "0", this.textarea.style.pointerEvents = "auto", this.hasSelection()) {
