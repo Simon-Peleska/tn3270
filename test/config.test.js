@@ -134,6 +134,19 @@ test('well-formed client messages are parsed', () => {
   assert.deepEqual(parseClientMessage('{"type":"refresh"}'), { type: 'refresh' });
   // A page whose host is locked in the config cannot name it.
   assert.deepEqual(parseClientMessage('{"type":"connect"}'), { type: 'connect', host: null });
+  assert.deepEqual(parseClientMessage('{"type":"sharing","allowView":false,"allowEdit":true}'), {
+    type: 'sharing', allowView: false, allowEdit: true,
+  });
+});
+
+test('a sharing message without both booleans is refused', () => {
+  for (const body of [{ allowView: false }, { allowView: 'no', allowEdit: true }, {}]) {
+    assert.throws(() => parseClientMessage(JSON.stringify({ type: 'sharing', ...body })), (err) => {
+      assert.ok(err instanceof AppError);
+      assert.equal(err.code, 'E4002');
+      return true;
+    });
+  }
 });
 
 test('only the four real 3270 models may be asked for', () => {

@@ -8,6 +8,7 @@
 const DB_NAME = 'tn3270';
 const STORE_NAME = 'settings';
 const KEY = 'ui';
+const MACROS_KEY = 'macros';
 
 /**
  * @typedef {object} StoredSettings
@@ -59,6 +60,33 @@ export async function saveSettings(settings) {
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readwrite');
     transaction.objectStore(STORE_NAME).put(settings, KEY);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error ?? new Error('write failed'));
+  });
+}
+
+/**
+ * @returns {Promise<import('./macro-xml.js').Macro[]>} empty when nothing is
+ *   saved yet, which is a first visit rather than an error
+ */
+export async function loadMacros() {
+  const db = await open();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(MACROS_KEY);
+    request.onsuccess = () => resolve(Array.isArray(request.result) ? request.result : []);
+    request.onerror = () => reject(request.error ?? new Error('read failed'));
+  });
+}
+
+/**
+ * @param {import('./macro-xml.js').Macro[]} macros
+ * @returns {Promise<void>}
+ */
+export async function saveMacros(macros) {
+  const db = await open();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, 'readwrite');
+    transaction.objectStore(STORE_NAME).put(macros, MACROS_KEY);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error ?? new Error('write failed'));
   });

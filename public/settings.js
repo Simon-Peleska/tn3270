@@ -145,7 +145,7 @@ export function rgb(hex) {
  * @param {number} amount 0 = from, 1 = to
  * @returns {string} `#rrggbb`
  */
-function mix(from, to, amount) {
+export function mix(from, to, amount) {
   const a = rgb(from);
   const b = rgb(to);
   const channel = (/** @type {number} */ index) =>
@@ -158,7 +158,7 @@ function mix(from, to, amount) {
  * @param {number} col 1-based
  * @returns {string}
  */
-function at(row, col) {
+export function at(row, col) {
   return `${ESC}[${row};${col}H`;
 }
 
@@ -237,6 +237,7 @@ const DYNAMIC_OVERSIZE = `${DYNAMIC_COLS}x${DYNAMIC_ROWS}`;
  * @property {(fontSize: number) => { cols: number, rows: number } | null} windowFit
  *   the screen this session's pane would hold with text that many pixels tall
  * @property {(enabled: boolean) => void} applyHostColors
+ * @property {(allowView: boolean, allowEdit: boolean) => void} applySharing
  * @property {(host: string | null) => void} connect
  * @property {() => void} restore called when the page closes, to get the host screen back
  * @property {(settings: import('./store.js').StoredSettings) => void} persist
@@ -277,6 +278,13 @@ export class SettingsPage {
     /** @type {boolean} The host comes from the server's config: shown, not
      * editable, and Enter reconnects to it directly. */
     this.hostLocked = false;
+    /** @type {'controller' | 'observer'} This session's server-assigned role,
+     * not a browser preference: only the controller decides who else gets in. */
+    this.role = 'controller';
+    /** @type {boolean} Whether a second viewer may attach at all. */
+    this.allowSharing = true;
+    /** @type {boolean} Whether a viewer who is not the controller may type. */
+    this.allowSharedEditing = false;
   }
 
   /** @returns {boolean} */
@@ -336,6 +344,17 @@ export class SettingsPage {
       }
     }
     rows.push({ key: 'hostColors', label: 'Host colors', value: this.hostColors ? 'On' : 'Off' });
+    // Only the controller's call: it is their screen being shared.
+    if (this.role === 'controller') {
+      rows.push({ key: 'allowSharing', label: 'Allow sharing', value: this.allowSharing ? 'On' : 'Off' });
+      if (this.allowSharing) {
+        rows.push({
+          key: 'allowSharedEditing',
+          label: 'Shared editing',
+          value: this.allowSharedEditing ? 'On' : 'Off',
+        });
+      }
+    }
     return rows;
   }
 
@@ -359,6 +378,27 @@ export class SettingsPage {
    */
   setHostLocked(locked) {
     this.hostLocked = locked;
+    if (this.open) this.draw();
+  }
+
+  /**
+   * @param {'controller' | 'observer'} role
+   * @returns {void}
+   */
+  setRole(role) {
+    if (role === this.role) return;
+    this.role = role;
+    if (this.open) this.draw();
+  }
+
+  /**
+   * @param {boolean} allowSharing
+   * @param {boolean} allowSharedEditing
+   * @returns {void}
+   */
+  setSharing(allowSharing, allowSharedEditing) {
+    this.allowSharing = allowSharing;
+    this.allowSharedEditing = allowSharedEditing;
     if (this.open) this.draw();
   }
 
@@ -574,10 +614,19 @@ export class SettingsPage {
       this.fitFontSize = Math.max(MIN_FIT_FONT_SIZE, Math.min(MAX_FIT_FONT_SIZE, this.fitFontSize + step));
       this.pendingOversize = this.fitToWindow();
       this.save();
-    } else {
+    } else if (key === 'hostColors') {
       this.hostColors = !this.hostColors;
       this.deps.applyHostColors(this.hostColors);
       this.save();
+    } else if (key === 'allowSharing') {
+      this.allowSharing = !this.allowSharing;
+      // Turning sharing off takes shared editing with it — nothing left to
+      // share it with — and back on defaults to observing, not typing.
+      if (!this.allowSharing) this.allowSharedEditing = false;
+      this.deps.applySharing(this.allowSharing, this.allowSharedEditing);
+    } else if (key === 'allowSharedEditing') {
+      this.allowSharedEditing = !this.allowSharedEditing;
+      this.deps.applySharing(this.allowSharing, this.allowSharedEditing);
     }
     this.draw();
   }

@@ -27,7 +27,7 @@ const LOCK_TEXT = Object.freeze({
 
 /** Held clear at the right for the browser's own buttons, which are one column
  *  narrower together (BUTTONS in public/app.js) so a space is left. */
-const BUTTON_COLUMNS = 19;
+const BUTTON_COLUMNS = 28;
 
 export class OiaModel {
   constructor() {

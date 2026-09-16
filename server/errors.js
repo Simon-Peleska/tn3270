@@ -29,6 +29,7 @@ const ERRORS = Object.freeze({
   E3004: 'Screen indication referenced a cell outside the screen',
   E3005: 'Host address is not allowed by config',
   E3006: 'Input rejected: viewer is an observer',
+  E3007: 'Session is not accepting new viewers',
 
   E4001: 'WebSocket message was not valid JSON',
   E4002: 'WebSocket message had an unknown type',
@@ -42,6 +43,9 @@ const ERRORS = Object.freeze({
   E5005: 'Clipboard could not be read for a Shift+Insert paste',
   E5006: 'Another terminal session could not be opened',
   E5007: 'Screen cannot be refitted while fit to window is off',
+  E5008: 'Macros could not be read from the browser database',
+  E5009: 'Macros could not be saved to the browser database',
+  E5010: 'A macro file could not be read',
 
   E6001: 'Static file not found',
   E6002: 'WebSocket upgrade path is not a session',

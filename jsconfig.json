@@ -21,6 +21,7 @@
       "/box-select.js": ["public/box-select.js"],
       "/cursor-glyph.js": ["public/cursor-glyph.js"],
       "/settings.js": ["public/settings.js"],
+      "/macros.js": ["public/macros.js"],
       "/sessions.js": ["public/sessions.js"],
       "/store.js": ["public/store.js"]
     }

@@ -1,7 +1,8 @@
 import { init, Terminal } from '/vendor/dist/ghostty-web.js';
 import { mapKey } from '/keymap.js';
 import { ESC, SettingsPage, paint, terminalColors } from '/settings.js';
-import { loadSettings, saveSettings } from '/store.js';
+import { MacrosPage } from '/macros.js';
+import { loadSettings, saveSettings, loadMacros, saveMacros } from '/store.js';
 import { MAX_SESSIONS, SessionPrefix, paneAreas, parseSessionHash, sessionHash, switcherText } from '/sessions.js';
 import { installBoxSelection } from '/box-select.js';
 import { installCursorGlyph } from '/cursor-glyph.js';
@@ -31,10 +32,11 @@ const MIN_FONT_SIZE = 6;
 const MAX_FONT_SIZE = 64;
 
 const RESET_LABEL = '[Reset]';
+const MACROS_LABEL = '[Macros]';
 const SETTINGS_LABEL = '[Settings]';
 /** Exactly one narrower than BUTTON_COLUMNS in server/oia.js, which holds these
  *  columns of the status line clear for them. */
-const BUTTONS = `${RESET_LABEL} ${SETTINGS_LABEL}`;
+const BUTTONS = `${RESET_LABEL} ${MACROS_LABEL} ${SETTINGS_LABEL}`;
 
 /** @type {{ code: string, message: string } | null} */
 let activeError = null;
@@ -125,6 +127,7 @@ function showError(code, message) {
   if (errorTimer !== undefined) clearTimeout(errorTimer);
   errorTimer = setTimeout(clearError, 6000);
   if (settings.open) settings.draw();
+  else if (macros.open) macros.draw();
   else writeOverlays();
 }
 
@@ -147,6 +150,10 @@ function repaintStatus() {
   overlaySlot = null;
   if (settings.open) {
     settings.draw();
+    return;
+  }
+  if (macros.open) {
+    macros.draw();
     return;
   }
   sendQuietly(painted, { type: 'refresh' });
@@ -187,6 +194,14 @@ async function createSession() {
  *   null until the first status, so it always counts as a change
  * @property {boolean} touched whether anyone has typed at this session — the
  *   server's answer, since another viewer's typing counts too
+ * @property {boolean} locked the keyboard-lock state from the last status, so
+ *   macro playback can wait for the host to catch up between steps
+ * @property {'controller' | 'observer'} role this browser's own role, from the
+ *   last hello or status
+ * @property {boolean} allowSharing whether the controller lets a second viewer
+ *   attach at all
+ * @property {boolean} allowSharedEditing whether the controller lets a viewer
+ *   who is not itself still type
  */
 
 /** @type {(SessionSlot | null)[]} */
@@ -228,7 +243,8 @@ function newSlot(id, cols = 0, rows = 0) {
   /** @type {SessionSlot} */
   const slot = {
     id, pane, terminal: null, socket: null, backoffMs: 250,
-    model: 0, oversize: '', cols, rows, connection: '', connected: null, touched: false,
+    model: 0, oversize: '', cols, rows, connection: '', connected: null, touched: false, locked: false,
+    role: 'controller', allowSharing: true, allowSharedEditing: false,
   };
   pane.addEventListener('click', (event) => paneClicked(slot, event));
   return slot;
@@ -257,6 +273,64 @@ function connectHost(host) {
   send({ type: 'connect', host });
 }
 
+/**
+ * Macro playback paces itself by the host's own keyboard-lock state rather
+ * than a timer, the way a person driving the keyboard by hand would.
+ * @type {Map<SessionSlot, (() => void)[]>}
+ */
+const unlockWaiters = new Map();
+
+/**
+ * @param {SessionSlot | null} slot
+ * @returns {Promise<void>} resolves once the slot's keyboard is unlocked,
+ *   immediately if it already is
+ */
+function waitForUnlock(slot) {
+  if (slot === null || !slot.locked) return Promise.resolve();
+  return new Promise((resolve) => {
+    const waiters = unlockWaiters.get(slot) ?? [];
+    waiters.push(resolve);
+    unlockWaiters.set(slot, waiters);
+  });
+}
+
+/**
+ * @param {string} filename
+ * @param {string} content
+ * @returns {void}
+ */
+function downloadFile(filename, content) {
+  const blob = new Blob([content], { type: 'application/xml' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+/** @returns {Promise<string[]>} the text of every file picked, or [] if cancelled */
+function pickXmlFiles() {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.xml,text/xml,application/xml';
+    input.multiple = true;
+    input.style.display = 'none';
+    const done = (/** @type {string[]} */ result) => {
+      input.remove();
+      resolve(result);
+    };
+    input.addEventListener('cancel', () => done([]), { once: true });
+    input.addEventListener('change', () => {
+      const files = Array.from(input.files ?? []);
+      Promise.all(files.map((file) => file.text())).then(done, () => done([]));
+    }, { once: true });
+    document.body.appendChild(input);
+    input.click();
+  });
+}
+
 const settings = new SettingsPage({
   write: (bytes) => {
     activeTerminal()?.write(bytes);
@@ -272,6 +346,7 @@ const settings = new SettingsPage({
     return slot === null ? null : paneFit(slot, fontSize);
   },
   applyHostColors: (enabled) => send({ type: 'hostColors', enabled }),
+  applySharing: (allowView, allowEdit) => send({ type: 'sharing', allowView, allowEdit }),
   connect: connectHost,
   restore: () => send({ type: 'refresh' }),
   persist: (values) => {
@@ -279,6 +354,26 @@ const settings = new SettingsPage({
       showError('E5004', `Settings could not be saved in this browser: ${String(cause)}`);
     });
   },
+});
+
+const macros = new MacrosPage({
+  write: (bytes) => {
+    activeTerminal()?.write(bytes);
+    writeOverlays();
+  },
+  geometry: () => ({ cols: activeTerminal()?.cols ?? 80, rows: activeTerminal()?.rows ?? 25 }),
+  theme: () => settings.theme(),
+  dispatch: (message) => sendTo(activeSession(), message),
+  waitForUnlock: () => waitForUnlock(activeSession()),
+  restore: () => send({ type: 'refresh' }),
+  persist: (values) => {
+    saveMacros(values).catch((cause) => {
+      showError('E5009', `Macros could not be saved in this browser: ${String(cause)}`);
+    });
+  },
+  exportFile: downloadFile,
+  importFiles: pickXmlFiles,
+  error: showError,
 });
 
 /**
@@ -310,6 +405,7 @@ function ensureTerminal(slot) {
     if (existing.cols !== slot.cols || existing.rows !== slot.rows) existing.resize(slot.cols, slot.rows);
     fitFontSize(slot);
     if (settings.open && slot === activeSession()) settings.draw();
+    if (macros.open && slot === activeSession()) macros.draw();
     return existing;
   }
   const created = new Terminal({
@@ -559,6 +655,7 @@ new ResizeObserver(() => {
  * @returns {void}
  */
 function send(message) {
+  if (macros.isRecording()) macros.record(message);
   sendTo(activeSession(), message);
 }
 
@@ -621,7 +718,7 @@ function connectSocket(slot) {
     // the pane it is drawn in. Dropping the rest is safe because the server is
     // asked for a full repaint when they come back into view.
     const term = slot.terminal;
-    const covered = settings.open && slot === activeSession();
+    const covered = (settings.open || macros.open) && slot === activeSession();
     if (term === null || slot.pane.hidden || covered) return;
     term.write(new Uint8Array(event.data));
     term.write(buttonBytes(term));
@@ -677,6 +774,11 @@ function handleServerMessage(slot, message) {
     settings.setModel(slot.model);
     settings.setOversize(slot.oversize);
     if (message.type === 'hello') {
+      slot.role = message.role;
+      slot.allowSharing = message.allowSharing;
+      slot.allowSharedEditing = message.allowSharedEditing;
+      settings.setRole(slot.role);
+      settings.setSharing(slot.allowSharing, slot.allowSharedEditing);
       // A host that comes from the config is the operator's business, not the
       // browser's: it is neither shown nor editable here.
       settings.setHostLocked(message.hostLocked);
@@ -693,6 +795,17 @@ function handleServerMessage(slot, message) {
     slot.connection = message.connection;
     slot.connected = message.connected;
     slot.touched = message.touched;
+    slot.locked = message.locked;
+    slot.role = message.role;
+    slot.allowSharing = message.allowSharing;
+    slot.allowSharedEditing = message.allowSharedEditing;
+    if (!slot.locked) {
+      const waiters = unlockWaiters.get(slot);
+      if (waiters !== undefined) {
+        unlockWaiters.delete(slot);
+        for (const resolve of waiters) resolve();
+      }
+    }
     // A real 3270 swaps the block cursor for an underline in insert mode, and
     // insert is the session's own state, not just the focused pane's.
     slot.terminal?.renderer?.setCursorStyle(message.insert ? 'underline' : 'block');
@@ -701,6 +814,8 @@ function handleServerMessage(slot, message) {
     if (changed && !message.connected && !slot.pane.hidden && panes.length > 1) fitIdleSessions();
     if (!onScreen) return;
     settings.connected = message.connected;
+    settings.setRole(slot.role);
+    settings.setSharing(slot.allowSharing, slot.allowSharedEditing);
     // b3270 reports the host without its port, so filling the field from it
     // would quietly destroy what the user typed. Only seed an empty one, which
     // is what a viewer joining someone else's session needs.
@@ -710,6 +825,7 @@ function handleServerMessage(slot, message) {
     if (changed) {
       if (message.connected) {
         settings.close();
+        macros.close();
         clearError();
       } else {
         settings.show();
@@ -741,6 +857,10 @@ function handleServerMessage(slot, message) {
 function repaint(slot) {
   if (settings.open && slot === activeSession()) {
     settings.draw();
+    return;
+  }
+  if (macros.open && slot === activeSession()) {
+    macros.draw();
     return;
   }
   // A session still opening has nothing to repaint yet, and whatever is on its
@@ -796,6 +916,7 @@ function focusSlot(index) {
   // Closed before the switch, so the pane the page was drawn over is the one
   // asked for its screen back.
   if (settings.open) settings.close();
+  if (macros.open) macros.close();
 
   if (!panes.includes(index)) {
     const here = Math.max(0, panes.indexOf(active));
@@ -805,6 +926,8 @@ function focusSlot(index) {
   settings.setModel(slot.model);
   settings.setOversize(slot.oversize);
   settings.connected = slot.connected === true;
+  settings.setRole(slot.role);
+  settings.setSharing(slot.allowSharing, slot.allowSharedEditing);
   applyLayout();
   screenEl.focus();
 
@@ -904,13 +1027,23 @@ window.addEventListener('keydown', (event) => {
     else if (decision.action === 'layout') changeLayout(decision.panes);
     return;
   }
-  if (!settings.handleKey(event)) return;
+  // Each page's own toggle key closes the other one first, so a keystroke
+  // never leaves both drawn over the terminal at once.
+  if (event.altKey && event.code === 'Space' && macros.open) macros.close();
+  if (event.altKey && event.code === 'KeyM' && settings.open) settings.close();
+
+  if (settings.handleKey(event)) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+  if (!macros.handleKey(event)) return;
   event.preventDefault();
   event.stopPropagation();
 }, true);
 
 screenEl.addEventListener('keydown', (event) => {
-  if (settings.open) return;
+  if (settings.open || macros.open) return;
   // A keystroke aimed at the live host is also the operator saying "I've seen
   // it", exactly how a real 3270 clears an operator-error condition.
   clearError();
@@ -957,7 +1090,7 @@ screenEl.addEventListener('keydown', (event) => {
 screenEl.addEventListener('paste', (event) => {
   event.preventDefault();
   event.stopPropagation();
-  if (settings.open) return;
+  if (settings.open || macros.open) return;
   clearError();
   const text = event.clipboardData?.getData('text/plain') ?? '';
   if (text !== '') send({ type: 'paste', text });
@@ -993,17 +1126,25 @@ function paneClicked(slot, event) {
   focusSlot(sessions.indexOf(slot));
   const term = slot.terminal;
   const renderer = term?.renderer;
-  if (settings.open || term === null || renderer === undefined) return;
+  if (settings.open || macros.open || term === null || renderer === undefined) return;
 
   const rect = renderer.getCanvas().getBoundingClientRect();
   const row = Math.floor((event.clientY - rect.top) / renderer.charHeight);
   const col = Math.floor((event.clientX - rect.left) / renderer.charWidth);
 
-  if (row === term.rows - 1 && col >= term.cols - SETTINGS_LABEL.length) {
+  const settingsStart = term.cols - SETTINGS_LABEL.length;
+  const macrosStart = settingsStart - 1 - MACROS_LABEL.length;
+  const resetStart = term.cols - BUTTONS.length;
+
+  if (row === term.rows - 1 && col >= settingsStart) {
     settings.toggle();
     return;
   }
-  if (row === term.rows - 1 && col >= term.cols - BUTTONS.length) {
+  if (row === term.rows - 1 && col >= macrosStart) {
+    macros.toggle();
+    return;
+  }
+  if (row === term.rows - 1 && col >= resetStart) {
     resetSize(slot);
     return;
   }
@@ -1020,13 +1161,15 @@ function paneClicked(slot, event) {
 // each other, so they load together; the font can only be named once the
 // settings are in hand, and has to be loaded before the first terminal is
 // built or the first screen is painted in the wrong face and then restyled.
-const [renderer, saved] = await Promise.allSettled([init(), loadSettings()]);
+const [renderer, saved, savedMacros] = await Promise.allSettled([init(), loadSettings(), loadMacros()]);
 if (renderer.status === 'rejected') {
   showError('E5001', `The terminal renderer failed to load: ${String(renderer.reason)}`);
   throw renderer.reason;
 }
 if (saved.status === 'fulfilled') settings.restoreSaved(saved.value);
 else showError('E5003', `Saved settings could not be read; using the defaults: ${String(saved.reason)}`);
+if (savedMacros.status === 'fulfilled') macros.setMacros(savedMacros.value);
+else showError('E5008', `Saved macros could not be read: ${String(savedMacros.reason)}`);
 
 try {
   await document.fonts.load(`16px ${settings.font().family}`);
