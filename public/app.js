@@ -3,7 +3,8 @@ import { mapKey } from '/keymap.js';
 import { ESC, SettingsPage, paint, terminalColors } from '/settings.js';
 import { MacrosPage } from '/macros.js';
 import { RecorderPage } from '/recorder.js';
-import { loadSettings, saveSettings, loadMacros, saveMacros } from '/store.js';
+import { KeymapPage } from '/keymap-page.js';
+import { loadSettings, saveSettings, loadMacros, saveMacros, loadKeymap, saveKeymap } from '/store.js';
 import { MAX_SESSIONS, SessionPrefix, paneAreas, parseSessionHash, sessionHash, switcherText } from '/sessions.js';
 import { installBoxSelection } from '/box-select.js';
 import { installCursorGlyph } from '/cursor-glyph.js';
@@ -35,10 +36,11 @@ const MAX_FONT_SIZE = 64;
 const RESET_LABEL = '[Reset]';
 const MACROS_LABEL = '[Macros]';
 const RECORD_LABEL = '[Record]';
+const KEYMAP_LABEL = '[Keymap]';
 const SETTINGS_LABEL = '[Settings]';
 /** Exactly one narrower than BUTTON_COLUMNS in server/oia.js, which holds these
  *  columns of the status line clear for them. */
-const BUTTONS = `${RESET_LABEL} ${MACROS_LABEL} ${RECORD_LABEL} ${SETTINGS_LABEL}`;
+const BUTTONS = `${RESET_LABEL} ${MACROS_LABEL} ${RECORD_LABEL} ${KEYMAP_LABEL} ${SETTINGS_LABEL}`;
 
 /** @type {{ code: string, message: string } | null} */
 let activeError = null;
@@ -299,7 +301,9 @@ function waitForUnlock(slot) {
  * @returns {void}
  */
 function downloadFile(filename, content) {
-  const type = filename.endsWith('.json') ? 'application/json' : 'application/xml';
+  const type = filename.endsWith('.json')
+    ? 'application/json'
+    : filename.endsWith('.kmp') ? 'text/plain' : 'application/xml';
   const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
@@ -309,12 +313,15 @@ function downloadFile(filename, content) {
   URL.revokeObjectURL(url);
 }
 
-/** @returns {Promise<string[]>} the text of every file picked, or [] if cancelled */
-function pickXmlFiles() {
+/**
+ * @param {string} accept
+ * @returns {Promise<string[]>} the text of every file picked, or [] if cancelled
+ */
+function pickFiles(accept) {
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.xml,text/xml,application/xml';
+    input.accept = accept;
     input.multiple = true;
     input.style.display = 'none';
     const done = (/** @type {string[]} */ result) => {
@@ -329,6 +336,16 @@ function pickXmlFiles() {
     document.body.appendChild(input);
     input.click();
   });
+}
+
+/** @returns {Promise<string[]>} the text of every file picked, or [] if cancelled */
+function pickXmlFiles() {
+  return pickFiles('.xml,text/xml,application/xml');
+}
+
+/** @returns {Promise<string[]>} the text of every file picked, or [] if cancelled */
+function pickKeymapFiles() {
+  return pickFiles('.kmp,.txt,text/plain');
 }
 
 const settings = new SettingsPage({
@@ -388,9 +405,27 @@ const recorder = new RecorderPage({
   exportFile: downloadFile,
 });
 
+const keymap = new KeymapPage({
+  write: (bytes) => {
+    activeTerminal()?.write(bytes);
+    writeOverlays();
+  },
+  geometry: () => ({ cols: activeTerminal()?.cols ?? 80, rows: activeTerminal()?.rows ?? 25 }),
+  theme: () => settings.theme(),
+  restore: () => send({ type: 'refresh' }),
+  persist: (bindings) => {
+    saveKeymap(bindings).catch((cause) => {
+      showError('E5011', `The keymap could not be saved in this browser: ${String(cause)}`);
+    });
+  },
+  exportFile: downloadFile,
+  importFiles: pickKeymapFiles,
+  error: showError,
+});
+
 // Drawn as VT bytes into whichever pane is on screen, and mutually exclusive:
 // each toggles the others closed, so at most one is ever open at once.
-const overlayPages = [settings, macros, recorder];
+const overlayPages = [settings, macros, recorder, keymap];
 
 /** @returns {typeof overlayPages[number] | null} */
 function openOverlayPage() {
@@ -1058,8 +1093,8 @@ window.addEventListener('keydown', (event) => {
   }
   // Each page's own toggle key closes the other two first, so a keystroke
   // never leaves more than one drawn over the terminal at once.
-  for (const [code, page] of [['Space', settings], ['KeyM', macros], ['KeyR', recorder]]) {
-    if (event.altKey && event.code === code) {
+  for (const page of overlayPages) {
+    if (event.altKey && event.code === page.toggleKey) {
       for (const other of overlayPages) if (other !== page) other.close();
     }
   }
@@ -1079,40 +1114,38 @@ screenEl.addEventListener('keydown', (event) => {
   // it", exactly how a real 3270 clears an operator-error condition.
   clearError();
 
-  // Ctrl+C and Ctrl+Insert are copy, not a 3270 action: with a selection, copy
-  // that; with none, copy the field the cursor sits in (the server decides
-  // that last part — it is the only side that knows where fields are).
-  if (event.ctrlKey && !event.altKey && !event.metaKey
-    && (event.key.toLowerCase() === 'c' || event.key === 'Insert')) {
-    event.preventDefault();
-    event.stopPropagation();
+  const mapped = mapKey(event, keymap.lookup());
+  if (mapped === null) return;
+  event.preventDefault();
+  event.stopPropagation();
+
+  if (mapped.kind === 'text') {
+    send({ type: 'text', value: mapped.value });
+    return;
+  }
+  if (mapped.kind === 'action') {
+    send({ type: 'action', action: mapped.action, args: mapped.args });
+    return;
+  }
+
+  // Copy and Paste are not 3270 actions, they are this browser's own
+  // clipboard — the keymap dialog can rebind them like anything else, but
+  // dispatching them stays here rather than in keymap.js, which has no
+  // clipboard to reach.
+  if (mapped.command === 'Copy') {
     const term = activeTerminal();
     if (term !== null && term.hasSelection()) navigator.clipboard.writeText(term.getSelection());
     else send({ type: 'copyField' });
     return;
   }
-
-  // Shift+Insert is paste everywhere else in the world, but the browser only
-  // turns Ctrl+V into a paste event — this arrives as an ordinary key, so the
-  // clipboard has to be read directly, which Chrome asks permission for once.
-  if (event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && event.key === 'Insert') {
-    event.preventDefault();
-    event.stopPropagation();
-    navigator.clipboard.readText().then((text) => {
-      if (text !== '') send({ type: 'paste', text });
-    }).catch((cause) => {
-      showError('E5005', `The clipboard could not be read; Ctrl+V pastes without asking: ${String(cause)}`);
-    });
-    return;
-  }
-
-  const mapped = mapKey(event);
-  if (mapped === null) return;
-  event.preventDefault();
-  event.stopPropagation();
-
-  if (mapped.kind === 'text') send({ type: 'text', value: mapped.value });
-  else send({ type: 'action', action: mapped.action, args: mapped.args });
+  // Ctrl+V arrives as a native paste event instead (see below), because the
+  // browser reserves it; every other paste binding has to read the clipboard
+  // directly, which Chrome asks permission for once.
+  navigator.clipboard.readText().then((text) => {
+    if (text !== '') send({ type: 'paste', text });
+  }).catch((cause) => {
+    showError('E5005', `The clipboard could not be read; Ctrl+V pastes without asking: ${String(cause)}`);
+  });
 }, true);
 
 // Ctrl+V and the right-click menu arrive as one event carrying the text, which
@@ -1165,7 +1198,8 @@ function paneClicked(slot, event) {
   const col = Math.floor((event.clientX - rect.left) / renderer.charWidth);
 
   const settingsStart = term.cols - SETTINGS_LABEL.length;
-  const recordStart = settingsStart - 1 - RECORD_LABEL.length;
+  const keymapStart = settingsStart - 1 - KEYMAP_LABEL.length;
+  const recordStart = keymapStart - 1 - RECORD_LABEL.length;
   const macrosStart = recordStart - 1 - MACROS_LABEL.length;
   const resetStart = term.cols - BUTTONS.length;
 
@@ -1174,6 +1208,7 @@ function paneClicked(slot, event) {
     // click right of any of them is also right of the ones still to check.
     const buttons = [
       { start: settingsStart, action: () => settings.toggle() },
+      { start: keymapStart, action: () => keymap.toggle() },
       { start: recordStart, action: () => recorder.toggle() },
       { start: macrosStart, action: () => macros.toggle() },
       { start: resetStart, action: () => resetSize(slot) },
@@ -1198,7 +1233,7 @@ function paneClicked(slot, event) {
 // each other, so they load together; the font can only be named once the
 // settings are in hand, and has to be loaded before the first terminal is
 // built or the first screen is painted in the wrong face and then restyled.
-const [renderer, saved, savedMacros] = await Promise.allSettled([init(), loadSettings(), loadMacros()]);
+const [renderer, saved, savedMacros, savedKeymap] = await Promise.allSettled([init(), loadSettings(), loadMacros(), loadKeymap()]);
 if (renderer.status === 'rejected') {
   showError('E5001', `The terminal renderer failed to load: ${String(renderer.reason)}`);
   throw renderer.reason;
@@ -1207,6 +1242,8 @@ if (saved.status === 'fulfilled') settings.restoreSaved(saved.value);
 else showError('E5003', `Saved settings could not be read; using the defaults: ${String(saved.reason)}`);
 if (savedMacros.status === 'fulfilled') macros.setMacros(savedMacros.value);
 else showError('E5008', `Saved macros could not be read: ${String(savedMacros.reason)}`);
+if (savedKeymap.status === 'fulfilled') keymap.setBindings(savedKeymap.value);
+else showError('E5013', `Saved keymap could not be read; using the defaults: ${String(savedKeymap.reason)}`);
 
 try {
   await document.fonts.load(`16px ${settings.font().family}`);

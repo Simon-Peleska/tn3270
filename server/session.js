@@ -364,6 +364,17 @@ export class Session {
     });
   }
 
+  /** @returns {boolean} Whether anyone needs the field map: a viewer tinting
+   *  fields, or a recording that must know a password field the moment the
+   *  host draws one. */
+  wantsFieldMap() {
+    if (this.recording !== null) return true;
+    for (const viewer of this.viewers) {
+      if (viewer.fieldColor !== null) return true;
+    }
+    return false;
+  }
+
   /** @returns {void} */
   flush() {
     if (this.closed) return;
@@ -371,9 +382,7 @@ export class Session {
     // b3270's screen indications carry the character, its colour and its
     // highlighting, but not where the fields are, so that is asked for
     // separately — one read at a time, and the next flush picks up the rest.
-    // Read unconditionally, not just when a viewer wants field tinting: the
-    // recorder needs to know a password field the moment the host draws one.
-    if (this.fieldsStale && this.fieldReadTag === null) {
+    if (this.fieldsStale && this.fieldReadTag === null && this.wantsFieldMap()) {
       this.fieldsStale = false;
       this.fieldReadTag = this.b3270.runActions([{ action: 'ReadBuffer', args: ['Ascii'] }]);
     }
@@ -656,6 +665,12 @@ export class Session {
         return;
       case 'recorder':
         this.recording = message.action === 'start' ? { steps: [] } : null;
+        // Likewise, starting a recording is what makes the field map worth
+        // reading — force a fresh one so a password field isn't missed.
+        if (this.recording !== null) {
+          this.fieldsStale = true;
+          this.scheduleFlush();
+        }
         return;
     }
   }

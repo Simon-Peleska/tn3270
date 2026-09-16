@@ -56,7 +56,7 @@ const KEYWORD_TO_ACTION = Object.freeze(
  *   nothing to write into an `<input>` value (a mouse click has its own HOD
  *   action, not a keystroke)
  */
-function actionToKeyword(action, args) {
+export function actionToKeyword(action, args) {
   if (action === 'PF' || action === 'PA') return `${action.toLowerCase()}${args[0] ?? '1'}`;
   return ACTION_TO_KEYWORD[action] ?? null;
 }
@@ -66,7 +66,7 @@ function actionToKeyword(action, args) {
  * @returns {{ action: string, args: string[] } | null} null when the keyword
  *   is not one this app recognises, so it is left as literal text instead
  */
-function keywordToAction(keyword) {
+export function keywordToAction(keyword) {
   const pf = /^pf(\d+)$/.exec(keyword);
   if (pf !== null) return { action: 'PF', args: [pf[1] ?? '1'] };
   const pa = /^pa(\d+)$/.exec(keyword);
