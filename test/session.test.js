@@ -602,7 +602,7 @@ test('a viewer that asked for a field colour gets the typeable fields tinted wit
   );
 });
 
-test('a viewer that asked for no field colour is sent none, but the field map is still read', async (t) => {
+test('a viewer that asked for no field colour is sent none, and the field map is never read', async (t) => {
   const fixture = await startTracedSession('test/traces/reverse.trc');
   t.after(() => fixture.close());
   const { session } = fixture;
@@ -610,11 +610,11 @@ test('a viewer that asked for no field colour is sent none, but the field map is
   const viewer = collectingViewer('plain');
   session.attach(viewer);
 
-  // Read unconditionally now, whether or not anyone wants it tinted: the
-  // recorder needs to know a password field the moment the host draws one.
-  await waitUntil(() => session.screen.cells.some((cell) => cell.editable), 'the field map to be read');
   await settle(session);
 
+  // Nobody wants field data — no tinting, no recording — so it was never
+  // worth the round trip to b3270.
+  assert.equal(session.screen.cells.some((cell) => cell.editable), false, 'the field map should not have been read');
   assert.equal(viewer.screen.join('').includes('48;2;'), false, 'nobody asked for a tint, so none was sent');
 });
 
@@ -624,6 +624,21 @@ test('a viewer that asked for no field colour is sent none, but the field map is
  * can build its export without polling. A password field is the one exception —
  * see readbuffer.test.js for how it is detected.
  */
+
+test('starting a recording reads the field map even with no viewer tinting', async (t) => {
+  const fixture = await startTracedSession('test/traces/reverse.trc');
+  t.after(() => fixture.close());
+  const { session } = fixture;
+
+  const controller = collectingViewer('controller');
+  session.attach(controller);
+  await settle(session);
+  assert.equal(session.screen.cells.some((cell) => cell.editable), false, 'not read before recording starts');
+
+  session.handleClientMessage(controller, { type: 'recorder', action: 'start' });
+
+  await waitUntil(() => session.screen.cells.some((cell) => cell.editable), 'the field map to be read');
+});
 
 test('recording captures the screen and each step, and stops cleanly', async (t) => {
   const session = new Session(testConfig());

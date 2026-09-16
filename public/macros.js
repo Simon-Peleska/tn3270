@@ -46,6 +46,8 @@ export class MacrosPage {
   /** @param {MacrosDeps} deps */
   constructor(deps) {
     this.deps = deps;
+    /** @type {string} the Alt+key KeyboardEvent.code that toggles this page */
+    this.toggleKey = 'KeyM';
     /** @type {boolean} */
     this.open = false;
     /** @type {number} Index into rows(). */
@@ -311,7 +313,7 @@ export class MacrosPage {
    * @returns {boolean} true when the page consumed the key
    */
   handleKey(event) {
-    if (event.altKey && event.code === 'KeyM') {
+    if (event.altKey && event.code === this.toggleKey) {
       this.toggle();
       return true;
     }

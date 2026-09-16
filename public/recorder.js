@@ -28,6 +28,8 @@ export class RecorderPage {
   /** @param {RecorderDeps} deps */
   constructor(deps) {
     this.deps = deps;
+    /** @type {string} the Alt+key KeyboardEvent.code that toggles this page */
+    this.toggleKey = 'KeyR';
     /** @type {boolean} */
     this.open = false;
     /** @type {number} Index into rows(). */
@@ -135,7 +137,7 @@ export class RecorderPage {
    * @returns {boolean} true when the page consumed the key
    */
   handleKey(event) {
-    if (event.altKey && event.code === 'KeyR') {
+    if (event.altKey && event.code === this.toggleKey) {
       this.toggle();
       return true;
     }

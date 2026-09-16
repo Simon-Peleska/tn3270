@@ -9,6 +9,7 @@ const DB_NAME = 'tn3270';
 const STORE_NAME = 'settings';
 const KEY = 'ui';
 const MACROS_KEY = 'macros';
+const KEYMAP_KEY = 'keymap';
 
 /**
  * @typedef {object} StoredSettings
@@ -87,6 +88,36 @@ export async function saveMacros(macros) {
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readwrite');
     transaction.objectStore(STORE_NAME).put(macros, MACROS_KEY);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error ?? new Error('write failed'));
+  });
+}
+
+/**
+ * @returns {Promise<import('./keymap.js').Bindings>} empty when nothing is
+ *   saved yet, which is a first visit rather than an error
+ */
+export async function loadKeymap() {
+  const db = await open();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(KEYMAP_KEY);
+    request.onsuccess = () => {
+      const value = request.result;
+      resolve(typeof value === 'object' && value !== null ? value : {});
+    };
+    request.onerror = () => reject(request.error ?? new Error('read failed'));
+  });
+}
+
+/**
+ * @param {import('./keymap.js').Bindings} bindings
+ * @returns {Promise<void>}
+ */
+export async function saveKeymap(bindings) {
+  const db = await open();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, 'readwrite');
+    transaction.objectStore(STORE_NAME).put(bindings, KEYMAP_KEY);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error ?? new Error('write failed'));
   });

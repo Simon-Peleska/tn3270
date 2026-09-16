@@ -305,6 +305,8 @@ export class SettingsPage {
   /** @param {SettingsDeps} deps */
   constructor(deps) {
     this.deps = deps;
+    /** @type {string} the Alt+key KeyboardEvent.code that toggles this page */
+    this.toggleKey = 'Space';
     /** @type {boolean} */
     this.open = false;
     /** @type {number} Index into rows(), which is not a fixed list. */
@@ -578,7 +580,7 @@ export class SettingsPage {
    * @returns {boolean} true when the page consumed the key
    */
   handleKey(event) {
-    if (event.altKey && event.code === 'Space') {
+    if (event.altKey && event.code === this.toggleKey) {
       this.toggle();
       return true;
     }
