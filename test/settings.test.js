@@ -50,6 +50,7 @@ function fixture(fit = () => ({ cols: 158, rows: 60 })) {
     /** @type {(string | null)[]} */ hosts: [],
     /** @type {number} */ restores: 0,
     /** @type {import('../public/store.js').StoredSettings[]} */ saved: [],
+    /** @type {{ allowView: boolean, allowEdit: boolean }[]} */ sharing: [],
   };
   const page = new SettingsPage({
     write: (bytes) => calls.written.push(bytes),
@@ -60,6 +61,7 @@ function fixture(fit = () => ({ cols: 158, rows: 60 })) {
     applyOversize: (value) => calls.oversizes.push(value),
     windowFit: fit,
     applyHostColors: (enabled) => calls.hostColors.push(enabled),
+    applySharing: (allowView, allowEdit) => calls.sharing.push({ allowView, allowEdit }),
     connect: (host) => calls.hosts.push(host),
     restore: () => { calls.restores += 1; },
     persist: (values) => calls.saved.push(values),
@@ -153,6 +155,46 @@ test('host colours default on, and either arrow key flips the saved toggle', () 
   assert.equal(page.hostColors, false);
 });
 
+test('the controller can toggle sharing and shared editing, and turning sharing off takes editing with it', () => {
+  const { page, calls } = fixture();
+  page.connected = true;
+  page.show();
+
+  assert.deepEqual(
+    page.rows().map((row) => row.key).slice(-2),
+    ['allowSharing', 'allowSharedEditing'],
+    'a controller is offered both, sharing on by default and editing off',
+  );
+
+  page.selected = page.rows().findIndex((row) => row.key === 'allowSharedEditing');
+  page.handleKey(key({ key: 'ArrowRight' }));
+  assert.equal(page.allowSharedEditing, true);
+  assert.deepEqual(calls.sharing.at(-1), { allowView: true, allowEdit: true });
+
+  page.selected = page.rows().findIndex((row) => row.key === 'allowSharing');
+  page.handleKey(key({ key: 'ArrowLeft' }));
+  assert.equal(page.allowSharing, false);
+  assert.equal(page.allowSharedEditing, false, 'nothing left to share with, nothing left to type into it');
+  assert.deepEqual(calls.sharing.at(-1), { allowView: false, allowEdit: false });
+  assert.deepEqual(
+    page.rows().map((row) => row.key),
+    ['theme', 'font', 'model', 'fit', 'hostColors', 'allowSharing'],
+    'shared editing is only offered while sharing is on',
+  );
+});
+
+test('an observer is not offered the sharing rows at all — it is not their session to share', () => {
+  const { page } = fixture();
+  page.connected = true;
+  page.setRole('observer');
+  page.show();
+
+  assert.deepEqual(
+    page.rows().map((row) => row.key),
+    ['theme', 'font', 'model', 'fit', 'hostColors'],
+  );
+});
+
 test('a screen size change waits for Enter and warns what it costs', () => {
   const { page, calls } = fixture();
   page.setModel(4);
@@ -188,7 +230,7 @@ test('the dynamic screen is one more choice after the models, asked for as an ov
   assert.equal(page.pendingOversize, '160x62');
   assert.deepEqual(
     page.rows().map((row) => row.key),
-    ['theme', 'font', 'model', 'hostColors'],
+    ['theme', 'font', 'model', 'hostColors', 'allowSharing', 'allowSharedEditing'],
     'a size asked for by name has nothing to fit to the window',
   );
 
@@ -256,11 +298,11 @@ test('the text size appears with the fit and drives what it measures', () => {
   page.show();
 
   page.selected = 3;
-  assert.equal(page.rows().length, 5, 'the text size is not offered while the fit is off');
+  assert.equal(page.rows().length, 7, 'the text size is not offered while the fit is off');
 
   page.handleKey(key({ key: 'ArrowRight' }));
   assert.equal(page.pendingOversize, '166x40');
-  assert.equal(page.rows().length, 6);
+  assert.equal(page.rows().length, 8);
   assert.equal(page.rows()[4]?.key, 'fitSize');
   assert.equal(page.rows()[4]?.value, '16 px');
 

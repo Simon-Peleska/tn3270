@@ -18,7 +18,10 @@ export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
  * @typedef {{ type: 'hostColors', enabled: boolean }} HostColorsMessage
  * @typedef {{ type: 'copyField' }} CopyFieldMessage
  * @typedef {{ type: 'fieldColor', color: string | null }} FieldColorMessage
- * @typedef {ActionMessage | TextMessage | PasteMessage | ConnectMessage | DisconnectMessage | ModelMessage | OversizeMessage | RefreshMessage | HostColorsMessage | CopyFieldMessage | FieldColorMessage} ClientMessage
+ * @typedef {{ type: 'sharing', allowView: boolean, allowEdit: boolean }} SharingMessage
+ *   The controller's own call: allowView lets a second viewer attach at all,
+ *   allowEdit lets one who has typed.
+ * @typedef {ActionMessage | TextMessage | PasteMessage | ConnectMessage | DisconnectMessage | ModelMessage | OversizeMessage | RefreshMessage | HostColorsMessage | CopyFieldMessage | FieldColorMessage | SharingMessage} ClientMessage
  *
  * @typedef {object} HelloMessage
  * @property {'hello'} type
@@ -31,6 +34,9 @@ export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
  * @property {boolean} hostLocked The host comes from the config; the page hides it.
  * @property {'controller' | 'observer'} role
  * @property {number} viewers
+ * @property {boolean} allowSharing Whether a second viewer may attach at all.
+ * @property {boolean} allowSharedEditing Whether a viewer who is not the
+ *   controller may still type.
  *
  * Sent whenever the grid changes size, always immediately before the repaint
  * that uses it: the WebSocket keeps that order, so no viewer ever writes
@@ -55,6 +61,8 @@ export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
  * @property {boolean} insert
  * @property {'controller' | 'observer'} role
  * @property {number} viewers
+ * @property {boolean} allowSharing
+ * @property {boolean} allowSharedEditing
  *
  * @typedef {object} ErrorMessage
  * @property {'error'} type
@@ -171,6 +179,15 @@ export function parseClientMessage(raw) {
   if (type === 'refresh') return { type: 'refresh' };
 
   if (type === 'copyField') return { type: 'copyField' };
+
+  if (type === 'sharing') {
+    const allowView = message['allowView'];
+    const allowEdit = message['allowEdit'];
+    if (typeof allowView !== 'boolean' || typeof allowEdit !== 'boolean') {
+      throw new AppError('E4002', 'sharing.allowView and allowEdit must be booleans');
+    }
+    return { type: 'sharing', allowView, allowEdit };
+  }
 
   if (type === 'model') {
     const model = message['model'];

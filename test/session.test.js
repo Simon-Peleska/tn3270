@@ -164,6 +164,89 @@ test('allowMultipleControllers makes every viewer a controller', async (t) => {
   assert.equal(b.role, 'controller');
 });
 
+test('the controller can turn sharing off, refusing a second viewer but not itself', async (t) => {
+  const session = new Session(testConfig());
+  t.after(() => session.close());
+  await session.ready;
+
+  const controller = collectingViewer('controller');
+  session.attach(controller);
+  session.handleClientMessage(controller, { type: 'sharing', allowView: false, allowEdit: false });
+
+  assert.throws(() => session.attach(collectingViewer('second')), (err) => {
+    assert.ok(err instanceof AppError);
+    assert.equal(err.code, 'E3007');
+    return true;
+  });
+
+  session.detach(controller);
+  const rejoined = collectingViewer('rejoined');
+  session.attach(rejoined);
+  assert.equal(rejoined.role, 'controller', 'the first viewer back in is never locked out by its own setting');
+});
+
+test('an observer cannot change the sharing settings', async (t) => {
+  const session = new Session(testConfig());
+  t.after(() => session.close());
+  await session.ready;
+
+  const controller = collectingViewer('controller');
+  const observer = collectingViewer('observer');
+  session.attach(controller);
+  session.attach(observer);
+
+  session.handleClientMessage(observer, { type: 'sharing', allowView: false, allowEdit: true });
+
+  assert.equal(session.allowSharing, true, 'an observer cannot touch it');
+  assert.equal(session.allowSharedEditing, false);
+  const error = observer.messages.at(-1);
+  assert.equal(error?.type, 'error');
+  assert.equal(error?.type === 'error' ? error.code : '', 'E3006');
+});
+
+test('turning shared editing on promotes every viewer, and off demotes everyone but the controller who did it', async (t) => {
+  const session = new Session(testConfig());
+  t.after(() => session.close());
+  await session.ready;
+
+  const controller = collectingViewer('controller');
+  const observer = collectingViewer('observer');
+  session.attach(controller);
+  session.attach(observer);
+  assert.equal(observer.role, 'observer');
+
+  session.handleClientMessage(controller, { type: 'sharing', allowView: true, allowEdit: true });
+  assert.equal(session.allowSharedEditing, true);
+  assert.equal(observer.role, 'controller', 'already attached, not just the next to join');
+
+  const third = collectingViewer('third');
+  session.attach(third);
+  assert.equal(third.role, 'controller', 'a new viewer types too, once shared editing is on');
+
+  session.handleClientMessage(controller, { type: 'sharing', allowView: true, allowEdit: false });
+  assert.equal(observer.role, 'observer', 'demoted the moment shared editing is turned off');
+  assert.equal(third.role, 'observer');
+  assert.equal(controller.role, 'controller', 'the one who turned it off keeps control');
+});
+
+test('hello and status report the session\'s sharing settings', async (t) => {
+  const session = new Session(testConfig());
+  t.after(() => session.close());
+  await session.ready;
+
+  const controller = collectingViewer('controller');
+  session.attach(controller);
+  const hello = controller.messages[0];
+  assert.equal(hello?.type, 'hello');
+  assert.equal(hello?.type === 'hello' ? hello.allowSharing : null, true);
+  assert.equal(hello?.type === 'hello' ? hello.allowSharedEditing : null, false);
+
+  session.handleClientMessage(controller, { type: 'sharing', allowView: false, allowEdit: false });
+  const status = controller.messages.at(-1);
+  assert.equal(status?.type, 'status');
+  assert.equal(status?.type === 'status' ? status.allowSharing : null, false);
+});
+
 test('the viewer ceiling is enforced', async (t) => {
   const session = new Session(testConfig({ sessions: { maxViewersPerSession: 1, idleTimeoutMs: 0 } }));
   t.after(() => session.close());

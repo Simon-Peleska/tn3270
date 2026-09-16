@@ -55,6 +55,13 @@ export class Session {
 
     /** @type {string | null} The host as typed, kept for reconnecting. */
     this.lastHost = null;
+    /** @type {boolean} Off refuses every viewer past the first: the controller's
+     * own reconnect always gets back in, nobody else does. */
+    this.allowSharing = true;
+    /** @type {boolean} Whether a second and later viewer may type, not just
+     * watch. Defaults from the config, and from then on is this session's own
+     * setting, changed only by its controller. */
+    this.allowSharedEditing = config.sessions.allowMultipleControllers;
     /** @type {boolean} Whether input has ever been aimed at this session. Set
      * here rather than in a browser because any viewer's typing counts, and
      * never cleared: a session the operator has used stays used. */
@@ -434,10 +441,12 @@ export class Session {
     if (this.viewers.size >= this.config.sessions.maxViewersPerSession) {
       throw new AppError('E3003', `session ${this.id} already has ${this.viewers.size} viewers`);
     }
+    if (!this.allowSharing && this.viewers.size > 0) {
+      throw new AppError('E3007', `session ${this.id} has sharing turned off`);
+    }
 
     const hasController = [...this.viewers].some((other) => other.role === 'controller');
-    viewer.role =
-      this.config.sessions.allowMultipleControllers || !hasController ? 'controller' : 'observer';
+    viewer.role = this.allowSharedEditing || !hasController ? 'controller' : 'observer';
 
     this.viewers.add(viewer);
     this.stopIdleTimer();
@@ -454,6 +463,8 @@ export class Session {
       hostLocked: this.config.b3270.defaultHost !== null,
       role: viewer.role,
       viewers: this.viewers.size,
+      allowSharing: this.allowSharing,
+      allowSharedEditing: this.allowSharedEditing,
     });
 
     // The whole point of holding the screen here: a viewer joining an hour late
@@ -474,7 +485,7 @@ export class Session {
     this.log.info('viewer detached', { viewer: viewer.id, total: this.viewers.size });
 
     // Or the session would be permanently read-only.
-    if (viewer.role === 'controller' && !this.config.sessions.allowMultipleControllers) {
+    if (viewer.role === 'controller' && !this.allowSharedEditing) {
       const next = this.viewers.values().next();
       if (!next.done) {
         next.value.role = 'controller';
@@ -575,6 +586,16 @@ export class Session {
         this.pendingFieldReads.set(tag, viewer);
         return;
       }
+      case 'sharing':
+        this.allowSharing = message.allowView;
+        this.allowSharedEditing = message.allowEdit;
+        // Granted or withdrawn for everyone already here, not just the next
+        // joiner: flipping the toggle takes effect immediately either way.
+        for (const other of this.viewers) {
+          if (other !== viewer) other.role = this.allowSharedEditing ? 'controller' : 'observer';
+        }
+        this.broadcastStatus();
+        return;
     }
   }
 
@@ -591,6 +612,8 @@ export class Session {
         insert: this.oia.insert,
         role: viewer.role,
         viewers: this.viewers.size,
+        allowSharing: this.allowSharing,
+        allowSharedEditing: this.allowSharedEditing,
       });
     }
   }
