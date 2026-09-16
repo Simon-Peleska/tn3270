@@ -98,6 +98,11 @@ export class Session {
     this.fieldsStale = false;
     /** @type {string | null} The r-tag of the field-map read in flight. */
     this.fieldReadTag = null;
+    /** @type {boolean} Whether the cursor is presently in a non-display
+     * (password) field — kept current so typing into one is never recorded. */
+    this.passwordField = false;
+    /** @type {{ steps: import('./protocol.js').RecorderStep[] } | null} */
+    this.recording = null;
 
     /** @type {() => void} */
     let announce = () => {};
@@ -320,7 +325,9 @@ export class Session {
       if (tag !== undefined && tag === this.fieldReadTag) {
         this.fieldReadTag = null;
         if (result.success) {
-          this.screen.applyFields(fieldMap(result.text ?? [], this.screen.rows, this.screen.cols));
+          const { editable, hidden } = fieldMap(result.text ?? [], this.screen.rows, this.screen.cols);
+          this.screen.applyFields(editable);
+          this.updatePasswordField(hidden);
         }
         this.scheduleFlush();
         return;
@@ -357,14 +364,6 @@ export class Session {
     });
   }
 
-  /** @returns {boolean} Whether anyone is showing the editable fields. */
-  wantsFieldMap() {
-    for (const viewer of this.viewers) {
-      if (viewer.fieldColor !== null) return true;
-    }
-    return false;
-  }
-
   /** @returns {void} */
   flush() {
     if (this.closed) return;
@@ -372,7 +371,9 @@ export class Session {
     // b3270's screen indications carry the character, its colour and its
     // highlighting, but not where the fields are, so that is asked for
     // separately — one read at a time, and the next flush picks up the rest.
-    if (this.fieldsStale && this.fieldReadTag === null && this.wantsFieldMap()) {
+    // Read unconditionally, not just when a viewer wants field tinting: the
+    // recorder needs to know a password field the moment the host draws one.
+    if (this.fieldsStale && this.fieldReadTag === null) {
       this.fieldsStale = false;
       this.fieldReadTag = this.b3270.runActions([{ action: 'ReadBuffer', args: ['Ascii'] }]);
     }
@@ -402,6 +403,50 @@ export class Session {
   /** @returns {string} `<rows>x<cols>`, for spotting a resize. */
   screenSize() {
     return `${this.screen.rows}x${this.screen.cols}`;
+  }
+
+  /** @returns {string[]} The current screen, one plain-text line per row. */
+  screenLines() {
+    const lines = [];
+    for (let row = 0; row < this.screen.rows; row++) lines.push(this.screen.rowText(row));
+    return lines;
+  }
+
+  /**
+   * @param {string} action
+   * @param {string[]} [args]
+   * @returns {void}
+   */
+  record(action, args = []) {
+    if (this.recording === null) return;
+    /** @type {import('./protocol.js').RecorderStep} */
+    const step = { screen: this.screenLines(), action, args };
+    this.recording.steps.push(step);
+    this.sendToAll({ type: 'recorderStep', step });
+  }
+
+  /**
+   * A whole run of keystrokes typed into a password field collapses into this
+   * one marker, so the recording never carries what was typed there.
+   * @returns {void}
+   */
+  recordPassword() {
+    if (this.recording === null) return;
+    const steps = this.recording.steps;
+    if (steps.length > 0 && steps[steps.length - 1].password === true) return;
+    /** @type {import('./protocol.js').RecorderStep} */
+    const step = { screen: this.screenLines(), password: true };
+    steps.push(step);
+    this.sendToAll({ type: 'recorderStep', step });
+  }
+
+  /**
+   * @param {boolean[]} hidden row-major, from fieldMap()
+   * @returns {void}
+   */
+  updatePasswordField(hidden) {
+    const at = this.screen.cursor.row * this.screen.cols + this.screen.cursor.col;
+    this.passwordField = hidden[at] ?? false;
   }
 
   /**
@@ -546,6 +591,9 @@ export class Session {
 
     switch (message.type) {
       case 'action':
+        // A control key, never the field's own content, so it is always worth
+        // recording — including the Enter that submits a password field.
+        this.record(message.action, message.args ?? []);
         // b3270's Backspace is a real 3270 keyboard's: a non-destructive move
         // left. A PC keyboard expects a delete, which is these two actions —
         // and Delete already refuses to cross into a protected field.
@@ -557,10 +605,16 @@ export class Session {
         return;
       case 'text':
         if (message.value !== '') {
+          if (this.passwordField) this.recordPassword();
+          else this.record('String', [message.value]);
           this.b3270.runActions([{ action: 'String', args: [message.value] }]);
         }
         return;
       case 'paste': {
+        if (message.text !== '') {
+          if (this.passwordField) this.recordPassword();
+          else this.record('PasteString', [message.text]);
+        }
         // PasteString, not String: a newline moves to the next field instead of
         // sending Enter, and a backslash is a backslash. Hex-encoded.
         const hex = Buffer.from(message.text, 'utf8').toString('hex');
@@ -595,6 +649,9 @@ export class Session {
           if (other !== viewer) other.role = this.allowSharedEditing ? 'controller' : 'observer';
         }
         this.broadcastStatus();
+        return;
+      case 'recorder':
+        this.recording = message.action === 'start' ? { steps: [] } : null;
         return;
     }
   }

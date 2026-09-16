@@ -602,15 +602,124 @@ test('a viewer that asked for a field colour gets the typeable fields tinted wit
   );
 });
 
-test('a viewer that asked for no field colour is sent none, and costs no field read', async (t) => {
+test('a viewer that asked for no field colour is sent none, but the field map is still read', async (t) => {
   const fixture = await startTracedSession('test/traces/reverse.trc');
   t.after(() => fixture.close());
   const { session } = fixture;
 
   const viewer = collectingViewer('plain');
   session.attach(viewer);
+
+  // Read unconditionally now, whether or not anyone wants it tinted: the
+  // recorder needs to know a password field the moment the host draws one.
+  await waitUntil(() => session.screen.cells.some((cell) => cell.editable), 'the field map to be read');
   await settle(session);
 
-  assert.equal(session.fieldReadTag, null, 'nobody wants the field map, so none should be in flight');
-  assert.equal(session.screen.cells.some((cell) => cell.editable), false);
+  assert.equal(viewer.screen.join('').includes('48;2;'), false, 'nobody asked for a tint, so none was sent');
+});
+
+/**
+ * The recorder: every action and typed keystroke becomes a step carrying the
+ * screen it was typed against, streamed live to every viewer so a `RecorderPage`
+ * can build its export without polling. A password field is the one exception —
+ * see readbuffer.test.js for how it is detected.
+ */
+
+test('recording captures the screen and each step, and stops cleanly', async (t) => {
+  const session = new Session(testConfig());
+  t.after(() => session.close());
+  await session.ready;
+
+  const controller = collectingViewer('controller');
+  session.attach(controller);
+
+  session.handleClientMessage(controller, { type: 'recorder', action: 'start' });
+  assert.notEqual(session.recording, null, 'a recording should now be in progress');
+
+  session.handleClientMessage(controller, { type: 'text', value: 'abc' });
+  session.handleClientMessage(controller, { type: 'action', action: 'Enter' });
+
+  const steps = controller.messages
+    .filter((m) => m.type === 'recorderStep')
+    .map((m) => (m.type === 'recorderStep' ? m.step : null));
+  assert.equal(steps.length, 2);
+  assert.deepEqual(steps[0], { screen: session.recording?.steps[0].screen, action: 'String', args: ['abc'] });
+  assert.deepEqual(steps[1], { screen: session.recording?.steps[1].screen, action: 'Enter', args: [] });
+  assert.ok(Array.isArray(steps[0]?.screen), 'a step carries the whole screen, not just the keystroke');
+
+  session.handleClientMessage(controller, { type: 'recorder', action: 'stop' });
+  assert.equal(session.recording, null, 'stopping clears the recording');
+
+  // Typing after a stop is not part of any recording anymore.
+  session.handleClientMessage(controller, { type: 'text', value: 'ignored' });
+  const after = controller.messages.filter((m) => m.type === 'recorderStep');
+  assert.equal(after.length, 2, 'nothing more should have been recorded once stopped');
+});
+
+test('nothing is recorded while nobody has started a recording', async (t) => {
+  const session = new Session(testConfig());
+  t.after(() => session.close());
+  await session.ready;
+
+  const controller = collectingViewer('controller');
+  session.attach(controller);
+
+  session.handleClientMessage(controller, { type: 'text', value: 'abc' });
+  session.handleClientMessage(controller, { type: 'action', action: 'Enter' });
+
+  assert.equal(controller.messages.some((m) => m.type === 'recorderStep'), false);
+});
+
+test('an observer cannot start or stop a recording', async (t) => {
+  const session = new Session(testConfig());
+  t.after(() => session.close());
+  await session.ready;
+
+  const controller = collectingViewer('controller');
+  const observer = collectingViewer('observer');
+  session.attach(controller);
+  session.attach(observer);
+
+  session.handleClientMessage(observer, { type: 'recorder', action: 'start' });
+
+  assert.equal(session.recording, null, 'an observer cannot touch it');
+  const last = observer.messages.at(-1);
+  assert.equal(last?.type, 'error');
+  assert.equal(last?.type === 'error' ? last.code : '', 'E3006');
+});
+
+test('a run of keystrokes into a password field collapses to a single marker', async (t) => {
+  const session = new Session(testConfig());
+  t.after(() => session.close());
+  await session.ready;
+
+  const controller = collectingViewer('controller');
+  session.attach(controller);
+
+  session.handleClientMessage(controller, { type: 'recorder', action: 'start' });
+  // Set directly rather than through a real ReadBuffer round trip: see
+  // readbuffer.test.js for the attribute-bit detection this state comes from.
+  session.passwordField = true;
+
+  session.handleClientMessage(controller, { type: 'text', value: 's' });
+  session.handleClientMessage(controller, { type: 'text', value: 'ec' });
+  session.handleClientMessage(controller, { type: 'text', value: 'ret' });
+
+  const steps = /** @type {import('../server/protocol.js').RecorderStep[]} */ (session.recording?.steps ?? []);
+  assert.equal(steps.length, 1, 'the whole run collapses into one entry');
+  assert.equal(steps[0].password, true);
+  assert.equal(steps[0].action, undefined, 'no action and no args, so nothing typed ever leaks out');
+  assert.equal(steps[0].args, undefined);
+
+  // The Enter that submits the field is not the field's own content, and is
+  // needed to replay the form — so it is recorded normally, password or not.
+  session.handleClientMessage(controller, { type: 'action', action: 'Enter' });
+  assert.equal(steps.length, 2);
+  assert.equal(steps[1].action, 'Enter');
+
+  // Back to an ordinary field, typing is recorded in full again.
+  session.passwordField = false;
+  session.handleClientMessage(controller, { type: 'text', value: 'next' });
+  assert.equal(steps.length, 3);
+  assert.deepEqual(steps[2], { screen: steps[2].screen, action: 'String', args: ['next'] });
 });

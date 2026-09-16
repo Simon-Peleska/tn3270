@@ -35,7 +35,7 @@ test('no field under the cursor (ReadBuffer(Field) failed) is refused', () => {
 /**
  * @param {boolean[]} map
  * @param {number} cols
- * @returns {string[]} one string per row, '.' protected and '#' typeable
+ * @returns {string[]} one string per row, '.' unmarked and '#' marked
  */
 function picture(map, cols) {
   const rows = [];
@@ -50,7 +50,7 @@ test('cells after an unprotected attribute are typeable, and the attribute itsel
     'SF(c0=f0) 55 73 65 72 SF(c0=cd,41=f4) 00 00 00 SF(c0=f0)',
     'SF(c0=f0) 4f 4b 20 20 20 20 20 20 20',
   ];
-  assert.deepEqual(picture(fieldMap(lines, 2, 10), 10), [
+  assert.deepEqual(picture(fieldMap(lines, 2, 10).editable, 10), [
     '......###.',
     '..........',
   ]);
@@ -62,7 +62,7 @@ test('a field runs past the end of a row and the last field on the screen wraps 
     '00 SF(c0=f0) 41 42 43',
     '00 00 00 SF(c0=cc) 00',
   ];
-  assert.deepEqual(picture(fieldMap(lines, 3, 5), 5), [
+  assert.deepEqual(picture(fieldMap(lines, 3, 5).editable, 5), [
     '#####',
     '#....',
     '....#',
@@ -71,15 +71,24 @@ test('a field runs past the end of a row and the last field on the screen wraps 
 
 test('SA tokens carry an attribute for the next cell and take up no column of their own', () => {
   const lines = ['SF(c0=cd,41=f4) SA(42=f4) 41 SA(41=f2) 42 43'];
-  assert.deepEqual(picture(fieldMap(lines, 1, 4), 4), ['.###']);
+  assert.deepEqual(picture(fieldMap(lines, 1, 4).editable, 4), ['.###']);
 });
 
 test('an unformatted screen has no fields, so nothing is marked typeable', () => {
   const lines = ['41 42 43 44', '45 46 47 48'];
-  assert.deepEqual(fieldMap(lines, 2, 4).some(Boolean), false);
+  const map = fieldMap(lines, 2, 4);
+  assert.deepEqual(map.editable.some(Boolean), false);
+  assert.deepEqual(map.hidden.some(Boolean), false);
 });
 
 test('rows b3270 did not return stay with whatever protection was in force', () => {
   const lines = ['SF(c0=cd) 00 00 00'];
-  assert.deepEqual(picture(fieldMap(lines, 2, 4), 4), ['.###', '####']);
+  assert.deepEqual(picture(fieldMap(lines, 2, 4).editable, 4), ['.###', '####']);
+});
+
+test('a non-display field (the 0x0c intensity bits set) is marked hidden, an ordinary one is not', () => {
+  // c0=cd is protect=0, intensity=11 (non-display) — a password-style field.
+  // c0=c0 is protect=0, intensity=00 (ordinary) — a ordinary unprotected one.
+  const lines = ['SF(c0=cd) 41 42 SF(c0=c0) 43 44'];
+  assert.deepEqual(picture(fieldMap(lines, 1, 6).hidden, 6), ['.##...']);
 });

@@ -26,8 +26,10 @@ export function editableFieldText(lines) {
 }
 
 /**
- * Which cells the operator may type into, from a whole-screen
- * `ReadBuffer(Ascii)`: one line per row, one token per cell —
+ * Which cells the operator may type into, and which are non-display (a
+ * password field's own attribute never shows what is typed there — 3270
+ * intensity bits `11`, mask 0x0c), from a whole-screen `ReadBuffer(Ascii)`:
+ * one line per row, one token per cell —
  *   `SF(c0=f0) 55 73 65 72 3a 20 SF(c0=cd,41=f4) 00 00 00 ...`
  *
  * `SA(...)` tokens carry an extended attribute for the cell after them and take
@@ -39,7 +41,8 @@ export function editableFieldText(lines) {
  * @param {string[]} lines one per row, as b3270 returned them
  * @param {number} rows
  * @param {number} cols
- * @returns {boolean[]} row-major, length rows*cols, true where typing is allowed
+ * @returns {{ editable: boolean[], hidden: boolean[] }} both row-major, length
+ *   rows*cols
  */
 export function fieldMap(lines, rows, cols) {
   /** @type {Array<number | null>} */
@@ -63,19 +66,27 @@ export function fieldMap(lines, rows, cols) {
 
   // An unformatted screen is technically all unprotected, but tinting every
   // cell of it would be nonsense.
-  if (lastAttribute === null) return new Array(rows * cols).fill(false);
+  if (lastAttribute === null) {
+    return { editable: new Array(rows * cols).fill(false), hidden: new Array(rows * cols).fill(false) };
+  }
 
   let isProtected = (lastAttribute & 0x20) !== 0;
+  let isHidden = (lastAttribute & 0x0c) === 0x0c;
   /** @type {boolean[]} */
   const editable = new Array(rows * cols);
+  /** @type {boolean[]} */
+  const hidden = new Array(rows * cols);
   for (let i = 0; i < editable.length; i++) {
     const attribute = attributes[i] ?? null;
     if (attribute !== null) {
       isProtected = (attribute & 0x20) !== 0;
+      isHidden = (attribute & 0x0c) === 0x0c;
       editable[i] = false;
+      hidden[i] = false;
     } else {
       editable[i] = !isProtected;
+      hidden[i] = isHidden;
     }
   }
-  return editable;
+  return { editable, hidden };
 }
