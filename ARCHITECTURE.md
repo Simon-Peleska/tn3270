@@ -173,8 +173,9 @@ keys — PA1, Clear, Attn, Reset, EraseEOF — have no VT equivalent at all.
 
 Instead `public/keymap.js` puts a capture-phase `keydown` listener on the
 container and maps `KeyboardEvent` → 3270 action, with printable characters
-becoming `String("…")`. The whole map is two frozen tables, so it can be made
-configurable later without touching the transport.
+becoming `String("…")`. The bindings follow PCOMM's default 3270 keyboard
+layout rather than x3270's. The map is small and self-contained, so it can be
+made configurable later without touching the transport.
 
 ## All UI lives inside the terminal
 

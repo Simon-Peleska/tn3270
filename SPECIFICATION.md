@@ -136,33 +136,41 @@ the host.
 
 ## 5. Keyboard
 
-Printable characters are sent as text. Everything else:
+Printable characters are sent as text. Everything else follows IBM Personal
+Communications' (PCOMM) default 3270 keyboard, not x3270's Ctrl-letter
+mnemonics:
 
 | Key | 3270 action |
 |---|---|
-| Enter | Enter |
+| Enter (main) | Newline |
+| Right Ctrl | Enter |
 | Tab / Shift-Tab | Tab / BackTab |
 | Backspace, Delete | Backspace, Delete |
-| Arrows, Home, End | Up, Down, Left, Right, Home, End |
+| Arrows, Home | Up, Down, Left, Right, Home |
 | Insert | ToggleInsert |
+| Alt-Insert | PA1 |
+| Ctrl-C | copy the selection, or the field under the cursor |
 | Ctrl-V, Shift-Insert | paste the clipboard into the screen |
+| Shift-Home | FieldMark |
+| Alt-Home | PA2 |
+| End | EraseEOF |
+| Alt-End | EraseInput |
+| Shift-PageUp | PA3 |
 | Esc | Attn |
+| Shift-Esc | SysReq |
+| Pause | Clear |
+| Caps Lock | Reset |
 | F1–F12 | PF1–PF12 |
 | Shift-F1–F12 | PF13–PF24 |
-| Ctrl-1 / Ctrl-2 / Ctrl-3 | PA1 / PA2 / PA3 |
-| Ctrl-R | Reset |
-| Ctrl-A | Attn |
-| Ctrl-C | copy the selection, or the field under the cursor |
-| Ctrl-E | EraseEOF |
-| Ctrl-U | EraseInput |
-| Ctrl-D | Dup |
-| Ctrl-F | FieldMark |
-| Ctrl-S | SysReq |
 | Ctrl-B then 1–4 | aim the keyboard at that session |
 | Ctrl-B then Shift-1–4 | show that many sessions at once |
 
-Alt and Meta combinations are left to the browser. There is no local echo: what
-appears on screen is what the host put there.
+Plain Ctrl and Meta combinations are left to the browser, except Ctrl-B (the
+session prefix, below) and Ctrl-C/Ctrl-V, which copy and paste the system
+clipboard rather than reaching the host as 3270 actions. Alt is otherwise left
+to the browser too, except the PA-key and Dup/FieldMark/EraseInput bindings
+above. There is no local echo: what appears on screen is what the host put
+there.
 
 `Ctrl-B` is a prefix in the tmux sense, and it is the browser's alone — neither
 it nor the key after it ever reaches the host. While it is armed the status row
