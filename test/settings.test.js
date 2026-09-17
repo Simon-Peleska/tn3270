@@ -118,6 +118,7 @@ test('theme and font apply as you scroll through them and are saved by name', ()
     model: 2,
     hostColors: true,
     fitFontSize: 16,
+    hints: false,
   });
   assert.deepEqual(calls.models, [], 'the screen size must not have moved');
 });
@@ -149,10 +150,27 @@ test('host colours default on, and either arrow key flips the saved toggle', () 
     model: 2,
     hostColors: false,
     fitFontSize: 16,
+    hints: false,
   });
 
   page.restoreSaved({ hostColors: false });
   assert.equal(page.hostColors, false);
+});
+
+test('field hints default off, and either arrow key flips the saved toggle', () => {
+  const { page, calls } = fixture();
+  assert.equal(page.hints, false);
+
+  page.connected = true;
+  page.show();
+  page.selected = page.rows().findIndex((row) => row.key === 'hints');
+  page.handleKey(key({ key: 'ArrowRight' }));
+
+  assert.equal(page.hints, true);
+  assert.equal(calls.saved.at(-1)?.hints, true);
+
+  page.restoreSaved({ hints: false });
+  assert.equal(page.hints, false, 'a saved off is taken up as-is');
 });
 
 test('the controller can toggle sharing and shared editing, and turning sharing off takes editing with it', () => {
@@ -178,7 +196,7 @@ test('the controller can toggle sharing and shared editing, and turning sharing 
   assert.deepEqual(calls.sharing.at(-1), { allowView: false, allowEdit: false });
   assert.deepEqual(
     page.rows().map((row) => row.key),
-    ['theme', 'font', 'model', 'fit', 'hostColors', 'allowSharing'],
+    ['theme', 'font', 'model', 'fit', 'hostColors', 'hints', 'allowSharing'],
     'shared editing is only offered while sharing is on',
   );
 });
@@ -191,7 +209,7 @@ test('an observer is not offered the sharing rows at all — it is not their ses
 
   assert.deepEqual(
     page.rows().map((row) => row.key),
-    ['theme', 'font', 'model', 'fit', 'hostColors'],
+    ['theme', 'font', 'model', 'fit', 'hostColors', 'hints'],
   );
 });
 
@@ -230,7 +248,7 @@ test('the dynamic screen is one more choice after the models, asked for as an ov
   assert.equal(page.pendingOversize, '160x62');
   assert.deepEqual(
     page.rows().map((row) => row.key),
-    ['theme', 'font', 'model', 'hostColors', 'allowSharing', 'allowSharedEditing'],
+    ['theme', 'font', 'model', 'hostColors', 'hints', 'allowSharing', 'allowSharedEditing'],
     'a size asked for by name has nothing to fit to the window',
   );
 
@@ -298,11 +316,11 @@ test('the text size appears with the fit and drives what it measures', () => {
   page.show();
 
   page.selected = 3;
-  assert.equal(page.rows().length, 7, 'the text size is not offered while the fit is off');
+  assert.equal(page.rows().length, 8, 'the text size is not offered while the fit is off');
 
   page.handleKey(key({ key: 'ArrowRight' }));
   assert.equal(page.pendingOversize, '166x40');
-  assert.equal(page.rows().length, 8);
+  assert.equal(page.rows().length, 9);
   assert.equal(page.rows()[4]?.key, 'fitSize');
   assert.equal(page.rows()[4]?.value, '16 px');
 

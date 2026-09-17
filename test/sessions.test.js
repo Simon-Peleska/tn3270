@@ -52,6 +52,16 @@ test('anything that is not a session number cancels instead of reaching the host
   }
 });
 
+test('a letter matching an offered hint picks it instead of cancelling', () => {
+  const prefix = new SessionPrefix();
+  prefix.handleKey(key({ key: 'b', ctrlKey: true }));
+  assert.deepEqual(prefix.handleKey(key({ key: 'n' }), ['n', 'e']), { action: 'hint', letter: 'n' });
+
+  // With no hints offered, the same letter just cancels as before.
+  prefix.handleKey(key({ key: 'b', ctrlKey: true }));
+  assert.deepEqual(prefix.handleKey(key({ key: 'n' })), { action: 'cancel' });
+});
+
 test('the prefix is Ctrl-B alone', () => {
   const prefix = new SessionPrefix();
 
