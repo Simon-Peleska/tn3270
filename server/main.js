@@ -8,6 +8,7 @@ import { setLogLevel, logger } from './log.js';
 import { SessionRegistry } from './session.js';
 import { HEX_COLOR, parseClientMessage } from './protocol.js';
 import { AppError, describeError } from './errors.js';
+import { handleRestAction } from './s3270rest.js';
 
 const config = loadConfig(process.env['TN3270_CONFIG'] ?? 'config.jsonc');
 setLogLevel(config.logLevel);
@@ -109,6 +110,15 @@ async function handleRequest(req, res) {
     return;
   }
 
+  // Matches s3270's own `-httpd` URL shape, one session id up: an s3270 REST
+  // client only has to change its base URL, not how it builds an action call.
+  const restMatch = /^\/api\/sessions\/([0-9a-fA-F-]{36})\/3270\/rest\/json\/?(.*)$/.exec(path);
+  if (restMatch !== null && req.method === 'GET') {
+    const session = registry.get(String(restMatch[1]));
+    await handleRestAction(res, session, restMatch[2] ?? '');
+    return;
+  }
+
   if (path.startsWith('/vendor/')) {
     await sendFile(res, VENDOR_DIR, path.slice('/vendor/'.length));
     return;
@@ -125,7 +135,7 @@ const server = createServer((req, res) => {
       res.end();
       return;
     }
-    sendJson(res, code === 'E6001' ? 404 : 500, { code, message: summary });
+    sendJson(res, code === 'E6001' || code === 'E3001' ? 404 : 500, { code, message: summary });
   });
 });
 
