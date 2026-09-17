@@ -7,7 +7,7 @@
  * it is an error, not to the file that happens to throw:
  *
  * E1xxx config, E2xxx b3270, E3xxx session, E4xxx client messages,
- * E5xxx browser, E6xxx server transport.
+ * E5xxx browser, E6xxx server transport, E7xxx s3270 REST bridge.
  */
 const ERRORS = Object.freeze({
   E1001: 'Config file could not be read',
@@ -51,6 +51,8 @@ const ERRORS = Object.freeze({
   E6002: 'WebSocket upgrade path is not a session',
   E6003: 'WebSocket closed unexpectedly',
   E6004: 'Server could not start',
+
+  E7001: 'REST action call is not valid s3270 action syntax',
 });
 
 /** @typedef {keyof typeof ERRORS} ErrorCode */

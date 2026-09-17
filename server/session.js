@@ -96,6 +96,9 @@ export class Session {
     /** @type {Map<string, Viewer>} `copyField` requests waiting on a
      * `ReadBuffer` result, by the r-tag `runActions` handed back. */
     this.pendingFieldReads = new Map();
+    /** @type {Map<string, (result: { success: boolean, text: string[] | null }) => void>}
+     * REST calls waiting on their own action's run-result, by r-tag. */
+    this.pendingRestCalls = new Map();
     /** @type {boolean} The host redrew since the field map was read. */
     this.fieldsStale = false;
     /** @type {string | null} The r-tag of the field-map read in flight. */
@@ -323,6 +326,13 @@ export class Session {
     if (kind === 'run-result') {
       const result = /** @type {import('./b3270.js').RunResultIndication} */ (body);
       const tag = result['r-tag'];
+
+      const restWaiter = tag !== undefined ? this.pendingRestCalls.get(tag) : undefined;
+      if (restWaiter !== undefined) {
+        this.pendingRestCalls.delete(/** @type {string} */ (tag));
+        restWaiter({ success: result.success, text: result.text ?? null });
+        return;
+      }
 
       if (tag !== undefined && tag === this.fieldReadTag) {
         this.fieldReadTag = null;
@@ -724,6 +734,32 @@ export class Session {
     const right = (at + 1) % cells.length;
     if (!(cells[right]?.editable ?? false)) return null;
     return { row: Math.floor(right / cols), col: right % cols };
+  }
+
+  /**
+   * Runs one action for the REST bridge and waits for its own run-result,
+   * the way s3270's `-httpd` answers one action per request. b3270 validates
+   * and executes the same action language s3270 does, so the failure text
+   * that comes back (unknown action, wrong argument count, ...) already
+   * matches what an s3270 REST client expects.
+   *
+   * @param {string} action
+   * @param {string[]} args
+   * @returns {Promise<{ success: boolean, text: string[] | null }>}
+   */
+  runRestAction(action, args) {
+    return new Promise((resolve) => {
+      const tag = this.b3270.runActions([{ action, args }]);
+      const timer = setTimeout(() => {
+        this.pendingRestCalls.delete(tag);
+        this.log.warn('REST action timed out', { action, tag });
+        resolve({ success: false, text: ['action timed out'] });
+      }, 5000);
+      this.pendingRestCalls.set(tag, (result) => {
+        clearTimeout(timer);
+        resolve(result);
+      });
+    });
   }
 
   /** @returns {void} */
