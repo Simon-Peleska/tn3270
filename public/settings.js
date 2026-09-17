@@ -345,6 +345,11 @@ export class SettingsPage {
     this.allowSharing = true;
     /** @type {boolean} Whether a viewer who is not the controller may type. */
     this.allowSharedEditing = false;
+    /** @type {boolean} Ctrl-B's field hints: a letter over the first cell of
+     *  every editable field, typing it jumping the cursor straight there. A
+     *  purely local browser preference — the server is only ever asked for
+     *  hints, never told whether this is on — so no deps.applyX() goes with it. */
+    this.hints = false;
   }
 
   /** @returns {boolean} */
@@ -404,6 +409,7 @@ export class SettingsPage {
       }
     }
     rows.push({ key: 'hostColors', label: 'Host colors', value: this.hostColors ? 'On' : 'Off' });
+    rows.push({ key: 'hints', label: 'Field hints (Ctrl-B)', value: this.hints ? 'On' : 'Off' });
     // Only the controller's call: it is their screen being shared.
     if (this.role === 'controller') {
       rows.push({ key: 'allowSharing', label: 'Allow sharing', value: this.allowSharing ? 'On' : 'Off' });
@@ -484,6 +490,7 @@ export class SettingsPage {
     const font = FONTS.findIndex((entry) => entry.name === saved.font);
     if (font !== -1) this.fontIndex = font;
     if (typeof saved.hostColors === 'boolean') this.hostColors = saved.hostColors;
+    if (typeof saved.hints === 'boolean') this.hints = saved.hints;
     if (typeof saved.fitFontSize === 'number') {
       this.fitFontSize = Math.max(MIN_FIT_FONT_SIZE, Math.min(MAX_FIT_FONT_SIZE, saved.fitFontSize));
     }
@@ -497,6 +504,7 @@ export class SettingsPage {
       model: this.model,
       hostColors: this.hostColors,
       fitFontSize: this.fitFontSize,
+      hints: this.hints,
     });
   }
 
@@ -677,6 +685,9 @@ export class SettingsPage {
     } else if (key === 'hostColors') {
       this.hostColors = !this.hostColors;
       this.deps.applyHostColors(this.hostColors);
+      this.save();
+    } else if (key === 'hints') {
+      this.hints = !this.hints;
       this.save();
     } else if (key === 'allowSharing') {
       this.allowSharing = !this.allowSharing;

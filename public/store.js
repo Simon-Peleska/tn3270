@@ -19,6 +19,7 @@ const KEYMAP_KEY = 'keymap';
  * @property {boolean} hostColors
  * @property {number} fitFontSize how tall the text is in the screen that "fit
  *   to window" measures; not the font size on screen, which floats
+ * @property {boolean} hints Ctrl-B's field hints, a purely local preference
  */
 
 /** @type {Promise<IDBDatabase> | null} */

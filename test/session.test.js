@@ -455,6 +455,56 @@ test('a Backspace at the very start of a field does nothing, rather than locking
   assert.equal(session.oia.keyboardLocked, false, 'the keyboard must not lock');
 });
 
+test('typing on the attribute byte just left of a field nudges the cursor into it, rather than locking the keyboard', async (t) => {
+  const fixture = await startTracedSession('test/traces/reverse.trc');
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  const { screen } = session;
+  await settle(session);
+  await waitUntil(() => screen.fieldsFormatted, 'the field map to load');
+
+  const controller = collectingViewer('controller');
+  session.attach(controller);
+  const start = { ...screen.cursor };
+
+  // The cell right before the field is its attribute byte, protected; typing
+  // there directly would be a protected-cell error that locks the keyboard.
+  session.handleClientMessage(controller, { type: 'action', action: 'MoveCursor1', args: [String(start.row + 1), String(start.col)] });
+  await settle(session);
+
+  session.handleClientMessage(controller, { type: 'text', value: 'x' });
+  await settle(session);
+  assert.equal(session.oia.keyboardLocked, false, 'typing on the attribute byte must not lock the keyboard');
+  assert.equal(screen.cursor.col, start.col + 1, 'the character should land in the field, advancing the cursor past it');
+
+  session.handleClientMessage(controller, { type: 'action', action: 'MoveCursor1', args: [String(start.row + 1), String(start.col + 1)] });
+  session.handleClientMessage(controller, { type: 'copyField' });
+  await settle(session);
+
+  const fieldContent = controller.messages.find((message) => message.type === 'fieldContent');
+  assert.equal(fieldContent?.type === 'fieldContent' ? fieldContent.text : null, 'x');
+});
+
+test('a hints request answers with one letter per editable field, using the cached field map', async (t) => {
+  const fixture = await startTracedSession('test/traces/reverse.trc');
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  await settle(session);
+
+  const controller = collectingViewer('controller');
+  session.attach(controller);
+  await waitUntil(() => session.screen.cells.some((cell) => cell.editable), 'the field map to be read');
+
+  session.handleClientMessage(controller, { type: 'hints' });
+  await settle(session);
+
+  const hints = controller.messages.find((message) => message.type === 'hints');
+  assert.ok(hints?.type === 'hints', 'a hints message should have been sent');
+  assert.ok(hints.hints.length > 0, 'the screen has editable fields to hint');
+  const letters = hints.hints.map((hint) => hint.letter);
+  assert.equal(new Set(letters).size, letters.length, 'no letter should be handed to two fields');
+});
+
 test('clicking a cell moves the cursor there', async (t) => {
   // The browser sends the clicked cell as 1-origin row/col, which is what
   // MoveCursor1 takes; 0-origin would land the cursor one row and one column
@@ -491,6 +541,36 @@ test('pasted text is typed literally, backslashes and all', async (t) => {
   await settle(session);
 
   assert.equal(session.screen.cursor.col, before + 3);
+});
+
+test('pasting more than a field holds is truncated at its edge, not spilled into the protected field after it', async (t) => {
+  const fixture = await startTracedSession('test/traces/reverse.trc');
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  const { screen } = session;
+  await settle(session);
+  await waitUntil(() => screen.fieldsFormatted, 'the field map to load');
+
+  const controller = collectingViewer('controller');
+  session.attach(controller);
+  const start = { ...screen.cursor };
+
+  // The field runs from the cursor to the end of the row (see the trace); a
+  // row past it is a separate, fully protected field, so a paste that runs
+  // past the field's edge must stop there rather than lock the keyboard.
+  const fieldWidth = screen.cols - start.col;
+  session.handleClientMessage(controller, { type: 'paste', text: 'x'.repeat(fieldWidth + 3) });
+  await settle(session);
+  assert.equal(session.oia.keyboardLocked, false, 'landing on the protected field must not lock the keyboard');
+
+  // b3270's own screen indications do not report what a scripted paste typed
+  // (unlike a live keystroke), so the field is read back to check it directly.
+  session.handleClientMessage(controller, { type: 'action', action: 'MoveCursor1', args: [String(start.row + 1), String(start.col + 1)] });
+  session.handleClientMessage(controller, { type: 'copyField' });
+  await settle(session);
+
+  const fieldContent = controller.messages.find((message) => message.type === 'fieldContent');
+  assert.equal(fieldContent?.type === 'fieldContent' ? fieldContent.text : null, 'x'.repeat(fieldWidth));
 });
 
 test('a b3270 resource set in the config reaches the emulator', async (t) => {

@@ -22,7 +22,10 @@ export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
  *   The controller's own call: allowView lets a second viewer attach at all,
  *   allowEdit lets one who has typed.
  * @typedef {{ type: 'recorder', action: 'start' | 'stop' }} RecorderMessage
- * @typedef {ActionMessage | TextMessage | PasteMessage | ConnectMessage | DisconnectMessage | ModelMessage | OversizeMessage | RefreshMessage | HostColorsMessage | CopyFieldMessage | FieldColorMessage | SharingMessage | RecorderMessage} ClientMessage
+ * @typedef {{ type: 'hints' }} HintsRequestMessage Ctrl-B's hint mode, asking
+ *   which letter jumps to which field — answered synchronously from the field
+ *   map already cached for tinting and Backspace, no b3270 round trip needed.
+ * @typedef {ActionMessage | TextMessage | PasteMessage | ConnectMessage | DisconnectMessage | ModelMessage | OversizeMessage | RefreshMessage | HostColorsMessage | CopyFieldMessage | FieldColorMessage | SharingMessage | RecorderMessage | HintsRequestMessage} ClientMessage
  *
  * @typedef {object} HelloMessage
  * @property {'hello'} type
@@ -93,7 +96,15 @@ export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
  * @property {'recorderStep'} type
  * @property {RecorderStep} step
  *
- * @typedef {HelloMessage | ScreenMessage | StatusMessage | ErrorMessage | FieldContentMessage | RecorderStepMessage} ServerMessage
+ * Answers a `hints` request: one letter per editable field, in screen order.
+ * A screen with no fields at all — or none of them free letters ran out
+ * before reaching — sends an empty list, not an error.
+ *
+ * @typedef {object} HintsMessage
+ * @property {'hints'} type
+ * @property {{ row: number, col: number, letter: string }[]} hints
+ *
+ * @typedef {HelloMessage | ScreenMessage | StatusMessage | ErrorMessage | FieldContentMessage | RecorderStepMessage | HintsMessage} ServerMessage
  */
 
 /**
@@ -196,6 +207,8 @@ export function parseClientMessage(raw) {
   if (type === 'refresh') return { type: 'refresh' };
 
   if (type === 'copyField') return { type: 'copyField' };
+
+  if (type === 'hints') return { type: 'hints' };
 
   if (type === 'sharing') {
     const allowView = message['allowView'];

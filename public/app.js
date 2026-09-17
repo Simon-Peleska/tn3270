@@ -34,13 +34,12 @@ const MIN_FONT_SIZE = 6;
 const MAX_FONT_SIZE = 64;
 
 const RESET_LABEL = '[Reset]';
-const MACROS_LABEL = '[Macros]';
-const RECORD_LABEL = '[Record]';
-const KEYMAP_LABEL = '[Keymap]';
 const SETTINGS_LABEL = '[Settings]';
+// Macros, Record and Keymap are hidden for now — their pages and keyboard
+// shortcuts still work, just not surfaced as buttons here.
 /** Exactly one narrower than BUTTON_COLUMNS in server/oia.js, which holds these
  *  columns of the status line clear for them. */
-const BUTTONS = `${RESET_LABEL} ${MACROS_LABEL} ${RECORD_LABEL} ${KEYMAP_LABEL} ${SETTINGS_LABEL}`;
+const BUTTONS = `${RESET_LABEL} ${SETTINGS_LABEL}`;
 
 /** @type {{ code: string, message: string } | null} */
 let activeError = null;
@@ -98,8 +97,25 @@ function buttonBytes(term) {
 }
 
 /**
- * Both bars live on the terminal's last row and neither exists on the server,
- * so both are reasserted after every write that lands there.
+ * @returns {string} one letter over the first cell of every hinted field,
+ *   while Ctrl-B is armed and the setting is on — '' otherwise
+ */
+function hintOverlayBytes() {
+  const term = activeTerminal();
+  if (!prefix.armed || !settings.hints || term === null || hints.length === 0) return '';
+  const colors = settings.theme().colors;
+  const fg = colors['background'] ?? '#000000';
+  const bg = colors['foreground'] ?? '#00ff00';
+  let bytes = `${ESC}7`;
+  for (const hint of hints) {
+    bytes += `${ESC}[${hint.row + 1};${hint.col + 1}H${paint(fg, bg, true)}${hint.letter}${ESC}[0m`;
+  }
+  return `${bytes}${ESC}8`;
+}
+
+/**
+ * All three live over cells the server does not own and neither exists on it,
+ * so all are reasserted after every write that lands there.
  *
  * Nothing to paint is the usual answer and it has to stay unwritten:
  * ghostty-web 0.4.0 allocates a WASM buffer per write, zero bytes comes back as
@@ -109,7 +125,7 @@ function buttonBytes(term) {
  */
 function writeOverlays() {
   const slot = activeSession();
-  const bytes = errorOverlayBytes() + prefixBarBytes();
+  const bytes = errorOverlayBytes() + prefixBarBytes() + hintOverlayBytes();
   if (bytes === '' || slot === null || slot.terminal === null) return;
   slot.terminal.write(bytes);
   // By the time the overlay comes off, the keyboard may be on another pane.
@@ -219,6 +235,10 @@ let panes = [0];
 let overlaySlot = null;
 
 const prefix = new SessionPrefix();
+
+/** @type {{ row: number, col: number, letter: string }[]} the last hints the
+ *  server answered with, shown only while Ctrl-B is armed and hints are on */
+let hints = [];
 
 /** @returns {SessionSlot | null} */
 function activeSession() {
@@ -859,6 +879,15 @@ function handleServerMessage(slot, message) {
     recorder.record(message.step);
     return;
   }
+  if (message.type === 'hints') {
+    // A slow answer landing after the operator has already moved on would
+    // otherwise paint stale letters over whatever pane the keyboard is on now.
+    if (onScreen && prefix.armed) {
+      hints = message.hints;
+      writeOverlays();
+    }
+    return;
+  }
   if (message.type === 'status') {
     const changed = slot.connected !== message.connected;
     slot.connection = message.connection;
@@ -1069,16 +1098,32 @@ function changeLayout(count) {
   });
 }
 
+/**
+ * Where a hint letter sends the cursor. The overlay comes off with the same
+ * refresh that every other prefix action already asks for, so nothing extra
+ * is needed to clear it.
+ *
+ * @param {string} letter
+ * @returns {void}
+ */
+function jumpToHint(letter) {
+  const hint = hints.find((entry) => entry.letter === letter);
+  if (hint === undefined) return;
+  send({ type: 'action', action: 'MoveCursor1', args: [String(hint.row + 1), String(hint.col + 1)] });
+}
+
 // Alt+Space has to work wherever the focus is, so the settings page gets first
 // refusal on every key in the page; it swallows everything while it is open.
 // The switcher comes before even that: a session that is not connected has the
 // settings page open over it, and being unable to switch away would be a trap.
 window.addEventListener('keydown', (event) => {
-  const decision = prefix.handleKey(event);
+  const decision = prefix.handleKey(event, settings.hints ? hints.map((hint) => hint.letter) : []);
   if (decision.action !== 'ignore') {
     event.preventDefault();
     event.stopPropagation();
     if (decision.action === 'arm') {
+      hints = [];
+      if (settings.hints) send({ type: 'hints' });
       writeOverlays();
       return;
     }
@@ -1089,6 +1134,7 @@ window.addEventListener('keydown', (event) => {
     repaintStatus();
     if (decision.action === 'switch') switchTo(decision.index);
     else if (decision.action === 'layout') changeLayout(decision.panes);
+    else if (decision.action === 'hint') jumpToHint(decision.letter);
     return;
   }
   // Each page's own toggle key closes the other two first, so a keystroke
@@ -1198,9 +1244,6 @@ function paneClicked(slot, event) {
   const col = Math.floor((event.clientX - rect.left) / renderer.charWidth);
 
   const settingsStart = term.cols - SETTINGS_LABEL.length;
-  const keymapStart = settingsStart - 1 - KEYMAP_LABEL.length;
-  const recordStart = keymapStart - 1 - RECORD_LABEL.length;
-  const macrosStart = recordStart - 1 - MACROS_LABEL.length;
   const resetStart = term.cols - BUTTONS.length;
 
   if (row === term.rows - 1) {
@@ -1208,9 +1251,6 @@ function paneClicked(slot, event) {
     // click right of any of them is also right of the ones still to check.
     const buttons = [
       { start: settingsStart, action: () => settings.toggle() },
-      { start: keymapStart, action: () => keymap.toggle() },
-      { start: recordStart, action: () => recorder.toggle() },
-      { start: macrosStart, action: () => macros.toggle() },
       { start: resetStart, action: () => resetSize(slot) },
     ];
     for (const button of buttons) {

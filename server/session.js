@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { B3270 } from './b3270.js';
 import { editableFieldText, fieldMap } from './readbuffer.js';
+import { pasteSegments } from './paste.js';
+import { computeHints } from './hints.js';
 import { ScreenModel } from './screen.js';
 import { OiaModel } from './oia.js';
 import { fullRepaint, delta } from './vt.js';
@@ -615,18 +617,33 @@ export class Session {
         if (message.value !== '') {
           if (this.passwordField) this.recordPassword();
           else this.record('String', [message.value]);
-          this.b3270.runActions([{ action: 'String', args: [message.value] }]);
+          const nudge = this.typingNudge();
+          const actions = nudge === null
+            ? [{ action: 'String', args: [message.value] }]
+            : [
+              { action: 'MoveCursor1', args: [String(nudge.row + 1), String(nudge.col + 1)] },
+              { action: 'String', args: [message.value] },
+            ];
+          this.b3270.runActions(actions);
         }
         return;
       case 'paste': {
         if (message.text !== '') {
           if (this.passwordField) this.recordPassword();
           else this.record('PasteString', [message.text]);
+
+          // A run that already reads what's pasted there is left alone and
+          // consumed from the input rather than typed into or skipped past,
+          // so the parts after it land in the fields meant for them. Split
+          // into one MoveCursor+PasteString pair per remaining run, sent as
+          // a single batch so nothing else can be typed in between them.
+          const segments = pasteSegments(this.screen.cells, this.screen.fieldsFormatted, this.screen.cols, this.screen.cursor, message.text);
+          const actions = segments.flatMap(({ row, col, text }) => [
+            { action: 'MoveCursor1', args: [String(row + 1), String(col + 1)] },
+            { action: 'PasteString', args: [Buffer.from(text, 'utf8').toString('hex')] },
+          ]);
+          if (actions.length > 0) this.b3270.runActions(actions);
         }
-        // PasteString, not String: a newline moves to the next field instead of
-        // sending Enter, and a backslash is a backslash. Hex-encoded.
-        const hex = Buffer.from(message.text, 'utf8').toString('hex');
-        if (hex !== '') this.b3270.runActions([{ action: 'PasteString', args: [hex] }]);
         return;
       }
       case 'connect':
@@ -646,6 +663,11 @@ export class Session {
       case 'copyField': {
         const tag = this.b3270.runActions([{ action: 'ReadBuffer', args: ['Ascii', 'Field'] }]);
         this.pendingFieldReads.set(tag, viewer);
+        return;
+      }
+      case 'hints': {
+        const hints = this.screen.fieldsFormatted ? computeHints(this.screen.cells, this.screen.cols) : [];
+        viewer.sendMessage({ type: 'hints', hints });
         return;
       }
       case 'sharing':
@@ -680,6 +702,28 @@ export class Session {
     const at = cursor.row * cols + cursor.col;
     const left = cells[(at - 1 + cells.length) % cells.length];
     return left?.editable ?? true;
+  }
+
+  /**
+   * Where a typed character should land instead of the cursor's own cell, if
+   * anywhere. A field's attribute byte sits right before it, and the cursor
+   * can rest there — typing onto it directly would lock the keyboard on a
+   * protected-cell error, when the operator plainly means to type into the
+   * field that starts right after it. Nudging over by one only in that exact
+   * case (cursor's own cell protected, the very next one not) leaves typing
+   * anywhere else exactly as it was.
+   *
+   * @returns {{ row: number, col: number } | null} null when the cursor's
+   *   own cell is fine to type into as-is
+   */
+  typingNudge() {
+    if (!this.screen.fieldsFormatted) return null;
+    const { cursor, cells, cols } = this.screen;
+    const at = cursor.row * cols + cursor.col;
+    if (cells[at]?.editable ?? true) return null;
+    const right = (at + 1) % cells.length;
+    if (!(cells[right]?.editable ?? false)) return null;
+    return { row: Math.floor(right / cols), col: right % cols };
   }
 
   /** @returns {void} */

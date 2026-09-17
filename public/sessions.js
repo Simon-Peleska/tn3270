@@ -45,10 +45,13 @@ export class SessionPrefix {
    * stays a small state machine rather than half the application.
    *
    * @param {KeyboardEvent} event
+   * @param {readonly string[]} [hintLetters] the letters Ctrl-B's field hints
+   *   currently offer, empty when hint mode is off or none are showing yet —
+   *   letters and digits never collide, so this rides the same prefix.
    * @returns {{ action: 'ignore' | 'arm' | 'cancel' } | { action: 'switch', index: number }
-   *   | { action: 'layout', panes: number }}
+   *   | { action: 'layout', panes: number } | { action: 'hint', letter: string }}
    */
-  handleKey(event) {
+  handleKey(event, hintLetters = []) {
     if (this.armed) {
       if (MODIFIER_KEYS.has(event.key)) return { action: 'ignore' };
       this.armed = false;
@@ -58,6 +61,7 @@ export class SessionPrefix {
         if (event.shiftKey) return { action: 'layout', panes: digit };
         return { action: 'switch', index: digit - 1 };
       }
+      if (hintLetters.includes(event.key)) return { action: 'hint', letter: event.key };
       // Aimed at the switcher and missed; swallowed, so a slip of the hand
       // cannot type into a host.
       return { action: 'cancel' };
