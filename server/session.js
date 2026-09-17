@@ -325,8 +325,8 @@ export class Session {
       if (tag !== undefined && tag === this.fieldReadTag) {
         this.fieldReadTag = null;
         if (result.success) {
-          const { editable, hidden } = fieldMap(result.text ?? [], this.screen.rows, this.screen.cols);
-          this.screen.applyFields(editable);
+          const { editable, hidden, formatted } = fieldMap(result.text ?? [], this.screen.rows, this.screen.cols);
+          this.screen.applyFields(editable, formatted);
           this.updatePasswordField(hidden);
         }
         this.scheduleFlush();
@@ -364,17 +364,6 @@ export class Session {
     });
   }
 
-  /** @returns {boolean} Whether anyone needs the field map: a viewer tinting
-   *  fields, or a recording that must know a password field the moment the
-   *  host draws one. */
-  wantsFieldMap() {
-    if (this.recording !== null) return true;
-    for (const viewer of this.viewers) {
-      if (viewer.fieldColor !== null) return true;
-    }
-    return false;
-  }
-
   /** @returns {void} */
   flush() {
     if (this.closed) return;
@@ -382,7 +371,9 @@ export class Session {
     // b3270's screen indications carry the character, its colour and its
     // highlighting, but not where the fields are, so that is asked for
     // separately — one read at a time, and the next flush picks up the rest.
-    if (this.fieldsStale && this.fieldReadTag === null && this.wantsFieldMap()) {
+    // Every viewer needs this now, not just one tinting fields: it is also
+    // how Backspace knows whether Left would land on a protected cell.
+    if (this.fieldsStale && this.fieldReadTag === null) {
       this.fieldsStale = false;
       this.fieldReadTag = this.b3270.runActions([{ action: 'ReadBuffer', args: ['Ascii'] }]);
     }
@@ -609,9 +600,13 @@ export class Session {
         this.record(message.action, message.args ?? []);
         // b3270's Backspace is a real 3270 keyboard's: a non-destructive move
         // left. A PC keyboard expects a delete, which is these two actions —
-        // and Delete already refuses to cross into a protected field.
+        // but Left doesn't know about fields, so at the start of one it lands
+        // on the attribute byte or the protected field before it, and Delete
+        // there locks the keyboard instead of refusing quietly. The field map
+        // (kept fresh for exactly this and for tinting) says whether there is
+        // room to delete into.
         if (message.action === 'Backspace') {
-          this.b3270.runActions([{ action: 'Left' }, { action: 'Delete' }]);
+          if (this.canBackspace()) this.b3270.runActions([{ action: 'Left' }, { action: 'Delete' }]);
           return;
         }
         this.b3270.runActions([{ action: message.action, args: message.args ?? [] }]);
@@ -665,14 +660,26 @@ export class Session {
         return;
       case 'recorder':
         this.recording = message.action === 'start' ? { steps: [] } : null;
-        // Likewise, starting a recording is what makes the field map worth
-        // reading — force a fresh one so a password field isn't missed.
-        if (this.recording !== null) {
-          this.fieldsStale = true;
-          this.scheduleFlush();
-        }
         return;
     }
+  }
+
+  /**
+   * Whether Backspace has an unprotected cell to its left to delete into. Left
+   * doesn't know about fields, so at the very start of one it would land on
+   * the attribute byte or the field before it, and Delete there locks the
+   * keyboard rather than refusing quietly — this is what stops that before it
+   * happens. An unformatted screen (no fields read yet, or none on it at all)
+   * has nothing to protect against, so it always says yes.
+   *
+   * @returns {boolean}
+   */
+  canBackspace() {
+    if (!this.screen.fieldsFormatted) return true;
+    const { cursor, cells, cols } = this.screen;
+    const at = cursor.row * cols + cursor.col;
+    const left = cells[(at - 1 + cells.length) % cells.length];
+    return left?.editable ?? true;
   }
 
   /** @returns {void} */

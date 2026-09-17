@@ -47,6 +47,9 @@ export class ScreenModel {
     this.cursor = { row: 0, col: 0, enabled: false };
     /** @type {Cell[]} Row-major, length rows*cols. */
     this.cells = [];
+    /** @type {boolean} Whether the last field map read found any fields at
+     *  all — false for an unformatted screen, or before the first read. */
+    this.fieldsFormatted = false;
     /** @type {Set<number>} Rows changed since takeDirtyRows() last ran. */
     this.dirtyRows = new Set();
 
@@ -64,6 +67,7 @@ export class ScreenModel {
     this.cells = new Array(rows * cols);
     for (let i = 0; i < this.cells.length; i++) this.cells[i] = blankCell();
     this.cursor = { row: 0, col: 0, enabled: this.cursor.enabled };
+    this.fieldsFormatted = false;
     this.markAllDirty();
   }
 
@@ -106,6 +110,7 @@ export class ScreenModel {
       cell.gr = null;
       cell.editable = false;
     }
+    this.fieldsFormatted = false;
     this.cursor = { row: 0, col: 0, enabled: this.cursor.enabled };
     this.markAllDirty();
   }
@@ -115,9 +120,11 @@ export class ScreenModel {
    * changed — the host rewrites the screen far oftener than its fields.
    *
    * @param {boolean[]} editable row-major, as {@link import('./readbuffer.js').fieldMap} returns
+   * @param {boolean} formatted whether the screen has any fields on it at all
    * @returns {void}
    */
-  applyFields(editable) {
+  applyFields(editable, formatted) {
+    this.fieldsFormatted = formatted;
     for (let i = 0; i < this.cells.length; i++) {
       const cell = this.cells[i];
       const next = editable[i] ?? false;
