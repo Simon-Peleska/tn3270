@@ -41,8 +41,8 @@ export function editableFieldText(lines) {
  * @param {string[]} lines one per row, as b3270 returned them
  * @param {number} rows
  * @param {number} cols
- * @returns {{ editable: boolean[], hidden: boolean[] }} both row-major, length
- *   rows*cols
+ * @returns {{ editable: boolean[], hidden: boolean[], formatted: boolean }}
+ *   `editable`/`hidden` are row-major, length rows*cols
  */
 export function fieldMap(lines, rows, cols) {
   /** @type {Array<number | null>} */
@@ -67,7 +67,11 @@ export function fieldMap(lines, rows, cols) {
   // An unformatted screen is technically all unprotected, but tinting every
   // cell of it would be nonsense.
   if (lastAttribute === null) {
-    return { editable: new Array(rows * cols).fill(false), hidden: new Array(rows * cols).fill(false) };
+    return {
+      editable: new Array(rows * cols).fill(false),
+      hidden: new Array(rows * cols).fill(false),
+      formatted: false,
+    };
   }
 
   let isProtected = (lastAttribute & 0x20) !== 0;
@@ -88,5 +92,5 @@ export function fieldMap(lines, rows, cols) {
       hidden[i] = isHidden;
     }
   }
-  return { editable, hidden };
+  return { editable, hidden, formatted: true };
 }

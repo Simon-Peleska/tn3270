@@ -433,6 +433,28 @@ test('a Backspace action deletes the character behind the cursor, not just moves
   assert.equal(screen.cursor.col, before + 3, 'backspacing again deletes the next character back');
 });
 
+test('a Backspace at the very start of a field does nothing, rather than locking the keyboard', async (t) => {
+  // Left doesn't know about fields, so from the first cell of one it lands on
+  // the attribute byte behind it — and Delete there is a protected-field
+  // error that locks the keyboard, not a no-op. The host places the cursor on
+  // exactly that first cell to begin with, so no typing is needed to reach it.
+  const fixture = await startTracedSession('test/traces/reverse.trc');
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  const { screen } = session;
+  await settle(session);
+
+  const controller = collectingViewer('controller');
+  session.attach(controller);
+
+  const before = { ...screen.cursor };
+  session.handleClientMessage(controller, { type: 'action', action: 'Backspace' });
+  await settle(session);
+
+  assert.deepEqual(screen.cursor, before, 'the cursor must not move');
+  assert.equal(session.oia.keyboardLocked, false, 'the keyboard must not lock');
+});
+
 test('clicking a cell moves the cursor there', async (t) => {
   // The browser sends the clicked cell as 1-origin row/col, which is what
   // MoveCursor1 takes; 0-origin would land the cursor one row and one column
@@ -602,7 +624,7 @@ test('a viewer that asked for a field colour gets the typeable fields tinted wit
   );
 });
 
-test('a viewer that asked for no field colour is sent none, and the field map is never read', async (t) => {
+test('a viewer that asked for no field colour is sent none, even though the field map is still read', async (t) => {
   const fixture = await startTracedSession('test/traces/reverse.trc');
   t.after(() => fixture.close());
   const { session } = fixture;
@@ -610,11 +632,11 @@ test('a viewer that asked for no field colour is sent none, and the field map is
   const viewer = collectingViewer('plain');
   session.attach(viewer);
 
+  // Nobody wants a tint, but the field map is read regardless — Backspace
+  // needs it on every session, not just one with a viewer tinting fields.
+  await waitUntil(() => session.screen.cells.some((cell) => cell.editable), 'the field map to be read');
   await settle(session);
 
-  // Nobody wants field data — no tinting, no recording — so it was never
-  // worth the round trip to b3270.
-  assert.equal(session.screen.cells.some((cell) => cell.editable), false, 'the field map should not have been read');
   assert.equal(viewer.screen.join('').includes('48;2;'), false, 'nobody asked for a tint, so none was sent');
 });
 
@@ -624,21 +646,6 @@ test('a viewer that asked for no field colour is sent none, and the field map is
  * can build its export without polling. A password field is the one exception —
  * see readbuffer.test.js for how it is detected.
  */
-
-test('starting a recording reads the field map even with no viewer tinting', async (t) => {
-  const fixture = await startTracedSession('test/traces/reverse.trc');
-  t.after(() => fixture.close());
-  const { session } = fixture;
-
-  const controller = collectingViewer('controller');
-  session.attach(controller);
-  await settle(session);
-  assert.equal(session.screen.cells.some((cell) => cell.editable), false, 'not read before recording starts');
-
-  session.handleClientMessage(controller, { type: 'recorder', action: 'start' });
-
-  await waitUntil(() => session.screen.cells.some((cell) => cell.editable), 'the field map to be read');
-});
 
 test('recording captures the screen and each step, and stops cleanly', async (t) => {
   const session = new Session(testConfig());
