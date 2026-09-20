@@ -73,10 +73,21 @@ stdenv.mkDerivation (
     # such install target at all - "make b3270" there just drops the .exe in
     # place, so it is copied out by hand.
     #
-    # Naming both targets rather than "make all" keeps the unbuilt components
+    # Naming the targets rather than "make all" keeps the unbuilt components
     # out of it: configure only disabled them, the top-level target still
     # descends into every directory it knows about.
-    buildFlags = [ "b3270" ] ++ lib.optional (!isWindows) "s3270";
+    #
+    # One target per make run, though, never "make b3270 s3270": both goals
+    # descend into the same lib/3270 and lib/32xx, as separate sub-makes that
+    # know nothing of each other, and under -j that is two `ar` runs over one
+    # archive. CI caught it as "lib3270.a: error reading telnet_sio.o: file
+    # truncated". Inside a single goal -j is fine, which is why the shared
+    # libraries are already built by the time s3270 links.
+    buildFlags = [ "b3270" ];
+
+    postBuild = lib.optionalString (!isWindows) ''
+      make -j$NIX_BUILD_CORES s3270
+    '';
 
     enableParallelBuilding = true;
 
