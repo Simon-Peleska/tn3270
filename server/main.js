@@ -8,7 +8,7 @@ import { setLogLevel, logger } from './log.js';
 import { SessionRegistry } from './session.js';
 import { HEX_COLOR, parseClientMessage } from './protocol.js';
 import { AppError, describeError } from './errors.js';
-import { handleRestAction } from './s3270rest.js';
+import { proxyRestRequest } from './restproxy.js';
 
 const config = loadConfig(process.env['TN3270_CONFIG'] ?? 'config.jsonc');
 setLogLevel(config.logLevel);
@@ -94,7 +94,7 @@ async function handleRequest(req, res) {
   log.info('request', { method: req.method ?? '', path });
 
   if (path === '/api/sessions' && req.method === 'POST') {
-    const session = registry.create();
+    const session = await registry.create();
     await session.ready;
     sendJson(res, 201, {
       id: session.id,
@@ -110,12 +110,13 @@ async function handleRequest(req, res) {
     return;
   }
 
-  // Matches s3270's own `-httpd` URL shape, one session id up: an s3270 REST
-  // client only has to change its base URL, not how it builds an action call.
-  const restMatch = /^\/api\/sessions\/([0-9a-fA-F-]{36})\/3270\/rest\/json\/?(.*)$/.exec(path);
-  if (restMatch !== null && req.method === 'GET') {
+  // s3270's own `-httpd` URL shape, one session id up. Matched against the raw
+  // request target rather than the parsed path: an action's arguments arrive
+  // percent-encoded and must reach b3270 exactly as they were sent.
+  const restMatch = /^\/api\/sessions\/([0-9a-fA-F-]{36})(\/3270\/.*)$/.exec(req.url ?? '');
+  if (restMatch !== null) {
     const session = registry.get(String(restMatch[1]));
-    await handleRestAction(res, session, restMatch[2] ?? '');
+    await proxyRestRequest(req, res, session, String(restMatch[2]));
     return;
   }
 

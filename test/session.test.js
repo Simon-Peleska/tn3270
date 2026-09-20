@@ -650,10 +650,10 @@ test('fitting the screen under a live connection drops it and reopens the same h
   assert.equal(session.lastHost, expectedHost);
 });
 
-test('the registry refuses to exceed maxSessions', () => {
+test('the registry refuses to exceed maxSessions', async () => {
   const registry = new SessionRegistry(testConfig({ sessions: { maxSessions: 1, idleTimeoutMs: 0 } }));
-  registry.create();
-  assert.throws(() => registry.create(), (err) => {
+  await registry.create();
+  await assert.rejects(() => registry.create(), (err) => {
     assert.ok(err instanceof AppError);
     assert.equal(err.code, 'E3002');
     return true;
@@ -672,7 +672,7 @@ test('an unknown session id is a stable error, not a crash', () => {
 
 test('a closed session removes itself from the registry', async () => {
   const registry = new SessionRegistry(testConfig());
-  const session = registry.create();
+  const session = await registry.create();
   await session.ready;
   assert.equal(registry.list().length, 1);
   session.close();

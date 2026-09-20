@@ -1,4 +1,7 @@
 import { spawn } from 'node:child_process';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { AppError } from './errors.js';
 import { logger } from './log.js';
 
@@ -97,6 +100,8 @@ import { logger } from './log.js';
  * @property {number} model
  * @property {Record<string, string>} settings b3270 resources, passed as -xrm
  * @property {string[]} extraArgs
+ * @property {import('./restproxy.js').RestEndpoint | null} rest where to serve
+ *   b3270's own REST interface, or null for a session without one
  * @property {string} sessionId
  * @property {B3270Handlers} handlers
  */
@@ -129,7 +134,23 @@ export class B3270 {
     /** @type {boolean} */
     this.stopped = false;
 
-    const args = ['-json', '-model', String(options.model), ...resourceArgs(options.settings), ...options.extraArgs];
+    /** @type {import('./restproxy.js').RestEndpoint | null} Where this child
+     * serves the REST interface; `restproxy.js` forwards to it. */
+    this.rest = options.rest;
+    /** @type {string | null} Holds the httpd's security cookie. b3270 reads it
+     * once at startup and remembers the value, but says nothing about when, so
+     * the directory lives as long as the child does. */
+    this.cookieDir = null;
+    /** @type {string[]} */
+    const restArgs = [];
+    if (options.rest !== null) {
+      this.cookieDir = mkdtempSync(join(tmpdir(), 'tn3270-'));
+      const cookieFile = join(this.cookieDir, 'cookie');
+      writeFileSync(cookieFile, options.rest.cookie, { mode: 0o600 });
+      restArgs.push('-httpd', `127.0.0.1:${options.rest.port}`, '-cookiefile', cookieFile);
+    }
+
+    const args = ['-json', '-model', String(options.model), ...restArgs, ...resourceArgs(options.settings), ...options.extraArgs];
     this.log.info('spawning', { path: options.path, args: args.join(' ') });
 
     try {
@@ -157,6 +178,7 @@ export class B3270 {
 
     this.child.on('exit', (code, signal) => {
       this.log.info('exited', { code, signal });
+      if (this.cookieDir !== null) rmSync(this.cookieDir, { recursive: true, force: true });
       if (!this.stopped) {
         this.handlers.onError(new AppError('E2002', `code=${code} signal=${signal}`));
       }

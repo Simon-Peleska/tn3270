@@ -1,16 +1,18 @@
 # Tasks and progress
 
-Status as of 2026-09-07.
+Status as of 2026-09-20.
 
 ## Done
 
 - [x] **Nix flake** — devShell with `nodejs_22`, `typescript`, `python3`, and a
       minimal `b3270` derivation built from the same `suite3270-4.5ga5` tarball
       nixpkgs uses, with X11 disabled. Verified: zero X11 libraries linked.
+      `s3270` is built alongside it, for the REST proxy's comparison test; it
+      is headless too, and adds nothing to the closure.
 - [x] **Config** — `config.jsonc` plus a hand-written JSONC parser
       (`server/config.js`): comment stripper, trailing-comma stripper, typed
       validation with `E1xxx` codes. No dependency added for it.
-- [x] **Error codes** — `server/errors.js`, six blocks, `AppError` carrying the
+- [x] **Error codes** — `server/errors.js`, seven blocks, `AppError` carrying the
       code all the way to the UI.
 - [x] **Logging** — `server/log.js`, levelled, structured, to stderr;
       `logLevel: "debug"` logs every line exchanged with b3270.
@@ -29,6 +31,11 @@ Status as of 2026-09-07.
       attach/detach, controller promotion, burst coalescing, idle reaping.
 - [x] **Server** — `server/main.js`: HTTP, static files, `/api/sessions`,
       WebSocket upgrade, graceful shutdown.
+- [x] **REST** — `server/restproxy.js`: each session's b3270 runs its own
+      `-httpd` on a loopback port guarded by a per-session cookie, and
+      `/api/sessions/<id>/3270/…` is forwarded to it untouched. s3270's REST
+      interface, because it *is* s3270's REST interface — verified byte for byte
+      against a real `s3270 -httpd`.
 - [x] **Frontend** — `public/index.html`, `app.js`, `keymap.js`, `style.css`:
       ghostty-web renderer, binary frames → `write()`, text frames → status and
       in-place errors, capture-phase keymap, reconnect with backoff.
@@ -41,7 +48,7 @@ Status as of 2026-09-07.
       being cut off. Rows and columns belong to the model, so the font size is
       what scales; a `ResizeObserver` on the screen box refits on window
       resizes, model changes, and the error bar appearing.
-- [x] **Tests** — 54, all passing:
+- [x] **Tests** — 204, all passing:
   - the `testRender.py` assertions ported onto our model (`render.test.js`)
   - the WASM round-trip: our VT → ghostty's own parser → grid equals the model
     (`roundtrip.test.js`)
@@ -50,6 +57,8 @@ Status as of 2026-09-07.
   - multi-viewer behaviour against a real b3270, including a model change
     resizing every viewer before it repaints them (`session.test.js`)
   - the whole stack over real HTTP and real WebSockets (`server.test.js`)
+  - the REST proxy against a real `s3270 -httpd` as the oracle
+    (`restproxy.test.js`)
 - [x] **Type gate** — `tsc -p jsconfig.json` with `checkJs` and `strict`, clean.
       No `any` anywhere.
 - [x] **Docs** — `ARCHITECTURE.md`, `SPECIFICATION.md`, `GOTCHAS.md`, this file.
@@ -68,7 +77,7 @@ Status as of 2026-09-07.
 nix develop
 npm install
 npm run typecheck    # clean
-npm test             # 54 passing
+npm test             # 204 passing
 npm start            # http://127.0.0.1:8017
 ```
 

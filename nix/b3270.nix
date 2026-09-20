@@ -9,12 +9,14 @@
 }:
 
 # The nixpkgs `x3270` package builds the whole suite, which drags in all of X11.
-# We only ever run the headless back end, so build just that. Note that
+# We only ever run the headless back ends, so build just those. Note that
 # `--enable-b3270` alone is not enough: suite3270's configure enables every
 # component by default, so the unwanted ones must be turned off explicitly or
 # it fails looking for X (or, on Windows, for the interactive wc3270 client).
 # pr3287 and x3270if stay on because the b3270 build and install targets
-# depend on them.
+# depend on them. s3270 is headless too, and is the oracle the REST proxy's
+# comparison test measures itself against; the Windows build has no such test
+# to run, so it is left out of the cross build.
 let
   isWindows = stdenv.hostPlatform.isWindows;
 in
@@ -53,10 +55,10 @@ stdenv.mkDerivation (
       "--enable-x3270if"
       "--disable-x3270"
       "--disable-c3270"
-      "--disable-s3270"
       "--disable-tcl3270"
       "--disable-wc3270"
-    ];
+    ]
+    ++ (if isWindows then [ "--disable-s3270" ] else [ "--enable-s3270" ]);
 
     # The build stamps a human-readable date into version.c; the bare epoch that
     # nixpkgs sets is not in the format it expects.
@@ -70,9 +72,17 @@ stdenv.mkDerivation (
     # depends on. They are small and pull in no extra libraries. Windows has no
     # such install target at all - "make b3270" there just drops the .exe in
     # place, so it is copied out by hand.
-    buildFlags = [ "b3270" ];
+    #
+    # Naming both targets rather than "make all" keeps the unbuilt components
+    # out of it: configure only disabled them, the top-level target still
+    # descends into every directory it knows about.
+    buildFlags = [ "b3270" ] ++ lib.optional (!isWindows) "s3270";
 
     enableParallelBuilding = true;
+
+    # Both install targets install pr3287 and x3270if, and two `install -c` runs
+    # racing over the same path fail outright rather than one winning.
+    enableParallelInstalling = false;
 
     nativeBuildInputs = [
       m4
@@ -89,7 +99,7 @@ stdenv.mkDerivation (
     ];
 
     meta = {
-      description = "Headless back end of the x3270 IBM 3270 terminal emulator suite";
+      description = "Headless back ends of the x3270 IBM 3270 terminal emulator suite";
       homepage = "https://x3270.bgp.nu/";
       license = lib.licenses.bsd3;
       mainProgram = if isWindows then "b3270.exe" else "b3270";
@@ -108,7 +118,10 @@ stdenv.mkDerivation (
       }
     else
       {
-        installTargets = [ "b3270-install" ];
+        installTargets = [
+          "b3270-install"
+          "s3270-install"
+        ];
       }
   )
 )

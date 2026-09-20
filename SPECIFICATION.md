@@ -252,10 +252,34 @@ new-sized bytes into an old-sized terminal.
 |---|---|---|
 | `POST` | `/api/sessions` | Creates a session → `201 {id, rows, cols, model}`, after b3270 has reported its real geometry |
 | `GET` | `/api/sessions` | Lists sessions → `{sessions:[{id, viewers, connection, host}], defaultHost}` |
+| `GET` | `/api/sessions/<id>/3270/…` | Forwarded to that session's emulator; see REST below |
 | `GET` | `/vendor/…` | ghostty-web, served from `node_modules` |
 | `GET` | anything else | Static files from `public/` |
 
 Errors are JSON: `{"code":"E6001","message":"…"}` with a matching status.
+
+### REST
+
+Every session's b3270 serves s3270's own `-httpd` interface on a loopback port
+of its own, and everything under `/3270/` is forwarded there unchanged and
+answered verbatim — status, content type and body:
+
+```bash
+curl "http://127.0.0.1:8017/api/sessions/$ID/3270/rest/json/Query(CodePage)"
+curl "http://127.0.0.1:8017/api/sessions/$ID/3270/rest/text/String(hello)"
+curl "http://127.0.0.1:8017/api/sessions/$ID/3270/rest/stext/Ascii1(1,1,80)"
+```
+
+So the protocol is s3270's, documented at
+<https://x3270.miraheze.org/wiki/HTTP_server>: `json`, `text` and `stext`
+flavours, the `{result, result-err, status}` envelope, s3270's action syntax and
+s3270's own error wording. An existing s3270 REST client changes its base URL
+and nothing else.
+
+The emulator's port is bound to loopback and guarded by a per-session
+`x3270-security` cookie the proxy supplies, so it can only be reached through
+this server. REST calls ignore the controller/observer rule of section 3: an
+automation client acts whoever else is watching, and watchers see the result.
 
 ## 7. Configuration
 
@@ -283,7 +307,7 @@ Every code is fixed for the lifetime of the project and appears both in the log
 and in the page. The blocks are subsystems, and a code belongs to the subsystem
 that decides it is an error rather than to the file that throws it: `E1xxx`
 config, `E2xxx` b3270, `E3xxx` session, `E4xxx` client messages, `E5xxx`
-browser, `E6xxx` server transport.
+browser, `E6xxx` server transport, `E7xxx` the REST proxy.
 
 | Code | Meaning |
 |---|---|
@@ -304,6 +328,7 @@ browser, `E6xxx` server transport.
 | `E3004` | Screen indication referenced a cell outside the screen |
 | `E3005` | Host address is not allowed by config |
 | `E3006` | Input rejected: viewer is an observer |
+| `E3007` | Session is not accepting new viewers |
 | `E4001` | WebSocket message was not valid JSON |
 | `E4002` | WebSocket message had an unknown type |
 | `E4003` | Pasted text is too large to type into a screen |
@@ -319,6 +344,8 @@ browser, `E6xxx` server transport.
 | `E6002` | WebSocket upgrade path is not a session |
 | `E6003` | WebSocket closed unexpectedly |
 | `E6004` | Server could not start |
+| `E7002` | REST is not available for this session |
+| `E7003` | REST request to b3270 failed |
 | `E0000` | An error with no code of its own; see the log |
 
 Errors are shown as a dismissible bar at the top of the page. The page is never
@@ -327,9 +354,9 @@ navigated away from.
 ## 9. Running it
 
 ```bash
-nix develop            # node, typescript, and an X11-free b3270
+nix develop            # node, typescript, and X11-free b3270 and s3270
 npm install
-npm test               # 122 tests: unit, integration, and the WASM round-trip
+npm test               # 204 tests: unit, integration, and the WASM round-trip
 npm run typecheck      # tsc --strict over JSDoc; the "no any" gate
 npm start              # http://127.0.0.1:8017
 ```

@@ -8,6 +8,7 @@ import { OiaModel } from './oia.js';
 import { fullRepaint, delta } from './vt.js';
 import { AppError, describeError } from './errors.js';
 import { isHostAllowed } from './protocol.js';
+import { reserveRestEndpoint } from './restproxy.js';
 import { logger } from './log.js';
 
 /**
@@ -35,9 +36,13 @@ import { logger } from './log.js';
 export class Session {
   /**
    * @param {import('./config.js').Config} config
+   * @param {import('./restproxy.js').RestEndpoint | null} [rest] where this
+   *   session's own b3270 serves the s3270 REST interface, for the proxy to
+   *   forward to. Null leaves the emulator without an httpd at all, which only
+   *   tests do, to skip the port reservation they have no use for.
    * @param {string} [id]
    */
-  constructor(config, id = randomUUID()) {
+  constructor(config, rest = null, id = randomUUID()) {
     /** @type {string} */
     this.id = id;
     /** @type {import('./config.js').Config} */
@@ -96,9 +101,6 @@ export class Session {
     /** @type {Map<string, Viewer>} `copyField` requests waiting on a
      * `ReadBuffer` result, by the r-tag `runActions` handed back. */
     this.pendingFieldReads = new Map();
-    /** @type {Map<string, (result: { success: boolean, text: string[] | null }) => void>}
-     * REST calls waiting on their own action's run-result, by r-tag. */
-    this.pendingRestCalls = new Map();
     /** @type {boolean} The host redrew since the field map was read. */
     this.fieldsStale = false;
     /** @type {string | null} The r-tag of the field-map read in flight. */
@@ -124,6 +126,7 @@ export class Session {
       model: config.b3270.model,
       settings: config.b3270.settings,
       extraArgs: config.b3270.extraArgs,
+      rest,
       sessionId: this.id,
       handlers: {
         onIndication: (indication) => this.handleIndication(indication),
@@ -326,13 +329,6 @@ export class Session {
     if (kind === 'run-result') {
       const result = /** @type {import('./b3270.js').RunResultIndication} */ (body);
       const tag = result['r-tag'];
-
-      const restWaiter = tag !== undefined ? this.pendingRestCalls.get(tag) : undefined;
-      if (restWaiter !== undefined) {
-        this.pendingRestCalls.delete(/** @type {string} */ (tag));
-        restWaiter({ success: result.success, text: result.text ?? null });
-        return;
-      }
 
       if (tag !== undefined && tag === this.fieldReadTag) {
         this.fieldReadTag = null;
@@ -736,32 +732,6 @@ export class Session {
     return { row: Math.floor(right / cols), col: right % cols };
   }
 
-  /**
-   * Runs one action for the REST bridge and waits for its own run-result,
-   * the way s3270's `-httpd` answers one action per request. b3270 validates
-   * and executes the same action language s3270 does, so the failure text
-   * that comes back (unknown action, wrong argument count, ...) already
-   * matches what an s3270 REST client expects.
-   *
-   * @param {string} action
-   * @param {string[]} args
-   * @returns {Promise<{ success: boolean, text: string[] | null }>}
-   */
-  runRestAction(action, args) {
-    return new Promise((resolve) => {
-      const tag = this.b3270.runActions([{ action, args }]);
-      const timer = setTimeout(() => {
-        this.pendingRestCalls.delete(tag);
-        this.log.warn('REST action timed out', { action, tag });
-        resolve({ success: false, text: ['action timed out'] });
-      }, 5000);
-      this.pendingRestCalls.set(tag, (result) => {
-        clearTimeout(timer);
-        resolve(result);
-      });
-    });
-  }
-
   /** @returns {void} */
   broadcastStatus() {
     for (const viewer of this.viewers) {
@@ -843,12 +813,12 @@ export class SessionRegistry {
     this.sessions = new Map();
   }
 
-  /** @returns {Session} */
-  create() {
+  /** @returns {Promise<Session>} */
+  async create() {
     if (this.sessions.size >= this.config.sessions.maxSessions) {
       throw new AppError('E3002', `${this.sessions.size} sessions are already open`);
     }
-    const session = new Session(this.config);
+    const session = new Session(this.config, await reserveRestEndpoint());
     session.onClosed = () => {
       this.sessions.delete(session.id);
       this.log.info('session removed', { session: session.id, remaining: this.sessions.size });

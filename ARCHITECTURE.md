@@ -111,6 +111,25 @@ anywhere**. Concurrent input cannot corrupt anything: every keystroke from every
 viewer funnels into a single ordered stdin queue, and the resulting screen comes
 back to everyone identically.
 
+## REST: the emulator's own interface, forwarded
+
+`b3270` carries s3270's REST interface — the same httpd code, linked into both
+programs — so a session's own emulator serves it and `server/restproxy.js` only
+forwards: `/api/sessions/<id>/3270/…` goes to `127.0.0.1:<session port>/3270/…`
+and the answer is copied back verbatim. Nothing here parses an action, and
+existing s3270 `-httpd` automation only has to change its base URL.
+
+Each session gets its own loopback port and a random cookie, written to a 0600
+file and passed as `-cookiefile`; the proxy adds the `x3270-security` header, so
+another local process that guesses the port is refused with 403. The port is
+bound and released by us before spawning rather than left to b3270's `:0`, which
+picks a port but never reports which.
+
+REST calls are exempt from the controller/observer rule: an automation client
+drives the session whoever else is watching. That is safe for the screen model
+because b3270 still emits its indications on the JSON stream for actions that
+arrived over httpd, so viewers see the result the same as any other change.
+
 ## Screen size: who decides what
 
 Two different things are called "size", and keeping them apart is what makes the
@@ -235,7 +254,7 @@ indication has already been applied.
 ## Layout
 
 ```
-flake.nix  nix/b3270.nix   node, typescript, and an X11-free b3270
+flake.nix  nix/b3270.nix   node, typescript, X11-free b3270 and s3270
 config.jsonc                settings (hand-parsed JSONC, no dependency)
 jsconfig.json               checkJs + strict → the "no any" gate
 
@@ -251,6 +270,7 @@ server/
   oia.js        OIA field state → status line
   session.js    Session, Viewer, SessionRegistry
   protocol.js   wire typedefs and the action allow-list
+  restproxy.js  forwards /3270/ to the session's own b3270 httpd
 
 public/         index.html, app.js, keymap.js, style.css
 test/           fakehost.js, ghostty.js, helpers.js, traces/, *.test.js

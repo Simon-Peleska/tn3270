@@ -38,6 +38,7 @@
             echo "tn3270 dev shell"
             echo "  node    $(node --version)"
             echo "  b3270   $(b3270 --version 2>&1 | head -1)"
+            echo "  s3270   $(s3270 --version 2>&1 | head -1)"
           '';
         };
       });

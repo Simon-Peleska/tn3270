@@ -7,7 +7,7 @@
  * it is an error, not to the file that happens to throw:
  *
  * E1xxx config, E2xxx b3270, E3xxx session, E4xxx client messages,
- * E5xxx browser, E6xxx server transport, E7xxx s3270 REST bridge.
+ * E5xxx browser, E6xxx server transport, E7xxx s3270 REST proxy.
  */
 const ERRORS = Object.freeze({
   E1001: 'Config file could not be read',
@@ -52,7 +52,10 @@ const ERRORS = Object.freeze({
   E6003: 'WebSocket closed unexpectedly',
   E6004: 'Server could not start',
 
-  E7001: 'REST action call is not valid s3270 action syntax',
+  // E7001 is spent: it was the action-syntax error of a bridge that parsed
+  // action calls itself. b3270's httpd answers those now, in its own words.
+  E7002: 'REST is not available for this session',
+  E7003: 'REST request to b3270 failed',
 });
 
 /** @typedef {keyof typeof ERRORS} ErrorCode */
