@@ -57,7 +57,14 @@ Status as of 2026-09-20.
       server that is down from a session that was reaped. A reconnect that
       reaches a `hello` reloads the page — same sessions, possibly newer page
       code (`public/reconnect.js`).
-- [x] **Tests** — 217, all passing:
+- [x] **Logging** — every line goes to stderr and to a rolling file
+      (`logFile`, rolled over to `<logFile>.1` at `logMaxBytes`, 10 MB by
+      default). Lines carry the session id they belong to and, where a browser
+      caused them, the address and user it came from. With
+      `security.trustProxyHeaders` on, those two come from `X-Forwarded-For`
+      and `X-Remote-User` — where an NTLM handshake terminated at a proxy would
+      hand its result over.
+- [x] **Tests** — 225, all passing:
   - the `testRender.py` assertions ported onto our model (`render.test.js`)
   - the WASM round-trip: our VT → ghostty's own parser → grid equals the model
     (`roundtrip.test.js`)
@@ -71,6 +78,8 @@ Status as of 2026-09-20.
   - the reconnect arithmetic and idle reaping (`reconnect.test.js`,
     `session.test.js`)
   - the font fit against a brute-force search over every size (`fitfont.test.js`)
+  - log rollover, and the session id, address and user on the lines, forwarded
+    or not (`log.test.js`, `server.test.js`)
 - [x] **Type gate** — `tsc -p jsconfig.json` with `checkJs` and `strict`, clean.
       No `any` anywhere.
 - [x] **Docs** — `ARCHITECTURE.md`, `SPECIFICATION.md`, `GOTCHAS.md`, this file.

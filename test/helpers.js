@@ -39,6 +39,7 @@ export function collectingViewer(id) {
     hostColors: true,
     /** @type {string | null} */
     fieldColor: null,
+    ip: '127.0.0.1',
     /** @type {string[]} */
     screen: [],
     /** @type {import('../server/protocol.js').ServerMessage[]} */

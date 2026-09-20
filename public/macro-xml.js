@@ -3,8 +3,8 @@
  * quoting or escaping of string values, keystrokes written as plain text with
  * `[keyword]` tokens spliced in for the ones that are not literal characters.
  *
- * A handful of this app's actions (`DeleteField`, `DeleteWord`, the
- * mode-setting `Insert`) have no Host On-Demand keyword at all, and mouse
+ * A handful of this app's actions (`DeleteField`, `DeleteWord`, `BackNewline`,
+ * the mode-setting `Insert`) have no Host On-Demand keyword at all, and mouse
  * clicks are a different HOD action (`<mouseclick>`) that recording here does
  * not attempt to produce. Those get invented keyword names, clearly not from
  * IBM's own vocabulary, so a round trip through this app still works; a real
@@ -29,6 +29,7 @@ const ACTION_TO_KEYWORD = Object.freeze({
   Left: 'left',
   Right: 'right',
   Newline: 'newline',
+  BackNewline: 'backnewline',
   Backspace: 'backspace',
   Delete: 'delete',
   DeleteField: 'deletefield',

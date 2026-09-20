@@ -6,8 +6,12 @@ import { AppError } from './errors.js';
  * @property {{ host: string, port: number }} server
  * @property {{ path: string, model: number, defaultHost: string | null, settings: Record<string, string>, extraArgs: string[] }} b3270
  * @property {{ maxSessions: number, maxViewersPerSession: number, idleTimeoutMs: number, allowMultipleControllers: boolean }} sessions
- * @property {{ allowedHosts: string[] }} security
+ * @property {{ allowedHosts: string[], trustProxyHeaders: boolean }} security
  * @property {'debug' | 'info' | 'warn' | 'error'} logLevel
+ * @property {string} logFile Where the log is kept as well as on stderr. Empty
+ *   is stderr only.
+ * @property {number} logMaxBytes What the log file may grow to before it rolls
+ *   over to `<logFile>.1`.
  */
 
 /**
@@ -96,8 +100,10 @@ const DEFAULTS = {
     idleTimeoutMs: 300000,
     allowMultipleControllers: false,
   },
-  security: { allowedHosts: [] },
+  security: { allowedHosts: [], trustProxyHeaders: false },
   logLevel: 'info',
+  logFile: 'log/tn3270.log',
+  logMaxBytes: 10 * 1024 * 1024,
 };
 
 /**
@@ -263,8 +269,11 @@ export function validateConfig(raw) {
     },
     security: {
       allowedHosts: strArray(securitySection, 'allowedHosts', 'security.allowedHosts', DEFAULTS.security.allowedHosts),
+      trustProxyHeaders: bool(securitySection, 'trustProxyHeaders', 'security.trustProxyHeaders', DEFAULTS.security.trustProxyHeaders),
     },
     logLevel,
+    logFile: str(root, 'logFile', 'logFile', DEFAULTS.logFile),
+    logMaxBytes: num(root, 'logMaxBytes', 'logMaxBytes', DEFAULTS.logMaxBytes, 4096, 1024 * 1024 * 1024),
   };
 }
 

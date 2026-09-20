@@ -4,7 +4,7 @@ import { extname, join, normalize, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { loadConfig } from './config.js';
-import { setLogLevel, logger } from './log.js';
+import { setLogFile, setLogLevel, logger } from './log.js';
 import { SessionRegistry } from './session.js';
 import { HEX_COLOR, parseClientMessage } from './protocol.js';
 import { AppError, describeError } from './errors.js';
@@ -12,6 +12,7 @@ import { proxyRestRequest } from './restproxy.js';
 
 const config = loadConfig(process.env['TN3270_CONFIG'] ?? 'config.jsonc');
 setLogLevel(config.logLevel);
+if (config.logFile !== '') setLogFile(config.logFile, config.logMaxBytes);
 const log = logger('http');
 
 const registry = new SessionRegistry(config);
@@ -84,6 +85,45 @@ async function sendFile(res, dir, relative) {
 }
 
 /**
+ * One header, first value only, trimmed and cut short. A header is whatever
+ * the sender chose to put in it, and it ends up in the log.
+ *
+ * @param {import('node:http').IncomingMessage} req
+ * @param {string} name
+ * @returns {string}
+ */
+function header(req, name) {
+  const raw = req.headers[name];
+  const first = (Array.isArray(raw) ? raw[0] : raw) ?? '';
+  return first.split(',')[0]?.trim().slice(0, 64) ?? '';
+}
+
+/**
+ * Who a request is from, as far as the log is concerned.
+ *
+ * Straight off the socket by default: `X-Forwarded-For` and `X-Remote-User`
+ * are whatever the client typed unless something in front of this server sets
+ * them, so believing them without a proxy there lets anyone write their own
+ * address and name into the log. `security.trustProxyHeaders` is the operator
+ * saying there is one. The user is empty until something authenticates — the
+ * place NTLM terminated at a proxy hands its result over.
+ *
+ * @param {import('node:http').IncomingMessage} req
+ * @returns {{ ip: string, user: string }}
+ */
+function clientIdentity(req) {
+  // Node reports an IPv4 client on a dual-stack listener as `::ffff:127.0.0.1`,
+  // and the plain form is what anyone reading the log will search for.
+  const address = req.socket.remoteAddress ?? '';
+  const socketIp = address.startsWith('::ffff:') ? address.slice('::ffff:'.length) : address;
+  if (!config.security.trustProxyHeaders) return { ip: socketIp, user: '' };
+
+  // Leftmost, which is the original client: each proxy appends its own peer.
+  const forwarded = header(req, 'x-forwarded-for');
+  return { ip: forwarded === '' ? socketIp : forwarded, user: header(req, 'x-remote-user') };
+}
+
+/**
  * @param {import('node:http').IncomingMessage} req
  * @param {import('node:http').ServerResponse} res
  * @returns {Promise<void>}
@@ -91,10 +131,11 @@ async function sendFile(res, dir, relative) {
 async function handleRequest(req, res) {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
   const path = url.pathname;
-  log.info('request', { method: req.method ?? '', path });
+  const client = clientIdentity(req);
+  log.info('request', { method: req.method ?? '', path, ...client });
 
   if (path === '/api/sessions' && req.method === 'POST') {
-    const session = await registry.create();
+    const session = await registry.create(client);
     await session.ready;
     sendJson(res, 201, {
       id: session.id,
@@ -116,7 +157,7 @@ async function handleRequest(req, res) {
   const restMatch = /^\/api\/sessions\/([0-9a-fA-F-]{36})(\/3270\/.*)$/.exec(req.url ?? '');
   if (restMatch !== null) {
     const session = registry.get(String(restMatch[1]));
-    await proxyRestRequest(req, res, session, String(restMatch[2]));
+    await proxyRestRequest(req, res, session, String(restMatch[2]), client);
     return;
   }
 
@@ -144,10 +185,11 @@ const wss = new WebSocketServer({ noServer: true });
 
 server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+  const client = clientIdentity(req);
   const match = /^\/ws\/([0-9a-fA-F-]{36})$/.exec(url.pathname);
   if (match === null) {
     const err = new AppError('E6002', url.pathname);
-    log.error(err, { path: url.pathname });
+    log.error(err, { path: url.pathname, ...client });
     socket.write(`HTTP/1.1 404 Not Found\r\ncontent-type: text/plain\r\n\r\n${err.message}`);
     socket.destroy();
     return;
@@ -159,7 +201,7 @@ server.on('upgrade', (req, socket, head) => {
     session = registry.get(String(match[1]));
   } catch (err) {
     const { code, summary } = describeError(err);
-    log.error(err, { path: url.pathname });
+    log.error(err, { path: url.pathname, ...client });
     socket.write(`HTTP/1.1 404 Not Found\r\ncontent-type: text/plain\r\n\r\n[${code}] ${summary}`);
     socket.destroy();
     return;
@@ -171,7 +213,7 @@ server.on('upgrade', (req, socket, head) => {
   const requested = url.searchParams.get('fieldColor');
   const fieldColor = requested !== null && HEX_COLOR.test(requested) ? requested : null;
 
-  wss.handleUpgrade(req, socket, head, (ws) => attachViewer(session, ws, hostColors, fieldColor));
+  wss.handleUpgrade(req, socket, head, (ws) => attachViewer(session, ws, hostColors, fieldColor, client));
 });
 
 /**
@@ -179,15 +221,18 @@ server.on('upgrade', (req, socket, head) => {
  * @param {import('ws').WebSocket} ws
  * @param {boolean} hostColors
  * @param {string | null} fieldColor
+ * @param {{ ip: string, user: string }} client
  * @returns {void}
  */
-function attachViewer(session, ws, hostColors, fieldColor) {
+function attachViewer(session, ws, hostColors, fieldColor, client) {
   /** @type {import('./session.js').Viewer} */
   const viewer = {
     id: randomUUID().slice(0, 8),
     role: 'observer',
     hostColors,
     fieldColor,
+    ip: client.ip,
+    user: client.user,
     sendScreen(bytes) {
       if (ws.readyState === ws.OPEN) ws.send(Buffer.from(bytes, 'utf8'), { binary: true });
     },
@@ -196,11 +241,13 @@ function attachViewer(session, ws, hostColors, fieldColor) {
     },
   };
 
+  const viewerLog = log.with({ session: session.id, viewer: viewer.id, ...client });
+
   try {
     session.attach(viewer);
   } catch (err) {
     const { code, summary } = describeError(err);
-    log.error(err, { session: session.id });
+    viewerLog.error(err);
     viewer.sendMessage({ type: 'error', code, message: summary });
     ws.close(1013, code);
     return;
@@ -212,18 +259,18 @@ function attachViewer(session, ws, hostColors, fieldColor) {
       session.handleClientMessage(viewer, parseClientMessage(String(data)));
     } catch (err) {
       const { code, summary } = describeError(err);
-      log.warn('bad client message', { viewer: viewer.id, code, summary });
+      viewerLog.warn('bad client message', { code, summary });
       viewer.sendMessage({ type: 'error', code, message: summary });
     }
   });
 
   ws.on('close', (code, reason) => {
-    log.info('viewer socket closed', { viewer: viewer.id, code, reason: String(reason) });
+    viewerLog.info('viewer socket closed', { code, reason: String(reason) });
     session.detach(viewer);
   });
 
   ws.on('error', (cause) => {
-    log.error(new AppError('E6003', viewer.id, cause), { session: session.id });
+    viewerLog.error(new AppError('E6003', viewer.id, cause));
     session.detach(viewer);
   });
 }

@@ -112,13 +112,15 @@ export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 
 /**
  * b3270 accepts far more actions than these, including ones that read files and
- * run programs, so this is an allow-list and not a pass-through.
+ * run programs, so this is an allow-list and not a pass-through. `BackNewline`
+ * is the one name b3270 itself does not know: the session turns it into a
+ * cursor move of its own.
  *
  * @type {ReadonlySet<string>}
  */
 const ALLOWED_ACTIONS = new Set([
   'Enter', 'Clear', 'Reset', 'Tab', 'BackTab', 'Home', 'End',
-  'Up', 'Down', 'Left', 'Right', 'Newline',
+  'Up', 'Down', 'Left', 'Right', 'Newline', 'BackNewline',
   'Backspace', 'Delete', 'DeleteField', 'DeleteWord', 'EraseEOF', 'EraseInput',
   'Insert', 'ToggleInsert', 'Attn', 'SysReq', 'Dup', 'FieldMark',
   'PF', 'PA', 'CursorSelect', 'MoveCursor1',

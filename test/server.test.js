@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { writeFile, rm } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { WebSocket } from 'ws';
 import { INIT_SEQUENCE } from '../server/vt.js';
 import { FakeHost } from './fakehost.js';
@@ -27,18 +28,23 @@ function freePort() {
 }
 
 /**
- * @returns {Promise<{ port: number, stop: () => Promise<void> }>}
+ * @param {'debug' | 'info' | 'warn' | 'error'} [logLevel]
+ * @param {boolean} [trustProxyHeaders]
+ * @returns {Promise<{ port: number, logFile: string, stop: () => Promise<void> }>}
  */
-async function startServer() {
+async function startServer(logLevel = 'warn', trustProxyHeaders = false) {
   const port = await freePort();
   const configFile = `test/.tmp-config-${port}.jsonc`;
+  const logFile = `test/.tmp-log-${port}.log`;
   await writeFile(
     configFile,
     JSON.stringify({
       server: { host: '127.0.0.1', port },
       b3270: { path: 'b3270', model: 4 },
       sessions: { idleTimeoutMs: 0 },
-      logLevel: 'warn',
+      security: { trustProxyHeaders },
+      logLevel,
+      logFile,
     }),
   );
 
@@ -62,20 +68,24 @@ async function startServer() {
 
   return {
     port,
+    logFile,
     async stop() {
       child.kill('SIGTERM');
       await new Promise((resolve) => child.once('exit', resolve));
       await rm(configFile, { force: true });
+      await rm(logFile, { force: true });
+      await rm(`${logFile}.1`, { force: true });
     },
   };
 }
 
 /**
  * @param {string} url
+ * @param {Record<string, string>} [headers]
  * @returns {Promise<{ socket: WebSocket, screen: string[], messages: Record<string, unknown>[] }>}
  */
-async function openViewer(url) {
-  const socket = new WebSocket(url);
+async function openViewer(url, headers = {}) {
+  const socket = new WebSocket(url, { headers });
   /** @type {string[]} */
   const screen = [];
   /** @type {Record<string, unknown>[]} */
@@ -178,6 +188,74 @@ test('a path that tries to escape the public directory is refused', async (t) =>
     assert.equal(response.status, 404, `${path} must not be served`);
     assert.equal(body.code, 'E6001');
   }
+});
+
+/**
+ * @param {{ logFile: string }} server
+ * @param {string} needle
+ * @returns {Promise<string>}
+ */
+async function logLine(server, needle) {
+  await waitUntil(() => readFileSync(server.logFile, 'utf8').includes(needle), `"${needle}" in the log`);
+  const lines = readFileSync(server.logFile, 'utf8').split('\n');
+  return lines.find((line) => line.includes(needle)) ?? '';
+}
+
+/** The headers a proxy would set, and a direct client can just as easily claim. */
+const PROXY_HEADERS = { 'x-forwarded-for': '203.0.113.9, 10.0.0.1', 'x-remote-user': 'alice' };
+
+test('the log file names the session and the address every line came from', async (t) => {
+  const server = await startServer('info');
+  t.after(() => server.stop());
+
+  const base = `http://127.0.0.1:${server.port}`;
+  const created = await (await fetch(`${base}/api/sessions`, { method: 'POST' })).json();
+  const viewer = await openViewer(`ws://127.0.0.1:${server.port}/ws/${created.id}`);
+  t.after(() => viewer.socket.close());
+  await waitUntil(() => viewer.messages.length > 0, 'the hello message');
+
+  const attached = await logLine(server, 'viewer attached');
+  const spawned = await logLine(server, 'spawning');
+
+  assert.match(attached, new RegExp(`session=${created.id}\\b`));
+  assert.match(attached, /ip=127\.0\.0\.1\b/);
+  // Even the lines no browser caused say which session they belong to.
+  assert.match(spawned, new RegExp(`session=${created.id}\\b`));
+  // Nobody has authenticated, so there is no user to name and no empty field
+  // pretending otherwise.
+  assert.doesNotMatch(attached, /user=/);
+});
+
+test('a forwarded address and user are believed only when a proxy is configured', async (t) => {
+  const server = await startServer('info', true);
+  t.after(() => server.stop());
+
+  const base = `http://127.0.0.1:${server.port}`;
+  const created = await (await fetch(`${base}/api/sessions`, { method: 'POST', headers: PROXY_HEADERS })).json();
+  const viewer = await openViewer(`ws://127.0.0.1:${server.port}/ws/${created.id}`, PROXY_HEADERS);
+  t.after(() => viewer.socket.close());
+  await waitUntil(() => viewer.messages.length > 0, 'the hello message');
+
+  const requested = await logLine(server, 'request method=POST');
+  const createdLine = await logLine(server, 'session created');
+  const attached = await logLine(server, 'viewer attached');
+
+  // The leftmost entry is the browser; the ones after it are the proxies.
+  assert.match(requested, /ip=203\.0\.113\.9 user=alice/);
+  assert.match(createdLine, /ip=203\.0\.113\.9 user=alice/);
+  assert.match(attached, /ip=203\.0\.113\.9 user=alice/);
+});
+
+test('a client claiming a forwarded address is logged as itself by default', async (t) => {
+  const server = await startServer('info');
+  t.after(() => server.stop());
+
+  const base = `http://127.0.0.1:${server.port}`;
+  await fetch(`${base}/api/sessions`, { method: 'POST', headers: PROXY_HEADERS });
+
+  const requested = await logLine(server, 'request method=POST');
+  assert.match(requested, /ip=127\.0\.0\.1\b/);
+  assert.doesNotMatch(requested, /203\.0\.113\.9|alice/);
 });
 
 test('an upgrade to a path that is not a session is refused with its own code', async (t) => {

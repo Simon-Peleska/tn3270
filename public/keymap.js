@@ -28,7 +28,9 @@
  * commands, not one parameterised action, because each needs its own combo
  * list. `DeleteField` and `DeleteWord` are actions b3270 accepts (see
  * `server/protocol.js`) that no default keyboard reaches; the dialog lets
- * someone bind them if they want to. `Copy` and `Paste` are not 3270 actions
+ * someone bind them if they want to. `BackNewline` is Newline's mirror, which
+ * b3270 has no action for — the server works it out from the field map and
+ * sends a cursor move. `Copy` and `Paste` are not 3270 actions
  * at all — see CLIENT_COMMANDS below — but they are keys someone binds the
  * same way, so they live in the same table.
  *
@@ -37,6 +39,7 @@
 export const COMMANDS = Object.freeze([
   { id: 'Enter', label: 'Enter (AID)' },
   { id: 'Newline', label: 'Newline' },
+  { id: 'BackNewline', label: 'Back newline' },
   { id: 'Tab', label: 'Tab' },
   { id: 'BackTab', label: 'Back tab' },
   { id: 'Backspace', label: 'Backspace' },
@@ -92,6 +95,7 @@ export const DEFAULT_BINDINGS = Object.freeze({
   // Pressing Control itself sets event.ctrlKey, so the binding needs it too.
   Enter: [combo('ControlRight', { ctrl: true })],
   Newline: [combo('Enter')],
+  BackNewline: [combo('Enter', { shift: true })],
   Tab: [combo('Tab')],
   BackTab: [combo('Tab', { shift: true })],
   Backspace: [combo('Backspace')],

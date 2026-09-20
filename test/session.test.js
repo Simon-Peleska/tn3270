@@ -489,6 +489,55 @@ test('typing on the attribute byte just left of a field nudges the cursor into i
   assert.equal(fieldContent?.type === 'fieldContent' ? fieldContent.text : null, 'x');
 });
 
+test('BackNewline walks up to the first field of the row above, where Newline walks down', async (t) => {
+  // fields.trc: three fields, each starting at column 11 of rows 2, 4 and 6,
+  // on a 43-row screen. The cursor starts in the first of them.
+  const fixture = await startTracedSession('test/traces/fields.trc');
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  const { screen } = session;
+  await settle(session);
+  await waitUntil(() => screen.fieldsFormatted, 'the field map to load');
+
+  const controller = collectingViewer('controller');
+  session.attach(controller);
+  assert.deepEqual({ row: screen.cursor.row, col: screen.cursor.col }, { row: 2, col: 11 });
+
+  session.handleClientMessage(controller, { type: 'action', action: 'Newline' });
+  await settle(session);
+  assert.deepEqual({ row: screen.cursor.row, col: screen.cursor.col }, { row: 4, col: 11 }, 'Newline moves down a field');
+
+  session.handleClientMessage(controller, { type: 'action', action: 'BackNewline' });
+  await settle(session);
+  assert.deepEqual({ row: screen.cursor.row, col: screen.cursor.col }, { row: 2, col: 11 }, 'BackNewline moves back up');
+
+  // Nothing is editable above the first field, so it wraps to the last one —
+  // the mirror of Newline wrapping off the bottom of the screen.
+  session.handleClientMessage(controller, { type: 'action', action: 'BackNewline' });
+  await settle(session);
+  assert.deepEqual({ row: screen.cursor.row, col: screen.cursor.col }, { row: 6, col: 11 }, 'BackNewline wraps past the top');
+  assert.equal(session.oia.keyboardLocked, false, 'moving the cursor must not lock the keyboard');
+});
+
+test('BackNewline on a screen with no fields falls back to the start of the row above', async (t) => {
+  const fixture = await startTracedSession('test/traces/fields.trc');
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  const { screen } = session;
+  await settle(session);
+
+  const controller = collectingViewer('controller');
+  session.attach(controller);
+  session.handleClientMessage(controller, { type: 'action', action: 'MoveCursor1', args: ['5', '20'] });
+  await settle(session);
+
+  screen.applyFields(new Array(screen.cells.length).fill(false), false);
+  session.handleClientMessage(controller, { type: 'action', action: 'BackNewline' });
+  await settle(session);
+
+  assert.deepEqual({ row: screen.cursor.row, col: screen.cursor.col }, { row: 3, col: 0 });
+});
+
 test('a hints request answers with one letter per editable field, using the cached field map', async (t) => {
   const fixture = await startTracedSession('test/traces/reverse.trc');
   t.after(() => fixture.close());

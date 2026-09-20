@@ -75,9 +75,21 @@
     // Hosts a client is permitted to ask for. An entry with a port matches
     // exactly; an entry without one allows any port on that host. An empty
     // list allows any host, which is only sensible on a trusted network.
-    "allowedHosts": []
+    "allowedHosts": [],
+
+    // Take the client's address from "X-Forwarded-For" and their name from
+    // "X-Remote-User" instead of from the socket. Turn this on only with a
+    // reverse proxy in front that sets both: a client talking to this server
+    // directly can put whatever it likes in a header, and it lands in the log.
+    "trustProxyHeaders": false
   },
 
   // "debug" logs every line exchanged with b3270. Very useful, very noisy.
-  "logLevel": "info"
+  "logLevel": "info",
+
+  // The log goes to stderr and to this file. The file rolls over to
+  // "<logFile>.1" once it passes logMaxBytes, so the pair is never more than
+  // twice that on disk. "" turns the file off and leaves stderr alone.
+  "logFile": "log/tn3270.log",
+  "logMaxBytes": 10485760
 }

@@ -125,7 +125,7 @@ function resourceArgs(settings) {
 export class B3270 {
   /** @param {B3270Options} options */
   constructor(options) {
-    this.log = logger(`b3270/${options.sessionId}`);
+    this.log = logger('b3270', { session: options.sessionId });
     this.handlers = options.handlers;
     /** @type {string} */
     this.stdoutBuffer = '';

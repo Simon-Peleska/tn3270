@@ -146,6 +146,7 @@ mnemonics:
 | Key | 3270 action |
 |---|---|
 | Enter (main) | Newline |
+| Shift-Enter (main) | BackNewline |
 | Right Ctrl | Enter |
 | Tab / Shift-Tab | Tab / BackTab |
 | Backspace, Delete | Backspace, Delete |
@@ -167,6 +168,12 @@ mnemonics:
 | Shift-F1–F12 | PF13–PF24 |
 | Ctrl-B then 1–4 | aim the keyboard at that session |
 | Ctrl-B then Shift-1–4 | show that many sessions at once |
+
+`BackNewline` is Newline's mirror and the one name in the table b3270 has no
+action for: the server finds the first typeable cell of the nearest row above
+the cursor's — wrapping off the top of the screen to the bottom, as Newline
+wraps off the bottom — from the field map it already keeps, and sends a cursor
+move. A screen with no fields on it falls back to the start of the row above.
 
 Plain Ctrl and Meta combinations are left to the browser, except Ctrl-B (the
 session prefix, below) and Ctrl-C/Ctrl-V, which copy and paste the system
@@ -306,7 +313,10 @@ automation client acts whoever else is watching, and watchers see the result.
 | `sessions.idleTimeoutMs` | `300000` | Viewer-less session lifetime; `0` disables reaping |
 | `sessions.allowMultipleControllers` | `false` | Let every viewer type |
 | `security.allowedHosts` | `[]` | Empty = any host. An entry with a port matches exactly; without one, any port on that host |
+| `security.trustProxyHeaders` | `false` | Take the client's address from `X-Forwarded-For` and their name from `X-Remote-User`. Only with a reverse proxy in front that sets both |
 | `logLevel` | `info` | `debug` logs every line exchanged with b3270 |
+| `logFile` | `log/tn3270.log` | Kept as well as stderr, and rolled over to `<logFile>.1`; `""` is stderr only |
+| `logMaxBytes` | `10485760` | Size at which the log rolls over, so the pair is never more than twice this |
 
 ## 8. Error codes
 
@@ -357,6 +367,8 @@ browser, `E6xxx` server transport, `E7xxx` the REST proxy.
 | `E6002` | WebSocket upgrade path is not a session |
 | `E6003` | WebSocket closed unexpectedly |
 | `E6004` | Server could not start |
+| `E6005` | Log file could not be opened |
+| `E6006` | Log file could not be written or rolled over |
 | `E7002` | REST is not available for this session |
 | `E7003` | REST request to b3270 failed |
 | `E0000` | An error with no code of its own; see the log |

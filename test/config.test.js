@@ -57,6 +57,11 @@ test('missing sections fall back to defaults', () => {
   assert.equal(config.server.host, '127.0.0.1');
   assert.equal(config.b3270.defaultHost, null);
   assert.deepEqual(config.security.allowedHosts, []);
+  // Believing a forwarded address has to be asked for: without a proxy in
+  // front, any client could write its own into the log.
+  assert.equal(config.security.trustProxyHeaders, false);
+  assert.equal(config.logFile, 'log/tn3270.log');
+  assert.equal(config.logMaxBytes, 10 * 1024 * 1024);
 });
 
 test('a wrongly typed setting is rejected with its own code', () => {

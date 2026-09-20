@@ -50,14 +50,16 @@ export function reserveRestEndpoint() {
  * @param {import('node:http').ServerResponse} res
  * @param {import('./session.js').Session} session
  * @param {string} target path and query, from `/3270/` on, still as sent
+ * @param {{ ip: string, user: string }} [client] who asked, for the log
  * @returns {Promise<unknown>}
  */
-export async function proxyRestRequest(req, res, session, target) {
+export async function proxyRestRequest(req, res, session, target, client = { ip: '', user: '' }) {
   const endpoint = session.b3270.rest;
   if (endpoint === null) throw new AppError('E7002', session.id);
 
+  const log = session.log.with(client);
   const method = req.method ?? 'GET';
-  session.log.info('REST proxying', { method, target });
+  log.info('REST proxying', { method, target });
 
   return new Promise((resolve, reject) => {
     const upstream = request(
@@ -73,7 +75,7 @@ export async function proxyRestRequest(req, res, session, target) {
         },
       },
       (answer) => {
-        session.log.info('REST proxied', { target, status: answer.statusCode ?? 0 });
+        log.info('REST proxied', { target, status: answer.statusCode ?? 0 });
         res.writeHead(answer.statusCode ?? 502, answer.headers);
         answer.pipe(res);
         answer.on('end', resolve);

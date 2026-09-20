@@ -56,6 +56,8 @@ const ERRORS = Object.freeze({
   E6002: 'WebSocket upgrade path is not a session',
   E6003: 'WebSocket closed unexpectedly',
   E6004: 'Server could not start',
+  E6005: 'Log file could not be opened',
+  E6006: 'Log file could not be written or rolled over',
 
   // E7001 is spent: it was the action-syntax error of a bridge that parsed
   // action calls itself. b3270's httpd answers those now, in its own words.

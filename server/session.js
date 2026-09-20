@@ -23,6 +23,10 @@ import { logger } from './log.js';
  *   the other viewers see it.
  * @property {string | null} fieldColor `#rrggbb` tinting the fields this viewer
  *   may type into, or null. Personal in the same way, and comes from its theme.
+ * @property {string} [ip] Where this viewer is connected from, for the log. The
+ *   browser has one; a viewer a test makes up need not.
+ * @property {string} [user] Who is behind it, when something in front of this
+ *   server has authenticated them. Empty until something does.
  * @property {(bytes: string) => void} sendScreen
  * @property {(message: import('./protocol.js').ServerMessage) => void} sendMessage
  */
@@ -47,7 +51,7 @@ export class Session {
     this.id = id;
     /** @type {import('./config.js').Config} */
     this.config = config;
-    this.log = logger(`session/${id.slice(0, 8)}`);
+    this.log = logger('session', { session: id });
 
     /** @type {ScreenModel} */
     this.screen = new ScreenModel();
@@ -507,7 +511,13 @@ export class Session {
 
     this.viewers.add(viewer);
     this.stopIdleTimer();
-    this.log.info('viewer attached', { viewer: viewer.id, role: viewer.role, total: this.viewers.size });
+    this.log.info('viewer attached', {
+      viewer: viewer.id,
+      ip: viewer.ip ?? '',
+      user: viewer.user ?? '',
+      role: viewer.role,
+      total: this.viewers.size,
+    });
 
     viewer.sendMessage({
       type: 'hello',
@@ -540,14 +550,23 @@ export class Session {
    */
   detach(viewer) {
     if (!this.viewers.delete(viewer)) return;
-    this.log.info('viewer detached', { viewer: viewer.id, total: this.viewers.size });
+    this.log.info('viewer detached', {
+      viewer: viewer.id,
+      ip: viewer.ip ?? '',
+      user: viewer.user ?? '',
+      total: this.viewers.size,
+    });
 
     // Or the session would be permanently read-only.
     if (viewer.role === 'controller' && !this.allowSharedEditing) {
       const next = this.viewers.values().next();
       if (!next.done) {
         next.value.role = 'controller';
-        this.log.info('promoted viewer to controller', { viewer: next.value.id });
+        this.log.info('promoted viewer to controller', {
+          viewer: next.value.id,
+          ip: next.value.ip ?? '',
+          user: next.value.user ?? '',
+        });
       }
     }
 
@@ -616,6 +635,13 @@ export class Session {
         // room to delete into.
         if (message.action === 'Backspace') {
           if (this.canBackspace()) this.b3270.runActions([{ action: 'Left' }, { action: 'Delete' }]);
+          return;
+        }
+        // Newline upwards, which b3270 has no action for at all — the field
+        // map already here answers it without a round trip.
+        if (message.action === 'BackNewline') {
+          const target = this.backNewlineTarget();
+          this.b3270.runActions([{ action: 'MoveCursor1', args: [String(target.row + 1), String(target.col + 1)] }]);
           return;
         }
         this.b3270.runActions([{ action: message.action, args: message.args ?? [] }]);
@@ -712,6 +738,30 @@ export class Session {
   }
 
   /**
+   * Where Newline's mirror puts the cursor: the first typeable cell of the
+   * nearest row above the cursor's that has one, wrapping off the top of the
+   * screen back to the bottom, exactly as Newline wraps off the bottom. A row
+   * a field merely runs through counts, its column 0 being typeable — again
+   * what Newline does going the other way.
+   *
+   * A screen with no fields at all, or one whose field map has not been read
+   * yet, has no typeable cell to find: that falls back to the start of the row
+   * above, which is all Newline does on an unformatted screen either.
+   *
+   * @returns {{ row: number, col: number }}
+   */
+  backNewlineTarget() {
+    const { cursor, cells, rows, cols } = this.screen;
+    for (let above = 1; above <= rows; above++) {
+      const row = (cursor.row - above + rows) % rows;
+      for (let col = 0; col < cols; col++) {
+        if (cells[row * cols + col]?.editable) return { row, col };
+      }
+    }
+    return { row: (cursor.row - 1 + rows) % rows, col: 0 };
+  }
+
+  /**
    * Where a typed character should land instead of the cursor's own cell, if
    * anywhere. A field's attribute byte sits right before it, and the cursor
    * can rest there — typing onto it directly would lock the keyboard on a
@@ -765,7 +815,7 @@ export class Session {
    * @returns {void}
    */
   reportError(err) {
-    this.log.error(err, { session: this.id });
+    this.log.error(err);
     const { code, summary } = describeError(err);
     this.sendToAll({ type: 'error', code, message: summary });
   }
@@ -814,8 +864,11 @@ export class SessionRegistry {
     this.sessions = new Map();
   }
 
-  /** @returns {Promise<Session>} */
-  async create() {
+  /**
+   * @param {{ ip: string, user: string }} [client] who asked for it, for the log
+   * @returns {Promise<Session>}
+   */
+  async create(client = { ip: '', user: '' }) {
     if (this.sessions.size >= this.config.sessions.maxSessions) {
       throw new AppError('E3002', `${this.sessions.size} sessions are already open`);
     }
@@ -825,7 +878,7 @@ export class SessionRegistry {
       this.log.info('session removed', { session: session.id, remaining: this.sessions.size });
     };
     this.sessions.set(session.id, session);
-    this.log.info('session created', { session: session.id, total: this.sessions.size });
+    this.log.info('session created', { session: session.id, ...client, total: this.sessions.size });
 
     if (this.config.b3270.defaultHost !== null) session.connect(this.config.b3270.defaultHost);
     return session;

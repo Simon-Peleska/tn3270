@@ -248,6 +248,30 @@ a redirect would throw away the session the user is looking at.
 Codes are an identity, not a label: once assigned to a site, a code never
 changes. See `server/errors.js`.
 
+## Logging
+
+Every line goes to stderr and, unless `logFile` is empty, to a file that rolls
+over into a single `<logFile>.1` at `logMaxBytes` — two files, a bounded amount
+of disk, and no dependency to do it.
+
+A line is `<time> <LEVEL> <scope> <message> <key=value>...`, and the scope is
+the subsystem — `http`, `session`, `b3270`, `registry` — never an identity. Who
+a line is about is a field instead, because that is what makes a whole session's
+history one `grep session=<id>` across all four subsystems. A logger carries
+that context bound to it (`logger('session', { session: id })`) rather than
+every call site remembering to pass it, and `log.with({ ip, user })` narrows one
+to a single viewer, so its attach, its messages and its close all name who they
+came from. A field nobody filled in is left off the line, so `user=` appears
+only once something knows it.
+
+Who that is comes from the socket by default. `security.trustProxyHeaders` says
+a reverse proxy is in front, and then the address is the leftmost
+`X-Forwarded-For` entry and the user is `X-Remote-User` — headers any client
+could otherwise set for itself, which is why believing them is a decision the
+operator makes and not the default. `user` is empty until something
+authenticates: an NTLM handshake terminated at that proxy is what would fill it
+in, and `Viewer.user` is where it would land.
+
 ## Testing strategy
 
 No browser driver and no mainframe are needed.
@@ -277,7 +301,7 @@ server/
   main.js       http, static files, /api/sessions, ws upgrade
   config.js     JSONC → validated Config
   errors.js     the stable error-code table
-  log.js        structured logging to stderr
+  log.js        structured logging to stderr and a rolling file
   b3270.js      spawn, NDJSON framing, action submission
   screen.js     ScreenModel: the authoritative shadow buffer
   colors.js     3270 colour name → RGB, gr → SGR

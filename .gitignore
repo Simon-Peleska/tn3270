@@ -1,3 +1,6 @@
 node_modules/
 test/.tmp-config-*.jsonc
 .direnv
+log/
+test/.tmp-log-*.log
+test/.tmp-log-*.log.1
