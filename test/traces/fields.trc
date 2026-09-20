@@ -1,0 +1,75 @@
+// rows 43
+// columns 80
+//
+// A plain screen with ordinary, visible input fields, for driving the emulator
+// by hand: `npm run start:fake`. The x3270 traces next to this one all put a
+// non-display field under the cursor, so typing into them shows nothing.
+//
+// The TELNET negotiation below is the same exchange as reverse.trc; only the
+// screen that follows it is ours.
+//
+// # Ask for TN3270E.
+// telnet.do tn3270e
+< 0x0   fffd28
+// # Ask for the device type.
+// telnet.sb tn3270e
+//  raw 0802 # send device-type
+//  telnet.se
+< 0x0   fffa280802fff0
+// # Tell them what the device type is.
+// telnet.sb tn3270e
+//  raw 0204 # device-type is
+//  atext IBM-3278-4-E
+//  raw 01 # connect
+//  atext IBM0TEQO
+//  telnet.se
+< 0x0   fffa28020449424d2d333237382d342d450149424d305445514ffff0
+// # Tell them what TN3270E we will support (no BIND-IMAGE)
+// telnet.sb tn3270e
+//  raw 0304 # functions is
+//  raw 0204 #  RESPONSES SYSREQ
+//  telnet.se
+< 0x0   fffa2803040204fff0
+// # Draw the screen.
+// tn3270e 3270-data none no-response 0
+//  cmd.ewa restore,reset-mdt
+//   ord.sba 1 1
+//   ord.sf protect,skip,intensify
+//   text "TN3270 TEST SCREEN"
+//   ord.sba 3 1
+//   ord.sf protect,skip
+//   text "Name:"
+//   ord.sba 3 11
+//   ord.sf normal          # 20 columns, ends at the field below
+//   ord.sba 3 32
+//   ord.sf protect,skip
+//   ord.sba 5 1
+//   ord.sf protect,skip
+//   text "Note:"
+//   ord.sba 5 11
+//   ord.sf intensify       # 40 columns
+//   ord.sba 5 52
+//   ord.sf protect,skip
+//   ord.sba 7 1
+//   ord.sf protect,skip
+//   text "Secret:"
+//   ord.sba 7 11
+//   ord.sf zero            # non-display, so the hidden case stays testable
+//   ord.sba 7 32
+//   ord.sf protect,skip
+//   ord.sba 9 1
+//   ord.sf protect,skip
+//   text "Type into the fields above. Tab moves, Enter locks the"
+//   ord.sba 10 1
+//   ord.sf protect,skip
+//   text "keyboard: the replay has no host to answer it. Reset clears."
+//   ord.sba 3 12
+//   ord.ic
+//  telnet.eor
+< 0x0   00000000007ec31140401df8e3d5f3f2f7f040e3c5e2e340e2c3d9c5c5d511c2
+< 0x20  601df0d58194857a11c26a1dc011c27f1df011c5401df0d596a3857a11c54a1d
+< 0x40  c811c5f31df011c7601df0e285839985a37a11c76a1dcc11c77f1df0114a401d
+< 0x60  f0e3a89785408995a39640a38885408689859384a240818296a5854b40e38182
+< 0x80  409496a585a26b40c595a385994093968392a240a38885114b501df09285a882
+< 0xa0  968199847a40a38885409985979381a8408881a2409596408896a2a340a39640
+< 0xc0  8195a2a685994089a34b40d985a285a3408393858199a24b11c26b13ffef

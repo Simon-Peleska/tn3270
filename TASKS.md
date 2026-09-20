@@ -74,9 +74,9 @@ npm start            # http://127.0.0.1:8017
 
 By hand, without a mainframe:
 
-1. `node test/fakehost.js test/traces/reverse.trc 4001`
-2. Open the page, connect to `127.0.0.1:4001`, confirm the red-background field
-   renders and the OIA line is live.
+1. `npm run start:fake`
+2. Open the page, type into the Name field, confirm it shows and the OIA line is
+   live.
 3. Open the same URL (including the `#fragment`) in a second window: it shows the
    identical screen immediately and then tracks the first live.
 4. Type in the first window — both update. Type in the second — refused, with the

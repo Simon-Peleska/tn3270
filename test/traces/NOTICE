@@ -1,9 +1,12 @@
-The .trc files in this directory are TN3270 data-stream traces taken from the
-x3270 project's own test suite (b3270/Test), and are used here for the same
-purpose: replaying a recorded host session against a real emulator.
+Most of the .trc files in this directory are TN3270 data-stream traces taken
+from the x3270 project's own test suite (b3270/Test), and are used here for the
+same purpose: replaying a recorded host session against a real emulator.
 
   Upstream: https://github.com/pmattes/x3270
   Files:    reverse.trc, invisible_underscore.trc, short_sba.trc, invalid_ra.trc
+
+fields.trc is this project's own, written for manual testing. Its TELNET
+negotiation is the same exchange as reverse.trc's; the screen is ours.
 
 x3270 is distributed under the following licence.
 

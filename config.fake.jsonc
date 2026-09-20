@@ -1,0 +1,21 @@
+// Manual testing against the replayed host instead of a mainframe:
+//
+//   npm run start:fake   # then open http://127.0.0.1:8017
+//
+// The traces were recorded against a model 4, so this connects as one — and
+// without "oversize", which would negotiate IBM-DYNAMIC and let the host pick
+// a size the recording does not have.
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8017
+  },
+
+  "b3270": {
+    "path": "b3270",
+    "model": 4,
+    "defaultHost": "127.0.0.1:4001"
+  },
+
+  "logLevel": "info"
+}

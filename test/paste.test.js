@@ -19,13 +19,14 @@ function row(picture) {
  * pasteSegments assumed when it decided what to skip and what to consume.
  *
  * @param {{ ch: string, editable: boolean }[]} cells
- * @param {{ col: number, text: string }[]} segments one row's worth
+ * @param {number} cols
+ * @param {{ row: number, col: number, text: string }[]} segments
  * @returns {string}
  */
-function apply(cells, segments) {
+function apply(cells, cols, segments) {
   const result = cells.map((cell) => cell.ch);
-  for (const { col, text } of segments) {
-    let at = col;
+  for (const { row: atRow, col, text } of segments) {
+    let at = atRow * cols + col;
     for (const ch of text) {
       while (!cells[at].editable) at++;
       result[at] = ch;
@@ -38,25 +39,42 @@ function apply(cells, segments) {
 test('text shorter than a run of fields overflows into the next one, skipping the gap between them', () => {
   const cells = row('___ ___ ___');
   const segments = pasteSegments(cells, true, cells.length, { row: 0, col: 0 }, '123456789');
-  assert.equal(apply(cells, segments), '123 456 789');
+  assert.equal(apply(cells, cells.length, segments), '123 456 789');
 });
 
 test('a protected run matching the pasted text there is consumed, not skipped', () => {
   const cells = row('___456___');
   const segments = pasteSegments(cells, true, cells.length, { row: 0, col: 0 }, '123456789');
-  assert.equal(apply(cells, segments), '123456789');
+  assert.equal(apply(cells, cells.length, segments), '123456789');
 });
 
 test('a protected run not matching the pasted text is skipped, and the input is not consumed', () => {
   const cells = row('___455___');
   const segments = pasteSegments(cells, true, cells.length, { row: 0, col: 0 }, '123456789');
-  assert.equal(apply(cells, segments), '123455456');
+  assert.equal(apply(cells, cells.length, segments), '123455456');
 });
 
 test('a protected run matching by coincidence is left alone, not consumed, when there is room to spare', () => {
   const cells = row('_2_4____8___');
   const segments = pasteSegments(cells, true, cells.length, { row: 0, col: 0 }, '123456789');
-  assert.equal(apply(cells, segments), '122434568789');
+  assert.equal(apply(cells, cells.length, segments), '122434568789');
+});
+
+test('a label the pasted line ends inside is left alone, not typed into the field below', () => {
+  // Copying a filled-in form off the screen and pasting it back where it came
+  // from: the second line is the "Address:" label itself, already on screen and
+  // longer than what is left of the line, so there is nothing to place there.
+  const cells = [
+    ...row('name: ____          '),
+    ...row('Address:            '),
+    ...row('__________          '),
+  ];
+  const segments = pasteSegments(cells, true, 20, { row: 0, col: 0 }, 'name: test\nAddress:');
+  assert.equal(apply(cells, 20, segments), [
+    'name: test          ',
+    'Address:            ',
+    '                    ',
+  ].join(''));
 });
 
 test('leading and trailing newlines are dropped before anything is typed', () => {

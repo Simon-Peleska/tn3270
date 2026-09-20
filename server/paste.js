@@ -3,12 +3,14 @@
  * protection: a protected run is jumped over rather than typed into. The
  * exception is a run that already reads exactly what the pasted text has
  * lined up against it — that stretch is left alone but still consumed from
- * the input, as if it had been typed, but only when skipping it outright
- * would otherwise leave text unplaced at the end of the paste. A short
- * incidental match (a single digit that happens to coincide) is far more
- * likely a coincidence than an intentional literal, and skipping it costs
- * nothing when there is room to spare — so it is left untouched and not
- * consumed unless the input would otherwise overflow the screen.
+ * the input, as if it had been typed. A short incidental match (a single
+ * digit that happens to coincide) is far more likely a coincidence than an
+ * intentional literal, and skipping it costs nothing when there is room to
+ * spare — so a run the pasted text covers end to end is left untouched and
+ * not consumed unless the input would otherwise overflow the screen. A match
+ * the pasted line ends inside is always consumed, because there skipping is
+ * not free: the text would land in the next field down, which is a different
+ * field than the one it was copied from.
  *
  * A newline in the text jumps to the column the paste started at, one row
  * down; running off the end of a line without one just keeps going into
@@ -63,9 +65,23 @@ export function pasteSegments(cells, fieldsFormatted, cols, cursor, text) {
 
     let runLength = 0;
     while (pos + runLength < total && !isEditable(pos + runLength)) runLength++;
-    const pasted = normalized.slice(i, i + runLength);
-    const onScreen = cells.slice(pos, pos + runLength).map((cell) => cell.ch).join('');
-    const matches = pasted.length === runLength && !pasted.includes('\n') && pasted === onScreen;
+    const newline = normalized.indexOf('\n', i);
+    const lineEnd = newline === -1 ? normalized.length : newline;
+    const width = Math.min(runLength, lineEnd - i);
+    const pasted = normalized.slice(i, i + width);
+    const onScreen = cells.slice(pos, pos + width).map((cell) => cell.ch).join('');
+    const matches = pasted === onScreen;
+
+    // The line ran out inside the run: whatever matched is the tail of a line
+    // that has nowhere else to go, since the only editable cells left on this
+    // side of the newline are on a later row. Skipping it would drop the text
+    // into a field it was never meant for, so it is always consumed here.
+    if (matches && width < runLength) {
+      i += width;
+      pos += width;
+      continue;
+    }
+
     const wouldOverflowIfSkipped = normalized.length - i > editableSuffixCount[pos + runLength];
     if (matches && wouldOverflowIfSkipped) i += runLength;
     pos += runLength;

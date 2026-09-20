@@ -337,7 +337,11 @@ npm start              # http://127.0.0.1:8017
 Without a mainframe, replay a recorded host:
 
 ```bash
-node test/fakehost.js test/traces/reverse.trc 4001
+npm run start:fake     # the replay on :4001 plus a server that connects to it
 ```
 
-then connect the page to `127.0.0.1:4001`.
+The page opens straight onto `test/traces/fields.trc`: a title, two ordinary
+input fields and a non-display one, so typing and pasting are visible. The
+replay is stopped along with the server, and serves any number of sessions at
+once. `npm run fakehost` starts it on its own, for pointing something else at
+it.

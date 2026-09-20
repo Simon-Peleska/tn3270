@@ -162,29 +162,22 @@ export class FakeHost {
 }
 
 // Also runnable directly, for the manual end-to-end walkthrough:
-//   node test/fakehost.js test/traces/reverse.trc 4001
+//   npm run fakehost
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/^.*\//, ''))) {
   const [, , traceFile, portArg] = process.argv;
   if (traceFile) {
     const host = await FakeHost.listen(traceFile, portArg ? Number(portArg) : 4001);
     process.stdout.write(`fake host replaying ${traceFile} on 127.0.0.1:${host.port}\n`);
 
-    // From the top for every connection: changing the screen size reopens the
-    // host, and a trace played only once leaves the second connection hanging
-    // in telnet negotiation with nothing to draw.
-    for (;;) {
-      await host.waitForConnection(600000);
-      const socket = host.socket;
-      host.cursor = 0;
-      let sent = 0;
-      while (host.cursor < host.payloads.length) {
-        await host.sendRecords(1);
-        sent++;
-      }
-      process.stdout.write(`emulator connected; sent ${sent} record(s)\n`);
-
-      await new Promise((resolve) => socket?.once('close', resolve));
-      if (host.socket === socket) host.socket = null;
-    }
+    // The whole trace from the top, per connection and independently of every
+    // other one: a screen-size change reopens the host, a reload leaves the
+    // old session connected until it times out, and either one would otherwise
+    // leave the next connection hanging in telnet negotiation with nothing to
+    // draw. Sent in one go rather than record by record — the timing marks
+    // above exist to synchronise tests, and a real host does not wait either.
+    host.server.on('connection', (socket) => {
+      for (const hex of host.payloads) socket.write(Buffer.from(hex, 'hex'));
+      process.stdout.write(`emulator connected; sent ${host.payloads.length} payload(s)\n`);
+    });
   }
 }

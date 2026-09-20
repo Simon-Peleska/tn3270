@@ -6,6 +6,8 @@
   "private": true,
   "scripts": {
     "start": "node server/main.js",
+    "fakehost": "node test/fakehost.js test/traces/fields.trc 4001",
+    "start:fake": "node test/fakehost.js test/traces/fields.trc 4001 & FAKE=$!; trap 'kill $FAKE' EXIT; TN3270_CONFIG=config.fake.jsonc node server/main.js",
     "test": "node --test \"test/*.test.js\"",
     "typecheck": "tsc -p jsconfig.json",
     "postinstall": "patch-package"
