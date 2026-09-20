@@ -186,6 +186,31 @@ export function comboLabel(value) {
 }
 
 /**
+ * A saved keymap filled in with the defaults for commands it has never heard
+ * of. A keymap is the whole map and not a diff, so without this a command
+ * added to the app later stays unbound forever for anyone who has ever saved
+ * one — which is exactly what happened to `BackNewline`.
+ *
+ * A command the saved map does list is left alone, including one deliberately
+ * left with no combos at all: that is an unbinding, not an absence. A default
+ * combo the saved map has already given to some other command is dropped
+ * rather than bound twice, since the operator's own choice of key wins.
+ *
+ * @param {Bindings} saved
+ * @returns {Bindings}
+ */
+export function withDefaults(saved) {
+  const taken = new Set(Object.values(saved).flat().map(serializeCombo));
+  /** @type {Bindings} */
+  const filled = { ...saved };
+  for (const [commandId, combos] of Object.entries(DEFAULT_BINDINGS)) {
+    if (commandId in saved) continue;
+    filled[commandId] = combos.filter((value) => !taken.has(serializeCombo(value)));
+  }
+  return filled;
+}
+
+/**
  * @param {Bindings} bindings
  * @returns {Map<string, string>} every combo across every command, keyed for
  *   `mapKey` to look up in one step

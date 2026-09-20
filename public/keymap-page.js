@@ -8,7 +8,7 @@
  */
 
 import { cycle, drawListPanel } from './settings.js';
-import { COMMANDS, DEFAULT_BINDINGS, buildLookup, comboFromEvent, comboLabel, serializeCombo } from './keymap.js';
+import { COMMANDS, DEFAULT_BINDINGS, buildLookup, comboFromEvent, comboLabel, serializeCombo, withDefaults } from './keymap.js';
 import { keymapToText, parseKeymapText } from './keymap-format.js';
 
 /** @typedef {import('./keymap.js').Bindings} Bindings */
@@ -67,11 +67,13 @@ export class KeymapPage {
   }
 
   /**
-   * @param {Bindings} bindings
+   * @param {Bindings} bindings what was saved, which may be from a version of
+   *   this app with fewer commands in it — `withDefaults` is what stops one
+   *   added since from being unbound for good
    * @returns {void}
    */
   setBindings(bindings) {
-    this.bindings = Object.keys(bindings).length === 0 ? cloneBindings(DEFAULT_BINDINGS) : cloneBindings(bindings);
+    this.bindings = cloneBindings(withDefaults(bindings));
     this.rebuildLookup();
     if (this.open) this.draw();
   }

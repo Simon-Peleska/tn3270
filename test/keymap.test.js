@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mapKey, buildLookup, DEFAULT_BINDINGS } from '../public/keymap.js';
+import { mapKey, buildLookup, withDefaults, DEFAULT_BINDINGS } from '../public/keymap.js';
 
 const lookup = buildLookup(DEFAULT_BINDINGS);
 
@@ -115,6 +115,40 @@ test('a printable key is text and Alt is otherwise left to the page', () => {
 test('a binding can be removed even with none left for its command', () => {
   const empty = buildLookup({ ...DEFAULT_BINDINGS, Attn: [] });
   assert.equal(mapKey(key({ key: 'Escape', code: 'Escape' }), empty), null);
+});
+
+test('a keymap saved before a command existed still gets that command\'s default binding', () => {
+  // The bug BackNewline hit: a saved keymap is the whole map, so a command
+  // added to the app afterwards is simply missing from it, and the dialog used
+  // to take the saved map as-is — leaving the new key dead for anyone who had
+  // ever saved one.
+  const { BackNewline: _omitted, ...older } = DEFAULT_BINDINGS;
+  const filled = buildLookup(withDefaults(older));
+  assert.deepEqual(mapKey(key({ key: 'Enter', code: 'Enter', shiftKey: true }), filled), {
+    kind: 'action', action: 'BackNewline', args: [],
+  });
+});
+
+test('filling in defaults leaves a deliberate unbinding, and a key the operator gave to something else, alone', () => {
+  const { BackNewline: _omitted, ...older } = DEFAULT_BINDINGS;
+
+  // An empty list is an unbinding, not an absence: it must survive.
+  const unbound = buildLookup(withDefaults({ ...older, Attn: [] }));
+  assert.equal(mapKey(key({ key: 'Escape', code: 'Escape' }), unbound), null);
+
+  // Shift-Enter already belongs to Clear here, so BackNewline's default does
+  // not get to take it back.
+  const rebound = buildLookup(withDefaults({
+    ...older,
+    Clear: [...DEFAULT_BINDINGS.Clear, { code: 'Enter', shift: true, ctrl: false, alt: false }],
+  }));
+  assert.deepEqual(mapKey(key({ key: 'Enter', code: 'Enter', shiftKey: true }), rebound), {
+    kind: 'action', action: 'Clear', args: [],
+  });
+});
+
+test('an empty saved keymap is simply the defaults', () => {
+  assert.deepEqual(withDefaults({}), DEFAULT_BINDINGS);
 });
 
 test('rebinding a combo to a new command steals it from whatever had it, at the lookup level', () => {
