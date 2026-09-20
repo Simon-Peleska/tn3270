@@ -122,12 +122,15 @@ the host.
   value is shown verbatim as `X <value>` rather than swallowed.
 - The right of the OIA row holds `[Reset] [Settings]`, painted by the browser
   over columns the server never writes into. Every pane carries its own, so a
-  split is not a screen you have to switch away from to work on. **Reset** asks
-  for this session's screen back at the size of its pane, whatever it has been
-  through — the way out of a pane resized under a connection the page would not
-  touch on its own — and costs the host connection, the same as any other size
-  change. With no screen measured from the window — fit off, or the dynamic
-  screen — there is no size to reset to, and it says so (`E5007`).
+  split is not a screen you have to switch away from to work on. **Reset** puts
+  this session's screen back the way it should look in the pane it now sits in,
+  whatever it has been through — the way out of a pane resized under a
+  connection the page would not touch on its own. A screen measured from the
+  window is asked for again at the pane's size, which costs the host connection,
+  the same as any other size change; a screen asked for by name — fit off, or
+  the dynamic screen — keeps its size and has its text scaled back to the pane
+  instead. Both repaint, so Reset is also the way back from anything drawn over
+  the screen.
 - Colours are the sixteen 3270 host colours, rendered as truecolor from x3270's
   own palette. If the host reports no colour (a 3278), the screen is rendered
   monochrome green rather than being given invented colours.
@@ -343,7 +346,6 @@ browser, `E6xxx` server transport, `E7xxx` the REST proxy.
 | `E5004` | Settings could not be saved to the browser database |
 | `E5005` | Clipboard could not be read for a Shift+Insert paste |
 | `E5006` | Another terminal session could not be opened |
-| `E5007` | Screen cannot be refitted while fit to window is off |
 | `E5008` | Macros could not be read from the browser database |
 | `E5009` | Macros could not be saved to the browser database |
 | `E5010` | A macro file could not be read |

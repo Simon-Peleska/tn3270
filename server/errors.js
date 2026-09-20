@@ -42,7 +42,8 @@ const ERRORS = Object.freeze({
   E5004: 'Settings could not be saved to the browser database',
   E5005: 'Clipboard could not be read for a Shift+Insert paste',
   E5006: 'Another terminal session could not be opened',
-  E5007: 'Screen cannot be refitted while fit to window is off',
+  // E5007 is spent: [Reset] used to refuse while fit to window was off. It
+  // rescales the text and repaints instead, which is worth doing in any mode.
   E5008: 'Macros could not be read from the browser database',
   E5009: 'Macros could not be saved to the browser database',
   E5010: 'A macro file could not be read',

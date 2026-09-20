@@ -1290,20 +1290,24 @@ screenEl.addEventListener('paste', (event) => {
 }, true);
 
 /**
- * The operator asking for this session's screen back at the size of its pane,
- * whatever it has been through — the way out of a pane that was resized under a
- * connection this side would not touch on its own. It costs the host connection,
- * which is why it is a button and not something that happens behind their back.
+ * The operator asking for this session's screen back the way it should look in
+ * the pane it now sits in, whatever it has been through — the way out of a pane
+ * that was resized under a connection this side would not touch on its own.
+ *
+ * A screen measured from the window is asked for again at the pane's size,
+ * which costs the host connection; that is why it is a button and not something
+ * that happens behind their back. A screen the operator asked for by name — the
+ * model's own, or the dynamic one — keeps its size and has its text scaled back
+ * to the pane instead. Either way the screen is repainted, so this is also the
+ * way back from anything drawn over it.
  *
  * @param {SessionSlot} slot
  * @returns {void}
  */
-function resetSize(slot) {
-  if (!settings.fitsWindow()) {
-    showError('E5007', 'Turn "Fit to window" on in the settings first.');
-    return;
-  }
-  fitSession(slot);
+function resetScreen(slot) {
+  if (settings.fitsWindow()) fitSession(slot);
+  fitFontSize(slot);
+  repaint(slot);
 }
 
 /**
@@ -1333,7 +1337,7 @@ function paneClicked(slot, event) {
     // click right of any of them is also right of the ones still to check.
     const buttons = [
       { start: settingsStart, action: () => settings.toggle() },
-      { start: resetStart, action: () => resetSize(slot) },
+      { start: resetStart, action: () => resetScreen(slot) },
     ];
     for (const button of buttons) {
       if (col >= button.start) {
