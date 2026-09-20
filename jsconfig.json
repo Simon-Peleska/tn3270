@@ -26,6 +26,7 @@
       "/macros.js": ["public/macros.js"],
       "/recorder.js": ["public/recorder.js"],
       "/sessions.js": ["public/sessions.js"],
+      "/reconnect.js": ["public/reconnect.js"],
       "/store.js": ["public/store.js"]
     }
   },

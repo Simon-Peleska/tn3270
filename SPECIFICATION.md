@@ -34,8 +34,8 @@ at it; `Ctrl-B` and a digit does the same from the keyboard.
 | Page opened with no `#fragment` | A session is created; its id goes into the URL fragment |
 | Page opened with `#<ids>` | The fragment is a comma-separated list, one slot per digit (`a,,c` is session 1 and 3). Each id is joined if it still exists; ids that are gone are reported once with `E3001`, and a session is created only if none survived |
 | A digit with no session behind it is pressed | A session is created for that slot and appended to the fragment (`E5006` if the server refuses) |
-| Browser reloads or the network drops | The session is untouched; the page reconnects with backoff and receives a full repaint |
-| Last viewer detaches | The session is kept alive for `sessions.idleTimeoutMs`, then closed |
+| Browser reloads or the network drops | The session is untouched. The page retries with exponential backoff and jitter for as long as the server would hold the session — `sessions.idleTimeoutMs`, which the `hello` told it — asking `/api/sessions` before each attempt: a server that does not answer is waited for, one that answers but no longer lists the session ends the waiting at once and the slot takes a new session (`E5014` if that fails). The reconnected page reloads itself, so a server that came back with newer page code is picked up; the fragment still names the same sessions, so it reattaches to them |
+| Last viewer detaches | The session is kept alive for `sessions.idleTimeoutMs`, then closed. A viewer attaching inside that window cancels the reaping |
 | `b3270` exits | The session closes and every viewer is told (`E2002`) |
 
 Sharing the URL is the whole sharing mechanism. There is no separate invite step;
@@ -222,7 +222,7 @@ One WebSocket at `/ws/<session-id>`.
 terminal. Text frames are JSON:
 
 ```jsonc
-{"type":"hello","sessionId":"…","rows":43,"cols":80,"model":4,"oversize":"","models":[{"model":2,"rows":24,"columns":80}],"role":"controller","viewers":1}
+{"type":"hello","sessionId":"…","rows":43,"cols":80,"model":4,"oversize":"","models":[{"model":2,"rows":24,"columns":80}],"role":"controller","viewers":1,"idleTimeoutMs":300000}
 {"type":"screen","model":2,"rows":24,"cols":80,"oversize":""}
 {"type":"status","connection":"connected-tn3270e","host":"mainframe:23","locked":false,"role":"controller","viewers":2}
 {"type":"error","code":"E3006","message":"This session is being controlled by someone else."}
@@ -233,6 +233,10 @@ repaint that assumes the new size. `oversize` is the fitted screen in force,
 `<cols>x<rows>`, or empty when the model is at its own size. One ordered
 WebSocket keeps them in that order, which is what stops a viewer writing
 new-sized bytes into an old-sized terminal.
+
+`hello` carries `idleTimeoutMs`, the server's own hold time for a viewer-less
+session (`0` when reaping is off), so a page whose socket drops knows how long
+reconnecting to it is worth trying.
 
 **Browser → server.** Text frames only:
 
@@ -340,6 +344,13 @@ browser, `E6xxx` server transport, `E7xxx` the REST proxy.
 | `E5005` | Clipboard could not be read for a Shift+Insert paste |
 | `E5006` | Another terminal session could not be opened |
 | `E5007` | Screen cannot be refitted while fit to window is off |
+| `E5008` | Macros could not be read from the browser database |
+| `E5009` | Macros could not be saved to the browser database |
+| `E5010` | A macro file could not be read |
+| `E5011` | The keymap could not be saved to the browser database |
+| `E5012` | A keymap file could not be read |
+| `E5013` | The keymap could not be read from the browser database |
+| `E5014` | A dropped session could not be restarted |
 | `E6001` | Static file not found |
 | `E6002` | WebSocket upgrade path is not a session |
 | `E6003` | WebSocket closed unexpectedly |

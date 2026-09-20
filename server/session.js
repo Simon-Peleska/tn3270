@@ -522,6 +522,7 @@ export class Session {
       viewers: this.viewers.size,
       allowSharing: this.allowSharing,
       allowSharedEditing: this.allowSharedEditing,
+      idleTimeoutMs: this.config.sessions.idleTimeoutMs,
     });
 
     // The whole point of holding the screen here: a viewer joining an hour late

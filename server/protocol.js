@@ -41,6 +41,9 @@ export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
  * @property {boolean} allowSharing Whether a second viewer may attach at all.
  * @property {boolean} allowSharedEditing Whether a viewer who is not the
  *   controller may still type.
+ * @property {number} idleTimeoutMs How long the server keeps this session alive
+ *   once its last viewer is gone, so a page that drops knows how long it is
+ *   worth reconnecting for. 0 means the session is never reaped.
  *
  * Sent whenever the grid changes size, always immediately before the repaint
  * that uses it: the WebSocket keeps that order, so no viewer ever writes

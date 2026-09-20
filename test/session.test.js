@@ -443,6 +443,10 @@ test('a Backspace at the very start of a field does nothing, rather than locking
   const { session } = fixture;
   const { screen } = session;
   await settle(session);
+  // Without the field map Backspace has no way to know it is at the start of
+  // one and moves left like any other key, so waiting for it is the difference
+  // between testing the guard and racing it.
+  await waitUntil(() => screen.fieldsFormatted, 'the field map to load');
 
   const controller = collectingViewer('controller');
   session.attach(controller);
@@ -824,4 +828,51 @@ test('a run of keystrokes into a password field collapses to a single marker', a
   session.handleClientMessage(controller, { type: 'text', value: 'next' });
   assert.equal(steps.length, 3);
   assert.deepEqual(steps[2], { screen: steps[2].screen, action: 'String', args: ['next'] });
+});
+
+/**
+ * A page that loses its socket reconnects to the same session, so the server
+ * has to still have it. `sessions.idleTimeoutMs` is exactly the window that
+ * makes that possible, and the client is told how wide it is.
+ */
+
+test('a session with no viewers left is closed once the idle timeout passes', async (t) => {
+  const session = new Session(testConfig({ sessions: { idleTimeoutMs: 30 } }));
+  t.after(() => session.close());
+  await session.ready;
+
+  const viewer = collectingViewer('only');
+  session.attach(viewer);
+  assert.equal(session.idleTimer, null, 'a session being watched is not on the clock');
+
+  session.detach(viewer);
+  await waitUntil(() => session.closed, 'the idle session to be reaped');
+});
+
+test('a viewer reattaching inside the idle window stops the session being reaped', async (t) => {
+  const session = new Session(testConfig({ sessions: { idleTimeoutMs: 30000 } }));
+  t.after(() => session.close());
+  await session.ready;
+
+  const first = collectingViewer('first');
+  session.attach(first);
+  session.detach(first);
+  assert.notEqual(session.idleTimer, null, 'the last viewer leaving starts the clock');
+
+  session.attach(collectingViewer('reconnected'));
+  assert.equal(session.idleTimer, null);
+  assert.equal(session.closed, false);
+});
+
+test('the hello tells a viewer how long a dropped session is held for', async (t) => {
+  const session = new Session(testConfig({ sessions: { idleTimeoutMs: 45000 } }));
+  t.after(() => session.close());
+  await session.ready;
+
+  const viewer = collectingViewer('only');
+  session.attach(viewer);
+
+  const hello = viewer.messages[0];
+  assert.equal(hello?.type, 'hello');
+  assert.equal(hello?.type === 'hello' ? hello.idleTimeoutMs : 0, 45000);
 });

@@ -94,6 +94,19 @@ with no viewers is reaped after `sessions.idleTimeoutMs`.
 - **detach** → if the controller left, promote another viewer, so the session
   never becomes permanently read-only.
 
+That reaping window is also the reconnect budget, so the server tells the
+browser how wide it is in the `hello` instead of both sides guessing. When a
+socket drops, `public/reconnect.js` backs off exponentially with jitter and the
+page asks `/api/sessions` before each attempt — a browser is never told why a
+WebSocket failed, so "the server is down" and "the session was reaped" are
+indistinguishable from the socket alone, and they need opposite answers: wait
+for the first, start a new session for the second. A reconnect that gets as far
+as a `hello` reloads the page, so a server that came back with newer page code
+is actually picked up; the URL fragment is left alone, so the reloaded page
+attaches to the same sessions. The reload hangs off the `hello` and not the
+socket opening, because an attach the server refuses (E3007) opens a socket too
+and would otherwise reload forever.
+
 A `Viewer` is just `{ id, role, sendScreen, sendMessage }`. Nothing about it
 knows what a WebSocket is, which is why the tests attach a plain collector object
 and exercise the real broadcast path with nothing mocked.
@@ -272,7 +285,7 @@ server/
   protocol.js   wire typedefs and the action allow-list
   restproxy.js  forwards /3270/ to the session's own b3270 httpd
 
-public/         index.html, app.js, keymap.js, style.css
+public/         index.html, app.js, keymap.js, reconnect.js, style.css
 test/           fakehost.js, ghostty.js, helpers.js, traces/, *.test.js
 ```
 

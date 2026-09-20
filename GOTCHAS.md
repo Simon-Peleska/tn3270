@@ -113,6 +113,15 @@ measurement claiming it never resized. Screenshot first, then measure.
 hang forever. `server/main.js` terminates the `wss.clients` and calls
 `server.closeAllConnections()` before closing.
 
+## `settle()` does not mean the field map has arrived
+
+The field map is a `ReadBuffer` the session asks for from `flush()`, which is
+coalesced — so a `settle()` right after a screen change can submit its Reset
+*before* that read is even sent, and come back with `screen.fieldsFormatted`
+still false. Anything to do with fields (Backspace's guard, paste, hints) then
+falls back to its unformatted behaviour and the test quietly checks nothing.
+Wait for `screen.fieldsFormatted` as well.
+
 ## `node --test test/` is not a directory scan
 
 Node 22 treats the argument as a file path. Use the glob: `node --test

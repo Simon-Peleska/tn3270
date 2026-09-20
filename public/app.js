@@ -6,6 +6,7 @@ import { RecorderPage } from '/recorder.js';
 import { KeymapPage } from '/keymap-page.js';
 import { loadSettings, saveSettings, loadMacros, saveMacros, loadKeymap, saveKeymap } from '/store.js';
 import { MAX_SESSIONS, SessionPrefix, paneAreas, parseSessionHash, sessionHash, switcherText } from '/sessions.js';
+import { backoffDelay, reconnectStep } from '/reconnect.js';
 import { installBoxSelection } from '/box-select.js';
 import { installCursorGlyph } from '/cursor-glyph.js';
 
@@ -176,12 +177,34 @@ function repaintStatus() {
   sendQuietly(painted, { type: 'refresh' });
 }
 
+/** @type {number} What to assume the server's hold time is until a hello says
+ *  otherwise — only ever used by a socket that drops before its first one. */
+const DEFAULT_IDLE_TIMEOUT_MS = 300000;
+
 /** @returns {Promise<{ id: string, rows: number, cols: number }>} */
 async function createSession() {
   const response = await fetch('/api/sessions', { method: 'POST' });
   const body = await response.json();
   if (!response.ok) throw new Error(`[${body.code ?? 'E0000'}] ${body.message ?? 'could not create a session'}`);
   return body;
+}
+
+/**
+ * The sessions the server still has, or null if it did not answer at all —
+ * which is a different thing entirely, and the only way this side can tell a
+ * server that is down from a session that was reaped.
+ *
+ * @returns {Promise<Set<string> | null>}
+ */
+async function liveSessionIds() {
+  try {
+    const response = await fetch('/api/sessions');
+    if (!response.ok) return null;
+    const body = await response.json();
+    return new Set((body.sessions ?? []).map((/** @type {{ id: string }} */ s) => s.id));
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -200,7 +223,13 @@ async function createSession() {
  * @property {import('ghostty-web').Terminal | null} terminal built the first
  *   time the pane is on screen with a known geometry
  * @property {WebSocket | null} socket
- * @property {number} backoffMs
+ * @property {number} attempt retries since the socket last dropped, for the
+ *   backoff; 0 while connected
+ * @property {number | null} reconnectUntil when reconnecting stops being worth
+ *   it, because the server will have reaped the session by then; null while
+ *   connected. Infinity when the server never reaps.
+ * @property {number} idleTimeoutMs the server's own hold time, from the last
+ *   hello; the window above is measured from it
  * @property {number} model the model the server has confirmed
  * @property {string} oversize the fitted screen it has confirmed
  * @property {number} cols
@@ -263,7 +292,8 @@ function newSlot(id, cols = 0, rows = 0) {
   screenEl.append(pane);
   /** @type {SessionSlot} */
   const slot = {
-    id, pane, terminal: null, socket: null, backoffMs: 250,
+    id, pane, terminal: null, socket: null,
+    attempt: 0, reconnectUntil: null, idleTimeoutMs: DEFAULT_IDLE_TIMEOUT_MS,
     model: 0, oversize: '', cols, rows, connection: '', connected: null, touched: false, locked: false,
     role: 'controller', allowSharing: true, allowSharedEditing: false,
   };
@@ -786,12 +816,6 @@ function connectSocket(slot) {
   ws.binaryType = 'arraybuffer';
   slot.socket = ws;
 
-  let opened = false;
-  ws.addEventListener('open', () => {
-    opened = true;
-    slot.backoffMs = 250;
-  });
-
   ws.addEventListener('message', (event) => {
     // Binary frames are screen bytes, text frames are control messages. The
     // hello that sizes the terminal always precedes the first screen bytes.
@@ -810,33 +834,75 @@ function connectSocket(slot) {
     if (slot === activeSession()) writeOverlays();
   });
 
+  // A failed connect fires error and then close; close is where the waiting is
+  // decided, so the error only has to be said out loud once.
   ws.addEventListener('error', () => {
     showError('E5002', 'The connection to the server failed.');
   });
 
   ws.addEventListener('close', () => {
-    // The session lives on the server, so reconnecting picks the screen back up
-    // where it was. Unless the socket never opened at all: the session is then
-    // probably gone (the server restarted) and retrying the same id would 404
-    // forever, so the slot is given a fresh session instead.
-    setTimeout(() => {
-      if (opened) {
-        connectSocket(slot);
-        return;
-      }
-      createSession().then(
-        (created) => {
-          slot.id = created.id;
-          slot.cols = created.cols;
-          slot.rows = created.rows + 1;
-          writeHash();
-          connectSocket(slot);
-        },
-        () => connectSocket(slot),
-      );
-    }, slot.backoffMs);
-    slot.backoffMs = Math.min(slot.backoffMs * 2, 8000);
+    slot.socket = null;
+    // The window is measured from the first drop, not from each retry: the
+    // server started reaping when the last viewer left, and every attempt
+    // since has been inside that same countdown.
+    if (slot.reconnectUntil === null) {
+      slot.reconnectUntil = slot.idleTimeoutMs === 0 ? Infinity : Date.now() + slot.idleTimeoutMs;
+    }
+    scheduleReconnect(slot);
   });
+}
+
+/**
+ * Waits out one backoff step and then asks the server what is left of this
+ * session, which decides whether to reattach, keep waiting, or start over.
+ *
+ * @param {SessionSlot} slot
+ * @returns {void}
+ */
+function scheduleReconnect(slot) {
+  const delay = backoffDelay(slot.attempt);
+  slot.attempt += 1;
+  setTimeout(async () => {
+    const live = await liveSessionIds();
+    const step = reconnectStep({
+      answered: live !== null,
+      sessionLive: live !== null && live.has(slot.id),
+      msLeft: (slot.reconnectUntil ?? 0) - Date.now(),
+    });
+    if (step === 'retry') {
+      scheduleReconnect(slot);
+      return;
+    }
+    if (step === 'fresh') {
+      startFreshSession(slot);
+      return;
+    }
+    connectSocket(slot);
+  }, delay);
+}
+
+/**
+ * The old session is not coming back, so the slot takes a new one and the URL
+ * is rewritten to match before anything reconnects to it.
+ *
+ * @param {SessionSlot} slot
+ * @returns {Promise<void>}
+ */
+async function startFreshSession(slot) {
+  /** @type {{ id: string, rows: number, cols: number }} */
+  let created;
+  try {
+    created = await createSession();
+  } catch (cause) {
+    showError('E5014', `The session could not be restarted: ${String(cause)}`);
+    scheduleReconnect(slot);
+    return;
+  }
+  slot.id = created.id;
+  slot.cols = created.cols;
+  slot.rows = created.rows + 1;
+  writeHash();
+  connectSocket(slot);
 }
 
 /**
@@ -847,6 +913,22 @@ function connectSocket(slot) {
  */
 function handleServerMessage(slot, message) {
   const onScreen = slot === activeSession();
+
+  // A hello is the first thing a working socket says — an attach that is
+  // refused opens and closes without one — so this is where a connection
+  // counts as good again.
+  if (message.type === 'hello') {
+    slot.idleTimeoutMs = message.idleTimeoutMs;
+    slot.attempt = 0;
+    if (slot.reconnectUntil !== null) {
+      // The server this reconnected to may be a newer one serving newer page
+      // code, so the page is reloaded rather than resumed. The hash still
+      // names the same sessions, so the reloaded page attaches right back.
+      slot.reconnectUntil = null;
+      location.reload();
+      return;
+    }
+  }
 
   if (message.type === 'hello' || message.type === 'screen') {
     slot.model = message.model;
@@ -1296,14 +1378,14 @@ if (storedHost !== null) settings.setHost(storedHost);
 
 const wanted = parseSessionHash(location.hash);
 if (wanted.some((id) => id !== null)) {
-  const response = await fetch('/api/sessions');
-  const body = await response.json();
-  const live = new Set((body.sessions ?? []).map((/** @type {{ id: string }} */ s) => s.id));
+  // A server that does not answer is not a server that has forgotten these
+  // sessions: the slots are kept either way, and their sockets do the waiting.
+  const live = await liveSessionIds();
   const gone = [];
   for (let index = 0; index < MAX_SESSIONS; index++) {
     const id = wanted[index];
     if (id == null) continue;
-    if (live.has(id)) sessions[index] = newSlot(id);
+    if (live === null || live.has(id)) sessions[index] = newSlot(id);
     else gone.push(index + 1);
   }
   if (gone.length > 0) showError('E3001', `Session ${gone.join(', ')} is gone; starting a new one.`);

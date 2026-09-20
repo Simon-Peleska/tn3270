@@ -38,7 +38,7 @@ Status as of 2026-09-20.
       against a real `s3270 -httpd`.
 - [x] **Frontend** — `public/index.html`, `app.js`, `keymap.js`, `style.css`:
       ghostty-web renderer, binary frames → `write()`, text frames → status and
-      in-place errors, capture-phase keymap, reconnect with backoff.
+      in-place errors, capture-phase keymap.
 - [x] **Model picker** — the grid size is chooseable from the toolbar. The list
       is b3270's own `models` indication; the change goes server-side via
       `Set(model, N)`, and the new geometry reaches every viewer as a `screen`
@@ -48,7 +48,13 @@ Status as of 2026-09-20.
       being cut off. Rows and columns belong to the model, so the font size is
       what scales; a `ResizeObserver` on the screen box refits on window
       resizes, model changes, and the error bar appearing.
-- [x] **Tests** — 204, all passing:
+- [x] **Reconnect** — a dropped page retries with exponential backoff and jitter
+      for as long as the server holds a viewer-less session (`sessions.idleTimeoutMs`,
+      sent in the `hello`), asking `/api/sessions` between attempts to tell a
+      server that is down from a session that was reaped. A reconnect that
+      reaches a `hello` reloads the page — same sessions, possibly newer page
+      code (`public/reconnect.js`).
+- [x] **Tests** — 213, all passing:
   - the `testRender.py` assertions ported onto our model (`render.test.js`)
   - the WASM round-trip: our VT → ghostty's own parser → grid equals the model
     (`roundtrip.test.js`)
@@ -59,6 +65,8 @@ Status as of 2026-09-20.
   - the whole stack over real HTTP and real WebSockets (`server.test.js`)
   - the REST proxy against a real `s3270 -httpd` as the oracle
     (`restproxy.test.js`)
+  - the reconnect arithmetic and idle reaping (`reconnect.test.js`,
+    `session.test.js`)
 - [x] **Type gate** — `tsc -p jsconfig.json` with `checkJs` and `strict`, clean.
       No `any` anywhere.
 - [x] **Docs** — `ARCHITECTURE.md`, `SPECIFICATION.md`, `GOTCHAS.md`, this file.
