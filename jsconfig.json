@@ -27,6 +27,7 @@
       "/recorder.js": ["public/recorder.js"],
       "/sessions.js": ["public/sessions.js"],
       "/reconnect.js": ["public/reconnect.js"],
+      "/fitfont.js": ["public/fitfont.js"],
       "/store.js": ["public/store.js"]
     }
   },

@@ -7,6 +7,7 @@ import { KeymapPage } from '/keymap-page.js';
 import { loadSettings, saveSettings, loadMacros, saveMacros, loadKeymap, saveKeymap } from '/store.js';
 import { MAX_SESSIONS, SessionPrefix, paneAreas, parseSessionHash, sessionHash, switcherText } from '/sessions.js';
 import { backoffDelay, reconnectStep } from '/reconnect.js';
+import { chooseFontSize } from '/fitfont.js';
 import { installBoxSelection } from '/box-select.js';
 import { installCursorGlyph } from '/cursor-glyph.js';
 
@@ -30,9 +31,6 @@ function element(id) {
 }
 
 const screenEl = element('screen');
-
-const MIN_FONT_SIZE = 6;
-const MAX_FONT_SIZE = 64;
 
 const RESET_LABEL = '[Reset]';
 const SETTINGS_LABEL = '[Settings]';
@@ -636,25 +634,20 @@ function fitFontSize(slot) {
 
   const box = paneBox(slot.pane);
   if (box === null) return;
-  const { width, height } = box;
 
-  // A cell measures ceil(fontSize x something), so this ratio lands on the
-  // answer or a pixel above it; starting one high and walking down is exact.
-  const scale = Math.min(
-    width / (renderer.charWidth * created.cols),
-    height / (renderer.charHeight * created.rows),
-  );
-  let size = Math.floor(created.options.fontSize * scale) + 1;
-  size = Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, size));
-  created.options.fontSize = size;
-
-  while (
-    size > MIN_FONT_SIZE &&
-    (renderer.charWidth * created.cols > width || renderer.charHeight * created.rows > height)
-  ) {
-    size -= 1;
-    created.options.fontSize = size;
-  }
+  // The only way to measure a cell is to set the size and ask, so the search
+  // leaves the terminal on whatever it probed last; the answer goes back on
+  // afterwards.
+  created.options.fontSize = chooseFontSize({
+    measure: (size) => {
+      created.options.fontSize = size;
+      return { width: renderer.charWidth, height: renderer.charHeight };
+    },
+    cols: created.cols,
+    rows: created.rows,
+    box,
+    start: created.options.fontSize,
+  });
 
   repaintCanvas(created);
 }

@@ -171,11 +171,13 @@ so the frontend holds no copy of the 3270 model table.
 **The pixels** are the browser's problem, and only the browser's. Rows and
 columns are fixed by the model and cannot be traded away for space, which leaves
 the font size as the single free variable: `public/app.js` measures the box the
-page gives the screen and picks the largest size whose cells still fit. Because a
-cell measures `ceil(fontSize × k)`, a linear estimate lands on the answer or one
-pixel above it, so an estimate plus a short walk downwards is exact and costs a
-step or two. A `ResizeObserver` on the screen box refits — coalesced into one
-animation frame, since dragging a window edge fires it continuously.
+page gives the screen and `public/fitfont.js` picks the largest size whose cells
+still fit. A cell measures `ceil(fontSize × k)`, and that rounding is why the
+search walks both ways: the ratio between the box and the cells in it now is a
+good guess but a quantised one, landing below the answer as readily as above it,
+so it walks down until the grid fits and then up while the next size still does.
+A `ResizeObserver` on the screen box refits — coalesced into one animation frame,
+since dragging a window edge fires it continuously.
 
 ## VT encoding: the details that bite
 
@@ -285,7 +287,7 @@ server/
   protocol.js   wire typedefs and the action allow-list
   restproxy.js  forwards /3270/ to the session's own b3270 httpd
 
-public/         index.html, app.js, keymap.js, reconnect.js, style.css
+public/         index.html, app.js, keymap.js, reconnect.js, fitfont.js, style.css
 test/           fakehost.js, ghostty.js, helpers.js, traces/, *.test.js
 ```
 

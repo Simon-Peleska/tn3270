@@ -47,14 +47,17 @@ Status as of 2026-09-20.
 - [x] **Auto-fit** — the terminal is drawn as large as the page allows without
       being cut off. Rows and columns belong to the model, so the font size is
       what scales; a `ResizeObserver` on the screen box refits on window
-      resizes, model changes, and the error bar appearing.
+      resizes, model changes, and the error bar appearing. The search
+      (`public/fitfont.js`) walks both ways from its estimate, because a cell is
+      a whole number of pixels and the estimate is as likely to land short as
+      over.
 - [x] **Reconnect** — a dropped page retries with exponential backoff and jitter
       for as long as the server holds a viewer-less session (`sessions.idleTimeoutMs`,
       sent in the `hello`), asking `/api/sessions` between attempts to tell a
       server that is down from a session that was reaped. A reconnect that
       reaches a `hello` reloads the page — same sessions, possibly newer page
       code (`public/reconnect.js`).
-- [x] **Tests** — 213, all passing:
+- [x] **Tests** — 217, all passing:
   - the `testRender.py` assertions ported onto our model (`render.test.js`)
   - the WASM round-trip: our VT → ghostty's own parser → grid equals the model
     (`roundtrip.test.js`)
@@ -67,6 +70,7 @@ Status as of 2026-09-20.
     (`restproxy.test.js`)
   - the reconnect arithmetic and idle reaping (`reconnect.test.js`,
     `session.test.js`)
+  - the font fit against a brute-force search over every size (`fitfont.test.js`)
 - [x] **Type gate** — `tsc -p jsconfig.json` with `checkJs` and `strict`, clean.
       No `any` anywhere.
 - [x] **Docs** — `ARCHITECTURE.md`, `SPECIFICATION.md`, `GOTCHAS.md`, this file.
