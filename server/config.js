@@ -8,18 +8,13 @@ import { AppError } from './errors.js';
  * @property {{ maxSessions: number, maxViewersPerSession: number, idleTimeoutMs: number, allowMultipleControllers: boolean }} sessions
  * @property {{ allowedHosts: string[], trustProxyHeaders: boolean }} security
  * @property {'debug' | 'info' | 'warn' | 'error'} logLevel
- * @property {string} logFile Where the log is kept as well as on stderr. Empty
- *   is stderr only.
- * @property {number} logMaxBytes What the log file may grow to before it rolls
- *   over to `<logFile>.1`.
+ * @property {string} logFile Empty is stderr only.
+ * @property {number} logMaxBytes Size at which the log rolls to `<logFile>.1`.
  */
 
 /**
- * JSONC in, JSON out. Comments and trailing commas are overwritten with spaces
- * rather than deleted, so the byte offsets in JSON.parse's error messages still
- * point at the right character. Scanned character by character, so `//` and
- * `/*` inside a string survive. A trailing comma is spotted from the closing
- * brace looking back, which is what lets a comment sit between the two.
+ * JSONC in, JSON out. Comments and trailing commas become spaces rather than
+ * being deleted, so JSON.parse's byte offsets still point at the right place.
  *
  * @param {string} text
  * @returns {string}
@@ -189,10 +184,8 @@ function strArray(obj, key, name, fallback) {
 }
 
 /**
- * Any b3270 resource at all, which is how every setting the emulator has is
- * reachable without this project knowing one of their names. Bare (`oversize`)
- * is qualified as `b3270.oversize`; written out in full (`*oversize`) it is
- * passed as given, for the resources that need a different qualifier.
+ * A bare name (`oversize`) is qualified as `b3270.oversize`; one written out in
+ * full (`*oversize`) is passed to the emulator as given.
  *
  * @param {Record<string, unknown>} obj
  * @param {string} key
@@ -221,7 +214,6 @@ function resources(obj, key, name) {
 }
 
 /**
- * Validate a parsed config, filling in defaults for anything absent.
  * @param {unknown} raw
  * @returns {Config}
  */

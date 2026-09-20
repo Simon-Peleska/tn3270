@@ -3,9 +3,8 @@ import { AppError } from './errors.js';
 export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 
 /**
- * The WebSocket wire format: screen output as **binary** frames of VT bytes,
- * control traffic as **text** frames of JSON. The frame type alone tells them
- * apart, so neither needs an envelope.
+ * Wire format: VT bytes in binary frames, JSON control traffic in text frames.
+ * The frame type tells them apart, so neither needs an envelope.
  *
  * @typedef {{ type: 'action', action: string, args?: string[] }} ActionMessage
  * @typedef {{ type: 'text', value: string }} TextMessage
@@ -19,12 +18,8 @@ export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
  * @typedef {{ type: 'copyField' }} CopyFieldMessage
  * @typedef {{ type: 'fieldColor', color: string | null }} FieldColorMessage
  * @typedef {{ type: 'sharing', allowView: boolean, allowEdit: boolean }} SharingMessage
- *   The controller's own call: allowView lets a second viewer attach at all,
- *   allowEdit lets one who has typed.
  * @typedef {{ type: 'recorder', action: 'start' | 'stop' }} RecorderMessage
- * @typedef {{ type: 'hints' }} HintsRequestMessage Ctrl-B's hint mode, asking
- *   which letter jumps to which field — answered synchronously from the field
- *   map already cached for tinting and Backspace, no b3270 round trip needed.
+ * @typedef {{ type: 'hints' }} HintsRequestMessage
  * @typedef {ActionMessage | TextMessage | PasteMessage | ConnectMessage | DisconnectMessage | ModelMessage | OversizeMessage | RefreshMessage | HostColorsMessage | CopyFieldMessage | FieldColorMessage | SharingMessage | RecorderMessage | HintsRequestMessage} ClientMessage
  *
  * @typedef {object} HelloMessage
@@ -35,18 +30,14 @@ export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
  * @property {number} model
  * @property {import('./b3270.js').ModelInfo[]} models
  * @property {string} oversize `<cols>x<rows>`, or '' for the model's own size
- * @property {boolean} hostLocked The host comes from the config; the page hides it.
+ * @property {boolean} hostLocked
  * @property {'controller' | 'observer'} role
  * @property {number} viewers
- * @property {boolean} allowSharing Whether a second viewer may attach at all.
- * @property {boolean} allowSharedEditing Whether a viewer who is not the
- *   controller may still type.
- * @property {number} idleTimeoutMs How long the server keeps this session alive
- *   once its last viewer is gone, so a page that drops knows how long it is
- *   worth reconnecting for. 0 means the session is never reaped.
+ * @property {boolean} allowSharing
+ * @property {boolean} allowSharedEditing
+ * @property {number} idleTimeoutMs How long a viewerless session survives; 0 never reaps.
  *
- * Sent whenever the grid changes size, always immediately before the repaint
- * that uses it: the WebSocket keeps that order, so no viewer ever writes
+ * Always sent immediately before the repaint that uses it, so no viewer writes
  * new-sized bytes into an old-sized terminal.
  *
  * @typedef {object} ScreenMessage
@@ -59,10 +50,8 @@ export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
  * @typedef {object} StatusMessage
  * @property {'status'} type
  * @property {string} connection b3270's own word for it
- * @property {boolean} connected what that word means — decided here, so no
- *   client has to keep its own list of which states count as connected
- * @property {boolean} touched whether input has ever been aimed at this
- *   session, by any viewer
+ * @property {boolean} connected what that word means
+ * @property {boolean} touched whether any viewer has ever aimed input at this session
  * @property {string | null} host
  * @property {boolean} locked
  * @property {boolean} insert
@@ -76,32 +65,19 @@ export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
  * @property {string} code
  * @property {string} message
  *
- * Answers a `copyField` request. A refused request (no field under the cursor,
- * or a protected one) sends nothing and leaves the clipboard alone.
- *
  * @typedef {object} FieldContentMessage
  * @property {'fieldContent'} type
  * @property {string} text
  *
- * One step of a recording in progress, sent to every viewer the moment it
- * happens so a `RecorderPage` can build up its export without polling.
- *
  * @typedef {object} RecorderStep
- * @property {string[]} screen The screen, one plain-text line per row, as it
- *   stood right before this step was applied.
- * @property {string} [action] A b3270 action name — omitted for a password
- *   marker, which carries no action of its own.
+ * @property {string[]} screen one plain-text line per row, as of just before this step
+ * @property {string} [action] omitted for a password marker
  * @property {string[]} [args]
- * @property {true} [password] A whole run of keystrokes into a password field,
- *   collapsed to this one marker so none of them are ever recorded.
+ * @property {true} [password] a whole run of password keystrokes, collapsed so none are recorded
  *
  * @typedef {object} RecorderStepMessage
  * @property {'recorderStep'} type
  * @property {RecorderStep} step
- *
- * Answers a `hints` request: one letter per editable field, in screen order.
- * A screen with no fields at all — or none of them free letters ran out
- * before reaching — sends an empty list, not an error.
  *
  * @typedef {object} HintsMessage
  * @property {'hints'} type
@@ -111,10 +87,8 @@ export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
  */
 
 /**
- * b3270 accepts far more actions than these, including ones that read files and
- * run programs, so this is an allow-list and not a pass-through. `BackNewline`
- * is the one name b3270 itself does not know: the session turns it into a
- * cursor move of its own.
+ * Allow-list: b3270 also accepts actions that read files and run programs.
+ * `BackNewline` is ours alone; the session turns it into a cursor move.
  *
  * @type {ReadonlySet<string>}
  */
@@ -127,9 +101,6 @@ const ALLOWED_ACTIONS = new Set([
 ]);
 
 /**
- * Parse a text frame from a browser, rejecting anything unrecognised with a
- * stable code rather than forwarding it to b3270.
- *
  * @param {string} raw
  * @returns {ClientMessage}
  */
@@ -169,8 +140,7 @@ export function parseClientMessage(raw) {
     return { type: 'text', value };
   }
 
-  // b3270 types a paste one character at a time, and a model 5 screenful is
-  // 3564 characters; a few of those over is a mistake, not a paste.
+  // b3270 types a paste one character at a time; a model 5 screenful is 3564 characters.
   if (type === 'paste') {
     const text = message['text'];
     if (typeof text !== 'string') throw new AppError('E4002', 'paste.text must be a string');
@@ -180,8 +150,7 @@ export function parseClientMessage(raw) {
 
   if (type === 'connect') {
     const host = message['host'];
-    // A locked host never reaches the browser, so "connect" without one means
-    // the host the session already knows.
+    // A locked host never reaches the browser, so no host means the one the session knows.
     if (host === undefined || host === null) return { type: 'connect', host: null };
     if (typeof host !== 'string' || host === '') {
       throw new AppError('E4002', 'connect.host must be a non-empty string');
@@ -197,8 +166,7 @@ export function parseClientMessage(raw) {
     return { type: 'hostColors', enabled };
   }
 
-  // Echoed back into VT bytes every viewer of this session may receive, so the
-  // shape is checked here rather than trusted.
+  // Echoed into VT bytes every other viewer receives, so the shape is checked, not trusted.
   if (type === 'fieldColor') {
     const color = message['color'];
     if (color === null || color === undefined) return { type: 'fieldColor', color: null };
@@ -208,7 +176,6 @@ export function parseClientMessage(raw) {
     return { type: 'fieldColor', color };
   }
 
-  // The settings page draws over the terminal and needs the host screen back.
   if (type === 'refresh') return { type: 'refresh' };
 
   if (type === 'copyField') return { type: 'copyField' };
@@ -240,8 +207,7 @@ export function parseClientMessage(raw) {
     return { type: 'model', model };
   }
 
-  // b3270 checks the size against the model itself. What it cannot check is a
-  // screen it has no buffer for: 16383 cells is the limit in its own ctlr.c.
+  // b3270 checks the size against the model but not the buffer: 16383 cells is its ctlr.c limit.
   if (type === 'oversize') {
     const value = message['value'];
     if (typeof value !== 'string') throw new AppError('E4002', 'oversize.value must be a string');
@@ -257,10 +223,7 @@ export function parseClientMessage(raw) {
 }
 
 /**
- * An empty list is open, for trusted networks. An entry may omit the port to
- * allow any port on that host.
- *
- * @param {string} host as given by the client, "name" or "name:port"
+ * @param {string} host "name" or "name:port"
  * @param {string[]} allowed
  * @returns {boolean}
  */

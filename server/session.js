@@ -12,38 +12,22 @@ import { reserveRestEndpoint } from './restproxy.js';
 import { logger } from './log.js';
 
 /**
- * Anything that can be sent screen bytes and control messages. Two methods, so
- * a test can attach a plain collector instead of a real WebSocket.
- *
  * @typedef {object} Viewer
  * @property {string} id
  * @property {'controller' | 'observer'} role
- * @property {boolean} hostColors Off paints every cell in this viewer's own
- *   theme instead of the mainframe's colours. Personal: neither the host nor
- *   the other viewers see it.
- * @property {string | null} fieldColor `#rrggbb` tinting the fields this viewer
- *   may type into, or null. Personal in the same way, and comes from its theme.
- * @property {string} [ip] Where this viewer is connected from, for the log. The
- *   browser has one; a viewer a test makes up need not.
- * @property {string} [user] Who is behind it, when something in front of this
- *   server has authenticated them. Empty until something does.
+ * @property {boolean} hostColors Per-viewer, not shared with host or others.
+ * @property {string | null} fieldColor `#rrggbb` tint for editable fields.
+ * @property {string} [ip]
+ * @property {string} [user]
  * @property {(bytes: string) => void} sendScreen
  * @property {(message: import('./protocol.js').ServerMessage) => void} sendMessage
  */
 
-/**
- * One host session: a b3270 process, the authoritative screen, and the viewers
- * watching it. It outlives them all — a reload, a dropped connection or a
- * second person on the same URL are attach and detach, and never disturb the
- * host connection.
- */
 export class Session {
   /**
    * @param {import('./config.js').Config} config
-   * @param {import('./restproxy.js').RestEndpoint | null} [rest] where this
-   *   session's own b3270 serves the s3270 REST interface, for the proxy to
-   *   forward to. Null leaves the emulator without an httpd at all, which only
-   *   tests do, to skip the port reservation they have no use for.
+   * @param {import('./restproxy.js').RestEndpoint | null} [rest] null leaves
+   *   b3270 without an httpd, which only tests want.
    * @param {string} [id]
    */
   constructor(config, rest = null, id = randomUUID()) {
@@ -59,28 +43,22 @@ export class Session {
     this.oia = new OiaModel();
     /** @type {number} b3270 confirms this in screen-mode. */
     this.model = config.b3270.model;
-    /** @type {import('./b3270.js').ModelInfo[]} The models this b3270 offers. */
+    /** @type {import('./b3270.js').ModelInfo[]} */
     this.models = [];
     /** @type {Set<Viewer>} */
     this.viewers = new Set();
 
-    /** @type {string | null} The host as typed, kept for reconnecting. */
+    /** @type {string | null} */
     this.lastHost = null;
-    /** @type {boolean} Off refuses every viewer past the first: the controller's
-     * own reconnect always gets back in, nobody else does. */
+    /** @type {boolean} */
     this.allowSharing = true;
-    /** @type {boolean} Whether a second and later viewer may type, not just
-     * watch. Defaults from the config, and from then on is this session's own
-     * setting, changed only by its controller. */
+    /** @type {boolean} */
     this.allowSharedEditing = config.sessions.allowMultipleControllers;
-    /** @type {boolean} Whether input has ever been aimed at this session. Set
-     * here rather than in a browser because any viewer's typing counts, and
-     * never cleared: a session the operator has used stays used. */
+    /** @type {boolean} Any viewer's input sets this, and it is never cleared. */
     this.touched = false;
     /** @type {number | null} A model waiting for the connection to go away. */
     this.pendingModel = null;
-    /** @type {string} `<cols>x<rows>`, or '' for the model's own size. b3270
-     * takes it as a resource, which the config may write bare or qualified. */
+    /** @type {string} `<cols>x<rows>`, or '' for the model's own size. */
     this.oversize = config.b3270.settings['oversize']
       ?? config.b3270.settings['b3270.oversize']
       ?? config.b3270.settings['*oversize']
@@ -100,26 +78,23 @@ export class Session {
     this.closed = false;
     /** @type {NodeJS.Timeout | null} */
     this.idleTimer = null;
-    /** @type {(() => void) | null} Called when the session tears itself down. */
+    /** @type {(() => void) | null} */
     this.onClosed = null;
-    /** @type {Map<string, Viewer>} `copyField` requests waiting on a
-     * `ReadBuffer` result, by the r-tag `runActions` handed back. */
+    /** @type {Map<string, Viewer>} `copyField` requests by r-tag. */
     this.pendingFieldReads = new Map();
     /** @type {boolean} The host redrew since the field map was read. */
     this.fieldsStale = false;
     /** @type {string | null} The r-tag of the field-map read in flight. */
     this.fieldReadTag = null;
-    /** @type {boolean} Whether the cursor is presently in a non-display
-     * (password) field — kept current so typing into one is never recorded. */
+    /** @type {boolean} Cursor is in a non-display field; never record typing there. */
     this.passwordField = false;
     /** @type {{ steps: import('./protocol.js').RecorderStep[] } | null} */
     this.recording = null;
 
     /** @type {() => void} */
     let announce = () => {};
-    /** @type {Promise<void>} b3270 reports its real geometry and model list a
-     * few milliseconds after it is spawned; describing the session to a browser
-     * before that hands out a placeholder 24x80 and an empty model picker. */
+    /** @type {Promise<void>} b3270 reports its geometry and model list a few ms
+     * after spawn; describing the session earlier hands out a placeholder 24x80. */
     this.ready = new Promise((resolve) => {
       announce = resolve;
     });
@@ -169,9 +144,7 @@ export class Session {
   }
 
   /**
-   * The model is negotiated when the connection is made, so b3270 refuses to
-   * change it while one is open. Drop, set, reopen — the restart the browser
-   * warns about before asking for this.
+   * b3270 refuses to change the model while connected, so drop, set, reopen.
    *
    * @param {number} model
    * @returns {void}
@@ -191,9 +164,8 @@ export class Session {
   }
 
   /**
-   * A screen bigger than the model's own, which is what makes b3270 negotiate
-   * as IBM-DYNAMIC. Settled when the connection is made, like the model, so it
-   * changes the same way.
+   * An oversize is what makes b3270 negotiate as IBM-DYNAMIC; like the model,
+   * it only changes while disconnected.
    *
    * @param {string} value `<cols>x<rows>`, or '' for the model's own size
    * @returns {void}
@@ -213,14 +185,9 @@ export class Session {
   }
 
   /**
-   * The one action that puts b3270 on a model at the size asked for. They are a
-   * single setting to the emulator — an oversize is only legal against the model
-   * it was measured for — so both always go in one `Set()`, which reconciles
-   * them before applying either.
-   *
-   * Turning the oversize off asks for the model's own size rather than nothing:
-   * b3270 4.5 clears the resource but forgets to resize the screen (Common/
-   * model.c only calls `set_rows_cols()` for a non-empty oversize).
+   * Model and oversize go in one `Set()`: an oversize is only legal against the
+   * model it was measured for. Clearing it asks for the model's own size because
+   * b3270 4.5 drops the resource without resizing the screen.
    *
    * @param {number} model
    * @returns {Array<{ action: string, args?: string[] }>}
@@ -233,7 +200,6 @@ export class Session {
 
     let oversize = this.oversize;
     if (!fits) {
-      // A screen the new model has outgrown is no screen size at all.
       oversize = this.b3270Oversize === '' || info === undefined ? '' : `${info.columns}x${info.rows}`;
       this.oversize = '';
     }
@@ -261,9 +227,7 @@ export class Session {
       return;
     }
     if (kind === 'erase') {
-      // A host that never writes to the alternate screen only ever uses the
-      // model's default size, reported here rather than in a screen-mode; the
-      // browser needs it too, or it shows the full model with dead space in it.
+      // Erase carries the size for hosts that never use the alternate screen.
       const before = this.screenSize();
       this.screen.applyErase(/** @type {import('./b3270.js').EraseIndication} */ (body));
       this.announceResize(before);
@@ -282,7 +246,6 @@ export class Session {
       return;
     }
     if (kind === 'models') {
-      // The browser's picker is the emulator's own answer, not a second copy.
       if (Array.isArray(body)) {
         this.models = /** @type {import('./b3270.js').ModelInfo[]} */ (body);
       }
@@ -291,8 +254,7 @@ export class Session {
     if (kind === 'oia') {
       const wasInsert = this.oia.insert;
       this.oia.applyOia(/** @type {import('./b3270.js').OiaIndication} */ (body));
-      // The cursor shape is the only sign of insert mode, so it gets its own
-      // push rather than waiting for a connection-state change.
+      // Insert mode shows only as a cursor shape, so it needs its own push.
       if (this.oia.insert !== wasInsert) this.broadcastStatus();
       this.scheduleFlush();
       return;
@@ -363,8 +325,7 @@ export class Session {
   }
 
   /**
-   * Indications arrive in bursts; one frame per burst keeps the wire quiet and
-   * means no viewer ever sees a half-applied screen.
+   * One frame per burst of indications, so no viewer sees a half-applied screen.
    * @returns {void}
    */
   scheduleFlush() {
@@ -380,11 +341,8 @@ export class Session {
   flush() {
     if (this.closed) return;
 
-    // b3270's screen indications carry the character, its colour and its
-    // highlighting, but not where the fields are, so that is asked for
-    // separately — one read at a time, and the next flush picks up the rest.
-    // Every viewer needs this now, not just one tinting fields: it is also
-    // how Backspace knows whether Left would land on a protected cell.
+    // Screen indications carry no field boundaries, so the field map is a
+    // separate ReadBuffer, one in flight at a time.
     if (this.fieldsStale && this.fieldReadTag === null) {
       this.fieldsStale = false;
       this.fieldReadTag = this.b3270.runActions([{ action: 'ReadBuffer', args: ['Ascii'] }]);
@@ -397,8 +355,6 @@ export class Session {
     const dirtyRows = this.screen.takeDirtyRows();
     if (dirtyRows.length === 0 && !oiaChanged) return;
 
-    // Encoded once per combination of display preferences in use, not once per
-    // viewer: two browsers on the same theme share one.
     /** @type {Map<string, string>} */
     const encoded = new Map();
     for (const viewer of this.viewers) {
@@ -412,12 +368,12 @@ export class Session {
     }
   }
 
-  /** @returns {string} `<rows>x<cols>`, for spotting a resize. */
+  /** @returns {string} `<rows>x<cols>` */
   screenSize() {
     return `${this.screen.rows}x${this.screen.cols}`;
   }
 
-  /** @returns {string[]} The current screen, one plain-text line per row. */
+  /** @returns {string[]} one plain-text line per row */
   screenLines() {
     const lines = [];
     for (let row = 0; row < this.screen.rows; row++) lines.push(this.screen.rowText(row));
@@ -445,8 +401,7 @@ export class Session {
   }
 
   /**
-   * A whole run of keystrokes typed into a password field collapses into this
-   * one marker, so the recording never carries what was typed there.
+   * One marker per run, so a recording never carries what was typed.
    * @returns {void}
    */
   recordPassword() {
@@ -457,7 +412,7 @@ export class Session {
   }
 
   /**
-   * @param {boolean[]} hidden row-major, from fieldMap()
+   * @param {boolean[]} hidden row-major
    * @returns {void}
    */
   updatePasswordField(hidden) {
@@ -466,7 +421,7 @@ export class Session {
   }
 
   /**
-   * @param {string} before what screenSize() said before the indication
+   * @param {string} before
    * @returns {void}
    */
   announceResize(before) {
@@ -476,7 +431,7 @@ export class Session {
     this.repaintAll();
   }
 
-  /** @returns {void} Everyone gets a complete picture; there is no delta. */
+  /** @returns {void} */
   repaintAll() {
     this.oiaText = this.oia.render(this.screen.cols, this.screen.cursor);
     this.screen.takeDirtyRows();
@@ -487,7 +442,7 @@ export class Session {
 
   /**
    * @param {Viewer} viewer
-   * @returns {void} One viewer gets a complete picture; the others see nothing.
+   * @returns {void}
    */
   repaint(viewer) {
     this.oiaText = this.oia.render(this.screen.cols, this.screen.cursor);
@@ -535,11 +490,9 @@ export class Session {
       idleTimeoutMs: this.config.sessions.idleTimeoutMs,
     });
 
-    // The whole point of holding the screen here: a viewer joining an hour late
-    // is immediately correct.
     this.repaint(viewer);
     this.broadcastStatus();
-    // Nobody was reading the field map while there were no viewers wanting it.
+    // No field map was read while there were no viewers.
     this.fieldsStale = true;
     this.scheduleFlush();
   }
@@ -580,22 +533,18 @@ export class Session {
    * @returns {void}
    */
   handleClientMessage(viewer, message) {
-    // Your own screen back changes nothing for anyone else, so an observer may
-    // ask — or closing the settings page would leave it stuck there.
+    // Observers may send these three: they change only this viewer's own picture.
     if (message.type === 'refresh') {
       this.repaint(viewer);
       return;
     }
 
-    // Also this viewer's own preference, touching neither host nor the others.
     if (message.type === 'hostColors') {
       viewer.hostColors = message.enabled;
       this.repaint(viewer);
       return;
     }
 
-    // Likewise, and the first viewer to ask is what makes the field map worth
-    // reading at all.
     if (message.type === 'fieldColor') {
       viewer.fieldColor = message.color;
       this.fieldsStale = true;
@@ -613,9 +562,7 @@ export class Session {
       return;
     }
 
-    // Input, as opposed to connecting or changing a setting. The browsers are
-    // told the moment it first happens, because it is what stops them resizing
-    // this session out from under the operator.
+    // Browsers watch `touched` to stop resizing a session someone is using.
     if (!this.touched && (message.type === 'action' || message.type === 'text' || message.type === 'paste')) {
       this.touched = true;
       this.broadcastStatus();
@@ -623,22 +570,15 @@ export class Session {
 
     switch (message.type) {
       case 'action':
-        // A control key, never the field's own content, so it is always worth
-        // recording — including the Enter that submits a password field.
+        // Control keys carry no field content, so they are always safe to record.
         this.record(message.action, message.args ?? []);
-        // b3270's Backspace is a real 3270 keyboard's: a non-destructive move
-        // left. A PC keyboard expects a delete, which is these two actions —
-        // but Left doesn't know about fields, so at the start of one it lands
-        // on the attribute byte or the protected field before it, and Delete
-        // there locks the keyboard instead of refusing quietly. The field map
-        // (kept fresh for exactly this and for tinting) says whether there is
-        // room to delete into.
+        // b3270's Backspace only moves left, as real 3270 hardware does; a PC
+        // keyboard expects a delete, and the field map says if there is room.
         if (message.action === 'Backspace') {
           if (this.canBackspace()) this.b3270.runActions([{ action: 'Left' }, { action: 'Delete' }]);
           return;
         }
-        // Newline upwards, which b3270 has no action for at all — the field
-        // map already here answers it without a round trip.
+        // b3270 has no upward Newline; the cached field map answers it here.
         if (message.action === 'BackNewline') {
           const target = this.backNewlineTarget();
           this.b3270.runActions([{ action: 'MoveCursor1', args: [String(target.row + 1), String(target.col + 1)] }]);
@@ -665,11 +605,7 @@ export class Session {
           if (this.passwordField) this.recordPassword();
           else this.record('PasteString', [message.text]);
 
-          // A run that already reads what's pasted there is left alone and
-          // consumed from the input rather than typed into or skipped past,
-          // so the parts after it land in the fields meant for them. Split
-          // into one MoveCursor+PasteString pair per remaining run, sent as
-          // a single batch so nothing else can be typed in between them.
+          // Batched, so nothing else can be typed between the segments.
           const segments = pasteSegments(this.screen.cells, this.screen.fieldsFormatted, this.screen.cols, this.screen.cursor, message.text);
           const actions = segments.flatMap(({ row, col, text }) => [
             { action: 'MoveCursor1', args: [String(row + 1), String(col + 1)] },
@@ -680,8 +616,7 @@ export class Session {
         return;
       }
       case 'connect':
-        // A configured host never reaches the browser, which then asks to
-        // connect without naming one.
+        // A configured host never reaches the browser, so it asks without one.
         this.connect(message.host ?? this.lastHost ?? '');
         return;
       case 'disconnect':
@@ -706,8 +641,6 @@ export class Session {
       case 'sharing':
         this.allowSharing = message.allowView;
         this.allowSharedEditing = message.allowEdit;
-        // Granted or withdrawn for everyone already here, not just the next
-        // joiner: flipping the toggle takes effect immediately either way.
         for (const other of this.viewers) {
           if (other !== viewer) other.role = this.allowSharedEditing ? 'controller' : 'observer';
         }
@@ -720,12 +653,8 @@ export class Session {
   }
 
   /**
-   * Whether Backspace has an unprotected cell to its left to delete into. Left
-   * doesn't know about fields, so at the very start of one it would land on
-   * the attribute byte or the field before it, and Delete there locks the
-   * keyboard rather than refusing quietly — this is what stops that before it
-   * happens. An unformatted screen (no fields read yet, or none on it at all)
-   * has nothing to protect against, so it always says yes.
+   * Deleting onto a field attribute byte or a protected cell locks the keyboard,
+   * so Backspace checks the cell to its left first.
    *
    * @returns {boolean}
    */
@@ -738,15 +667,8 @@ export class Session {
   }
 
   /**
-   * Where Newline's mirror puts the cursor: the first typeable cell of the
-   * nearest row above the cursor's that has one, wrapping off the top of the
-   * screen back to the bottom, exactly as Newline wraps off the bottom. A row
-   * a field merely runs through counts, its column 0 being typeable — again
-   * what Newline does going the other way.
-   *
-   * A screen with no fields at all, or one whose field map has not been read
-   * yet, has no typeable cell to find: that falls back to the start of the row
-   * above, which is all Newline does on an unformatted screen either.
+   * Newline's mirror: first typeable cell of the nearest row above, wrapping
+   * past the top exactly as Newline wraps past the bottom.
    *
    * @returns {{ row: number, col: number }}
    */
@@ -762,16 +684,10 @@ export class Session {
   }
 
   /**
-   * Where a typed character should land instead of the cursor's own cell, if
-   * anywhere. A field's attribute byte sits right before it, and the cursor
-   * can rest there — typing onto it directly would lock the keyboard on a
-   * protected-cell error, when the operator plainly means to type into the
-   * field that starts right after it. Nudging over by one only in that exact
-   * case (cursor's own cell protected, the very next one not) leaves typing
-   * anywhere else exactly as it was.
+   * The cursor may rest on a field's attribute byte, where typing would lock
+   * the keyboard, so a character meant for the field after it moves over one.
    *
-   * @returns {{ row: number, col: number } | null} null when the cursor's
-   *   own cell is fine to type into as-is
+   * @returns {{ row: number, col: number } | null}
    */
   typingNudge() {
     if (!this.screen.fieldsFormatted) return null;
@@ -854,7 +770,6 @@ export class Session {
   }
 }
 
-/** Owns every live session and enforces the configured ceiling. */
 export class SessionRegistry {
   /** @param {import('./config.js').Config} config */
   constructor(config) {
@@ -865,7 +780,7 @@ export class SessionRegistry {
   }
 
   /**
-   * @param {{ ip: string, user: string }} [client] who asked for it, for the log
+   * @param {{ ip: string, user: string }} [client]
    * @returns {Promise<Session>}
    */
   async create(client = { ip: '', user: '' }) {

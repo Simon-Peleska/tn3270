@@ -9,8 +9,7 @@ import { FakeHost } from './fakehost.js';
 export function testConfig(overrides = {}) {
   return validateConfig({
     server: { host: '127.0.0.1', port: 8017 },
-    // The traces were recorded against a model 4 (43x80); see the `// rows 43`
-    // header in each .trc file.
+    // The traces were recorded against a model 4 (43x80).
     b3270: { path: 'b3270', model: 4 },
     sessions: { idleTimeoutMs: 0 },
     logLevel: 'error',
@@ -24,10 +23,8 @@ export function testConfig(overrides = {}) {
  */
 
 /**
- * A viewer that records everything sent to it, so tests can assert on exactly
- * what a browser would have received. `events` keeps the two kinds interleaved,
- * which is the only way to check that a resize reaches the browser before the
- * bytes that assume it.
+ * `events` interleaves both kinds, so a test can check a resize arrives before
+ * the bytes that assume it.
  *
  * @param {string} id
  * @returns {import('../server/session.js').Viewer & { screen: string[], messages: import('../server/protocol.js').ServerMessage[], events: ViewerEvent[] }}
@@ -58,9 +55,6 @@ export function collectingViewer(id) {
 }
 
 /**
- * Wait for a condition rather than for a duration, so the suite stays fast and
- * does not flake under load.
- *
  * @param {() => boolean} predicate
  * @param {string} message
  * @param {number} [timeoutMs]
@@ -75,12 +69,8 @@ export async function waitUntil(predicate, message, timeoutMs = 5000) {
 }
 
 /**
- * Wait until b3270 has processed everything it had queued.
- *
- * b3270's stdout is a single ordered stream, so once the run-result for an
- * action we submit comes back, every indication that preceded it has already
- * been applied to the model. That makes this exact rather than a guess at how
- * long the host takes.
+ * b3270's stdout is one ordered stream: once our own run-result comes back,
+ * every indication before it has been applied to the model.
  *
  * @param {import('../server/session.js').Session} session
  * @returns {Promise<void>}
@@ -104,9 +94,6 @@ export function settle(session) {
 }
 
 /**
- * Bring up a fake host, a real b3270 and a Session wired together, then play
- * the first screen. This is the integration fixture every screen test uses.
- *
  * @param {string} traceFile
  * @param {{ records?: number, config?: Record<string, unknown> }} [options]
  */
@@ -114,7 +101,6 @@ export async function startTracedSession(traceFile, options = {}) {
   const host = await FakeHost.listen(traceFile, 0);
   const session = new Session(testConfig(options.config));
 
-  // b3270 announces itself before it will accept anything.
   await session.ready;
 
   session.connect(`127.0.0.1:${host.port}`);

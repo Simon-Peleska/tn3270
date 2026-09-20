@@ -1,14 +1,5 @@
-/**
- * A code is an identity: once assigned to a site it never changes, so a code a
- * user reports leads back to one log line and one place in the source. Add at
- * the end of a block; never renumber.
- *
- * The blocks are subsystems, and a code belongs to the subsystem that decides
- * it is an error, not to the file that happens to throw:
- *
- * E1xxx config, E2xxx b3270, E3xxx session, E4xxx client messages,
- * E5xxx browser, E6xxx server transport, E7xxx s3270 REST proxy.
- */
+// A code is an identity: append only, never renumber, never reuse. E1xxx config,
+// E2xxx b3270, E3xxx session, E4xxx client, E5xxx browser, E6xxx transport, E7xxx REST.
 const ERRORS = Object.freeze({
   E1001: 'Config file could not be read',
   E1002: 'Config file is not valid JSONC',
@@ -42,8 +33,7 @@ const ERRORS = Object.freeze({
   E5004: 'Settings could not be saved to the browser database',
   E5005: 'Clipboard could not be read for a Shift+Insert paste',
   E5006: 'Another terminal session could not be opened',
-  // E5007 is spent: [Reset] used to refuse while fit to window was off. It
-  // rescales the text and repaints instead, which is worth doing in any mode.
+  // E5007 is spent.
   E5008: 'Macros could not be read from the browser database',
   E5009: 'Macros could not be saved to the browser database',
   E5010: 'A macro file could not be read',
@@ -59,19 +49,17 @@ const ERRORS = Object.freeze({
   E6005: 'Log file could not be opened',
   E6006: 'Log file could not be written or rolled over',
 
-  // E7001 is spent: it was the action-syntax error of a bridge that parsed
-  // action calls itself. b3270's httpd answers those now, in its own words.
+  // E7001 is spent.
   E7002: 'REST is not available for this session',
   E7003: 'REST request to b3270 failed',
 });
 
 /** @typedef {keyof typeof ERRORS} ErrorCode */
 
-/** An error that carries a stable code all the way to the UI. */
 export class AppError extends Error {
   /**
    * @param {ErrorCode} code
-   * @param {string} [detail] context for this occurrence
+   * @param {string} [detail]
    * @param {unknown} [cause]
    */
   constructor(code, detail, cause) {

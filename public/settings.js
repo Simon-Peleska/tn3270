@@ -1,18 +1,12 @@
-/**
- * The settings page, drawn as VT bytes into the terminal itself: there is
- * already a renderer and a keyboard aimed at it, and HTML would mean a second
- * focus model, a second set of bindings and a second thing to fit the window.
- */
+// The settings page, drawn as VT bytes into the terminal itself rather than HTML.
 
 export const ESC = '\x1b';
 
 /**
  * @typedef {object} Theme
  * @property {string} name
- * @property {Record<string, string>} colors ghostty's chrome colours and the
- *   sixteen ANSI slots, plus `field`: what a typeable field is tinted. Picked
- *   per theme rather than blended, and it has to stand out from both
- *   `background` and `black`. Ghostty ignores the extra key.
+ * @property {Record<string, string>} colors ghostty's chrome and ANSI slots,
+ *   plus `field`, the tint of a typeable field; ghostty ignores that extra key
  */
 
 /** @type {readonly Theme[]} */
@@ -27,19 +21,13 @@ export const THEMES = Object.freeze([
     black: '#000000', red: '#cc8400', green: '#cc8400', yellow: '#ffb000', blue: '#996300', magenta: '#cc8400', cyan: '#e69900', white: '#ffb000',
     brightBlack: '#7a5000', brightRed: '#ffb000', brightGreen: '#ffb000', brightYellow: '#ffb000', brightBlue: '#cc8400', brightMagenta: '#ffb000', brightCyan: '#ffb000', brightWhite: '#ffb000',
   } },
-  // IBM Host On-Demand's default: the saturated 3270 colour set on black, which
-  // is what most people mean by "what a 3270 looks like". Its blue really is
-  // this dark against the background — legible enough on the hardware it was
-  // chosen for, and left alone here rather than quietly corrected.
+  // IBM Host On-Demand's default; its blue really is this dark, left uncorrected.
   { name: 'Host On-Demand', colors: {
     background: '#000000', foreground: '#00ff00', cursor: '#00ff00', cursorAccent: '#000000', selectionBackground: '#ffffff', selectionForeground: '#000000', field: '#1c1c1c',
     black: '#000000', red: '#ff0000', green: '#00ff00', yellow: '#ffff00', blue: '#0000b3', magenta: '#c000ff', cyan: '#00ffff', white: '#ffffff',
     brightBlack: '#808080', brightRed: '#ff8000', brightGreen: '#80ff80', brightYellow: '#ffff80', brightBlue: '#0000ff', brightMagenta: '#ff00ff', brightCyan: '#80ffff', brightWhite: '#ffffff',
   } },
-  // The same emulator with its white background turned on, which darkens every
-  // colour to survive it and swaps the neutral pair: a field the host paints
-  // white is the readable one and a black one disappears into the page, exactly
-  // as they do the other way round above.
+  // The same emulator on white: black and white swap roles, as they do above.
   { name: 'Host On-Demand White', colors: {
     background: '#ffffff', foreground: '#000000', cursor: '#000000', cursorAccent: '#ffffff', selectionBackground: '#000000', selectionForeground: '#ffffff', field: '#e6e6e6',
     black: '#ffffff', red: '#cc0000', green: '#008000', yellow: '#8a7f00', blue: '#000099', magenta: '#7700cc', cyan: '#008080', white: '#000000',
@@ -50,8 +38,7 @@ export const THEMES = Object.freeze([
     black: '#000000', red: '#cd3131', green: '#0dbc79', yellow: '#e5e510', blue: '#2472c8', magenta: '#bc3fbc', cyan: '#11a8cd', white: '#e5e5e5',
     brightBlack: '#666666', brightRed: '#f14c4c', brightGreen: '#23d18b', brightYellow: '#f5f543', brightBlue: '#3b8eea', brightMagenta: '#d670d6', brightCyan: '#29b8db', brightWhite: '#ffffff',
   } },
-  // base02 is already this palette's black and base01 is far too bright for a
-  // field, so this field colour is a lift of base02 rather than a named shade.
+  // `field` is a lift of base02: base02 is already black here, base01 too bright.
   { name: 'Solarized Dark', colors: {
     background: '#002b36', foreground: '#93a1a1', cursor: '#93a1a1', cursorAccent: '#002b36', selectionBackground: '#93a1a1', selectionForeground: '#002b36', field: '#0f4a58',
     black: '#073642', red: '#dc322f', green: '#859900', yellow: '#b58900', blue: '#268bd2', magenta: '#d33682', cyan: '#2aa198', white: '#eee8d5',
@@ -62,8 +49,7 @@ export const THEMES = Object.freeze([
     black: '#1a1a1a', red: '#c0341d', green: '#4c7a1f', yellow: '#a86b00', blue: '#2050a0', magenta: '#8a3f8a', cyan: '#1a7a7a', white: '#d8d4c8',
     brightBlack: '#6b6b6b', brightRed: '#d8452a', brightGreen: '#5f9c2a', brightYellow: '#c98a1a', brightBlue: '#3a6fc4', brightMagenta: '#a854a8', brightCyan: '#2a9494', brightWhite: '#f5f2e8',
   } },
-  // The dark variants take Gruvbox's *bright* palette for the plain slots: a
-  // 3270 paints whole screens out of them and the muted set is too dim to read.
+  // Bright palette in the plain slots: the muted set is too dim for full screens.
   { name: 'Gruvbox Dark', colors: {
     background: '#282828', foreground: '#ebdbb2', cursor: '#ebdbb2', cursorAccent: '#282828', selectionBackground: '#ebdbb2', selectionForeground: '#282828', field: '#3c3836',
     black: '#282828', red: '#fb4934', green: '#b8bb26', yellow: '#fabd2f', blue: '#83a598', magenta: '#d3869b', cyan: '#8ec07c', white: '#ebdbb2',
@@ -112,8 +98,7 @@ export const THEMES = Object.freeze([
 ]);
 
 /**
- * The first three are vendored in `public/fonts/`; the rest resolve against
- * whatever the browser's machine has.
+ * The first three are vendored in `public/fonts/`; the rest are the machine's.
  * @type {readonly { name: string, family: string }[]}
  */
 export const FONTS = Object.freeze([
@@ -137,9 +122,6 @@ export function rgb(hex) {
 }
 
 /**
- * Blend two colours, so "a little brighter than the page" still means that on
- * a light theme, where brighter would be wrong.
- *
  * @param {string} from
  * @param {string} to
  * @param {number} amount 0 = from, 1 = to
@@ -163,10 +145,7 @@ export function at(row, col) {
 }
 
 /**
- * ghostty-web packs each theme colour into `0xRRGGBB` and reads 0 as "not set",
- * so pure black asks for the WASM terminal's own default instead — a grey, which
- * is what every cell the host left at the default colour then comes out as. One
- * bit off black is the same colour to look at and is not zero.
+ * ghostty-web reads 0x000000 as "not set" and falls back to grey.
  *
  * @param {Theme} theme
  * @returns {Record<string, string>}
@@ -181,8 +160,6 @@ export function terminalColors(theme) {
 }
 
 /**
- * The SGR sequence selecting one pair of true colours.
- *
  * @param {string} fg `#rrggbb`
  * @param {string} bg `#rrggbb`
  * @param {boolean} [bold]
@@ -191,8 +168,7 @@ export function terminalColors(theme) {
 export function paint(fg, bg, bold = false) {
   const [fr, fg2, fb] = rgb(fg);
   let [br, bg2, bb] = rgb(bg);
-  // The renderer skips a (0, 0, 0) cell fill, taking it for the cleared canvas,
-  // so a bar painted pure black would show the page through it.
+  // The renderer skips a (0, 0, 0) fill, taking it for the cleared canvas.
   if (br === 0 && bg2 === 0 && bb === 0) [br, bg2, bb] = [1, 1, 1];
   return `${ESC}[0${bold ? ';1' : ''};38;2;${fr};${fg2};${fb};48;2;${br};${bg2};${bb}m`;
 }
@@ -211,11 +187,7 @@ const FIELD_WIDTH = 26;
 const PANEL_WIDTH = 62;
 
 /**
- * The label/value list panel that macros.js and recorder.js both draw: a
- * title, a divider, one row per field with the selected row highlighted, and
- * a help line or two underneath. settings.js draws its own — it has a
- * per-row trailing hint and a variable-width label column that this shape
- * does not.
+ * The panel macros.js and recorder.js draw; settings.js draws its own.
  *
  * @param {object} args
  * @param {(bytes: string) => void} args.write
@@ -226,8 +198,7 @@ const PANEL_WIDTH = 62;
  * @param {number} args.selected
  * @param {number} args.labelWidth
  * @param {number} args.fieldWidth
- * @param {number} args.heightBase rows the panel needs beyond its fields, for
- *   vertical centering
+ * @param {number} args.heightBase rows the panel needs beyond its fields
  * @param {string[]} args.helpLines
  * @returns {void}
  */
@@ -268,18 +239,13 @@ export function drawListPanel({ write, geometry, theme, title, fields, selected,
   write(out.join(''));
 }
 
-// The font on screen floats to fill the window with the grid the host gave us,
-// so measuring at that size would only answer with the grid already there.
-// Asking at a size the operator picks is what makes the question mean
-// something: how much screen do I get at text this big.
+// The size "fit to window" measures at, not the font size on screen.
 const DEFAULT_FIT_FONT_SIZE = 16;
 const MIN_FIT_FONT_SIZE = 8;
 const MAX_FIT_FONT_SIZE = 32;
 
-// A screen that is not one of b3270's models: the model's own size with an
-// oversize on top, which is what makes b3270 negotiate as IBM-DYNAMIC. 62x160 is
-// the biggest an IBM host will bind, and it is offered next to the models
-// because it behaves like one — a size you ask for, with no window measured.
+// An oversize on top of the model is what makes b3270 negotiate IBM-DYNAMIC,
+// and 62x160 is the biggest screen an IBM host will bind.
 const DYNAMIC_ROWS = 62;
 const DYNAMIC_COLS = 160;
 const DYNAMIC_OVERSIZE = `${DYNAMIC_COLS}x${DYNAMIC_ROWS}`;
@@ -293,11 +259,10 @@ const DYNAMIC_OVERSIZE = `${DYNAMIC_COLS}x${DYNAMIC_ROWS}`;
  * @property {(model: number) => void} applyModel
  * @property {(value: string) => void} applyOversize `<cols>x<rows>`, or '' for the model's own size
  * @property {(fontSize: number) => { cols: number, rows: number } | null} windowFit
- *   the screen this session's pane would hold with text that many pixels tall
  * @property {(enabled: boolean) => void} applyHostColors
  * @property {(allowView: boolean, allowEdit: boolean) => void} applySharing
  * @property {(host: string | null) => void} connect
- * @property {() => void} restore called when the page closes, to get the host screen back
+ * @property {() => void} restore
  * @property {(settings: import('./store.js').StoredSettings) => void} persist
  */
 
@@ -309,7 +274,7 @@ export class SettingsPage {
     this.toggleKey = 'Space';
     /** @type {boolean} */
     this.open = false;
-    /** @type {number} Index into rows(), which is not a fixed list. */
+    /** @type {number} Index into rows(). */
     this.selected = 0;
     /** @type {number} */
     this.themeIndex = 0;
@@ -323,32 +288,25 @@ export class SettingsPage {
     this.oversize = '';
     /** @type {string} What the user has dialled up but not applied yet. */
     this.pendingOversize = '';
-    /** @type {number} The text size "fit to window" measures at; not the font
-     * size on screen, which floats with the window. */
+    /** @type {number} */
     this.fitFontSize = DEFAULT_FIT_FONT_SIZE;
     /** @type {import('../server/b3270.js').ModelInfo[]} */
     this.models = [];
     /** @type {boolean} */
     this.connected = false;
-    /** @type {boolean} Off drops host colour entirely, leaving the theme's two
-     * tones plus reverse video. */
+    /** @type {boolean} */
     this.hostColors = true;
     /** @type {string} */
     this.host = '';
-    /** @type {boolean} The host comes from the server's config: shown, not
-     * editable, and Enter reconnects to it directly. */
+    /** @type {boolean} Host comes from the server's config: not editable here. */
     this.hostLocked = false;
-    /** @type {'controller' | 'observer'} This session's server-assigned role,
-     * not a browser preference: only the controller decides who else gets in. */
+    /** @type {'controller' | 'observer'} Server-assigned, not a preference. */
     this.role = 'controller';
-    /** @type {boolean} Whether a second viewer may attach at all. */
+    /** @type {boolean} */
     this.allowSharing = true;
-    /** @type {boolean} Whether a viewer who is not the controller may type. */
+    /** @type {boolean} */
     this.allowSharedEditing = false;
-    /** @type {boolean} Ctrl-B's field hints: a letter over the first cell of
-     *  every editable field, typing it jumping the cursor straight there. A
-     *  purely local browser preference — the server is only ever asked for
-     *  hints, never told whether this is on — so no deps.applyX() goes with it. */
+    /** @type {boolean} Ctrl-B field hints: local only, so no deps.applyX(). */
     this.hints = false;
   }
 
@@ -358,9 +316,7 @@ export class SettingsPage {
   }
 
   /**
-   * Whether the screen size in force is one measured from the window, which is
-   * what makes refitting a pane the right thing to do. The model's own size and
-   * the dynamic screen are both sizes the operator asked for by name.
+   * Whether the size in force was measured from the window, not asked for by name.
    *
    * @returns {boolean}
    */
@@ -369,9 +325,7 @@ export class SettingsPage {
   }
 
   /**
-   * The rows of the page, top to bottom, as they are both drawn and driven.
-   * Two come and go, so they are built each time rather than counted off
-   * against fixed indexes.
+   * Built fresh each time: two rows come and go, so indexes are not fixed.
    *
    * @returns {{ key: string, label: string, value: string }[]}
    */
@@ -395,9 +349,7 @@ export class SettingsPage {
       label: 'Screen model',
       value: dynamic ? `Dynamic - ${DYNAMIC_ROWS}x${DYNAMIC_COLS}` : this.describeModel(this.pendingModel),
     });
-    // A size to ask for, not one that follows the window: the host is told it
-    // once, when the connection is made. The dynamic screen is already a size
-    // asked for, so there is nothing here to fit.
+    // The dynamic screen is already a size asked for, so there is nothing to fit.
     if (!dynamic) {
       rows.push({
         key: 'fit',
@@ -479,7 +431,7 @@ export class SettingsPage {
   }
 
   /**
-   * By name, so reordering the lists later cannot scramble an old choice.
+   * Matched by name, so reordering the lists cannot scramble an old choice.
    *
    * @param {Partial<import('./store.js').StoredSettings>} saved
    * @returns {void}
@@ -529,9 +481,7 @@ export class SettingsPage {
   }
 
   /**
-   * A measured fit as b3270 wants it written. Never smaller than the model —
-   * b3270 refuses an oversize below it and quietly hands back the model's own
-   * screen — and never more than the 16383 cells it has a buffer for.
+   * b3270 silently refuses an oversize below the model, and buffers 16383 cells.
    *
    * @param {{ cols: number, rows: number }} fit
    * @param {number} model
@@ -544,9 +494,7 @@ export class SettingsPage {
     let rows = Math.max(minRows, fit.rows);
     const cols = Math.max(minCols, Math.min(fit.cols, Math.floor(16383 / rows)));
 
-    // A pane too narrow for the model draws it smaller than the text size asked
-    // for, and smaller text is more rows; without them the screen would stop
-    // short of the bottom. The OIA row goes back in to be scaled and out again.
+    // A pane too narrow for the model shrinks the text, which buys more rows.
     if (cols > fit.cols) {
       rows = Math.round(((fit.rows + 1) * cols) / fit.cols) - 1;
       rows = Math.max(minRows, Math.min(rows, Math.floor(16383 / cols)));
@@ -554,7 +502,7 @@ export class SettingsPage {
     return `${cols}x${rows}`;
   }
 
-  /** @returns {string} the screen this pane would hold, as b3270 writes it */
+  /** @returns {string} */
   fitToWindow() {
     const fit = this.deps.windowFit(this.fitFontSize);
     if (fit === null) return '';
@@ -637,15 +585,13 @@ export class SettingsPage {
       this.close();
       return true;
     }
-    // Everything else is swallowed: the host must not see keystrokes aimed at a
-    // page it cannot see.
+    // Swallow the rest: the host must not see keys aimed at this page.
     return true;
   }
 
   /**
-   * Theme and font take effect as you scroll through them — the page is drawn
-   * in the terminal being restyled, so it is its own preview. The screen size
-   * costs a round trip to b3270 and a reconnection, so it waits for Enter.
+   * Theme and font preview live; the screen size costs a reconnection, so it
+   * waits for Enter.
    *
    * @param {number} step
    * @returns {void}
@@ -661,8 +607,7 @@ export class SettingsPage {
       this.deps.applyFont(this.font());
       this.save();
     } else if (key === 'model') {
-      // The dynamic screen is one more choice after the models, so this row is
-      // one longer than the model list and decides the oversize as well.
+      // The dynamic screen is one more choice after the models.
       const models = this.models.length > 0 ? this.models.map((info) => info.model) : [2, 3, 4, 5];
       const dynamic = this.pendingOversize === DYNAMIC_OVERSIZE;
       const current = dynamic ? models.length : models.indexOf(this.pendingModel);
@@ -677,8 +622,6 @@ export class SettingsPage {
       // Measured afresh: the window may have been resized since it was shown.
       this.pendingOversize = this.pendingOversize === '' ? this.fitToWindow() : '';
     } else if (key === 'fitSize') {
-      // Stops at both ends rather than wrapping, so holding an arrow down lands
-      // somewhere sensible.
       this.fitFontSize = Math.max(MIN_FIT_FONT_SIZE, Math.min(MAX_FIT_FONT_SIZE, this.fitFontSize + step));
       this.pendingOversize = this.fitToWindow();
       this.save();
@@ -691,8 +634,7 @@ export class SettingsPage {
       this.save();
     } else if (key === 'allowSharing') {
       this.allowSharing = !this.allowSharing;
-      // Turning sharing off takes shared editing with it — nothing left to
-      // share it with — and back on defaults to observing, not typing.
+      // Nothing left to share editing with once sharing is off.
       if (!this.allowSharing) this.allowSharedEditing = false;
       this.deps.applySharing(this.allowSharing, this.allowSharedEditing);
     } else if (key === 'allowSharedEditing') {
@@ -718,8 +660,6 @@ export class SettingsPage {
     const background = colors['background'] ?? '#000000';
     const foreground = colors['foreground'] ?? '#00ff00';
     const dim = mix(background, foreground, 0.55);
-    // Editable values sit on a brighter block, the way an unprotected field
-    // looks on a real 3270.
     const field = colors['field'] ?? mix(background, foreground, 0.12);
     const chosen = mix(field, foreground, 0.3);
     const warn = rgb(background)[0] > 128 ? '#a02c00' : '#ffcc00';

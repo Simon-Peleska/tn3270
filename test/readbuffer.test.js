@@ -87,8 +87,7 @@ test('rows b3270 did not return stay with whatever protection was in force', () 
 });
 
 test('a non-display field (the 0x0c intensity bits set) is marked hidden, an ordinary one is not', () => {
-  // c0=cd is protect=0, intensity=11 (non-display) — a password-style field.
-  // c0=c0 is protect=0, intensity=00 (ordinary) — a ordinary unprotected one.
+  // c0=cd is unprotected non-display (a password field); c0=c0 is an ordinary one.
   const lines = ['SF(c0=cd) 41 42 SF(c0=c0) 43 44'];
   assert.deepEqual(picture(fieldMap(lines, 1, 6).hidden, 6), ['.##...']);
 });

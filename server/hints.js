@@ -1,24 +1,17 @@
-/**
- * Ctrl-B's field hints: one keyboard letter per editable field, shown over its
- * first cell, so typing it jumps the cursor straight there. A field right
- * after a word like "name:" is given that word's own first letter, 'n', so
- * long as nothing earlier on the screen has already claimed it — the whole
- * point being that the letter you'd guess is usually the one that works.
- */
+// Ctrl-B's field hints: one letter per editable field, preferring the first
+// letter of the label in front of it.
 
 const LOWER = 'qwertzuiopasdfghjklyxcvbnm';
 
 /** @type {readonly string[]} lowercase first, then capitals for overflow. */
 const SEQUENCE = [...LOWER, ...LOWER.toUpperCase()];
 
-/** @type {ReadonlyMap<string, number>} a letter's place in {@link LOWER}. */
+/** @type {ReadonlyMap<string, number>} a letter's place in LOWER */
 const RANK = new Map([...LOWER].map((ch, index) => [ch, index]));
 
 /**
- * The word immediately before a field, on the same row — "name:  " and
- * "name:___" both give "name". Only protected text counts, and only back to
- * the previous field or the start of the row, so a field never borrows a
- * label that belongs to something else.
+ * The protected word just before a field on the same row: "name:___" gives
+ * "name". Never reaches past the previous field or the row start.
  *
  * @param {{ ch: string, editable: boolean }[]} cells row-major, length rows*cols
  * @param {number} cols
@@ -35,11 +28,7 @@ function fieldLabel(cells, cols, pos) {
 }
 
 /**
- * The order a field with this label tries its letters in: its own first
- * letter first, since that is the one an operator would guess, then the rest
- * of the label sorted by keyboard order — so if "name" loses 'n' to an
- * earlier field, it reaches for 'e' next rather than 'a', 'e' being the
- * earlier key.
+ * The label's own first letter, then its remaining letters in keyboard order.
  *
  * @param {string} label lowercase
  * @returns {string[]}
@@ -53,10 +42,8 @@ function labelCandidates(label) {
 }
 
 /**
- * Assigns one letter to every editable field. Labelled fields get first
- * chance at their own mnemonic, resolved among themselves in screen order;
- * whatever is left over — an unlabelled field, or one whose whole label was
- * already claimed — takes the next free letter in keyboard order instead.
+ * Labelled fields claim their mnemonic first, in screen order; the rest take
+ * the next free letter in keyboard order.
  *
  * @param {{ ch: string, editable: boolean }[]} cells row-major, length rows*cols
  * @param {number} cols

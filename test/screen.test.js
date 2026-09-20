@@ -4,11 +4,6 @@ import { ScreenModel } from '../server/screen.js';
 import { OiaModel } from '../server/oia.js';
 import { AppError } from '../server/errors.js';
 
-/**
- * The incremental-update semantics of the screen indication, pinned down. These
- * are the rules the whole rendering path rests on.
- */
-
 test('a text change writes characters and leaves the rest of the row alone', () => {
   const screen = new ScreenModel(24, 80);
   screen.takeDirtyRows();
@@ -137,8 +132,7 @@ test('the OIA leaves the browser its columns at the right, however full it is', 
   oia.applyOia({ field: 'insert', value: true });
   oia.applyOia({ field: 'typeahead', value: true });
 
-  // '[Reset] [Settings]' is 18 columns, painted flush right by public/app.js
-  // over a status line the server never writes into.
+  // app.js paints '[Reset] [Settings]' flush right, 18 columns the server must leave alone.
   const text = oia.render(80, { row: 23, col: 79, enabled: true });
   assert.equal(text.slice(-19), ' '.repeat(19), `the OIA wrote into the buttons: ${JSON.stringify(text)}`);
 });
@@ -150,6 +144,5 @@ test('the OIA reflects the connection state', () => {
   oia.applyConnection({ state: 'connected-tn3270e', host: 'mainframe:23' });
   assert.equal(oia.connected, true);
   assert.equal(oia.host, 'mainframe:23');
-  // Once connected the operator wants to see *which* host, not the state name.
   assert.ok(oia.render(80, { row: 0, col: 0, enabled: true }).startsWith('mainframe:23'));
 });

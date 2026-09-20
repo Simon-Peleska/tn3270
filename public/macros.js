@@ -1,8 +1,6 @@
 /**
- * The macros page: record a sequence of keystrokes, save it, play it back, and
- * trade it with other Host On-Demand users as XML. Drawn as VT bytes into the
- * terminal, exactly like settings.js, and for the same reason — there is
- * already a renderer and a keyboard aimed at it here.
+ * The macros page: record, play back and trade keystroke sequences as Host
+ * On-Demand XML. Drawn as VT bytes into the terminal like settings.js.
  */
 
 import { cycle, drawListPanel } from './settings.js';
@@ -26,19 +24,14 @@ function sanitizeFilename(name) {
  * @typedef {object} MacrosDeps
  * @property {(bytes: string) => void} write
  * @property {() => { cols: number, rows: number }} geometry
- * @property {() => import('./settings.js').Theme} theme drawn in the app's
- *   current theme, which this page does not otherwise know about
+ * @property {() => import('./settings.js').Theme} theme
  * @property {(message: import('../server/protocol.js').ClientMessage) => void} dispatch
- *   sends a step during playback, bypassing the recording tap in app.js's own
- *   `send()` so played-back keystrokes are never recorded into themselves
- * @property {() => Promise<void>} waitForUnlock resolves once the keyboard
- *   unlocks, so playback is paced by the host rather than by a timer
- * @property {() => void} restore called when the page closes, to get the host
- *   screen back
+ *   bypasses app.js's recording tap, so playback is never recorded into itself
+ * @property {() => Promise<void>} waitForUnlock paces playback by the host, not a timer
+ * @property {() => void} restore
  * @property {(macros: Macro[]) => void} persist
  * @property {(filename: string, content: string) => void} exportFile
- * @property {() => Promise<string[]>} importFiles the text of every XML file
- *   picked, or [] if the picker was cancelled
+ * @property {() => Promise<string[]>} importFiles empty when the picker was cancelled
  * @property {(code: string, message: string) => void} error
  */
 
@@ -46,7 +39,7 @@ export class MacrosPage {
   /** @param {MacrosDeps} deps */
   constructor(deps) {
     this.deps = deps;
-    /** @type {string} the Alt+key KeyboardEvent.code that toggles this page */
+    /** @type {string} the Alt+key code that toggles this page */
     this.toggleKey = 'KeyM';
     /** @type {boolean} */
     this.open = false;
@@ -58,8 +51,7 @@ export class MacrosPage {
     this.recording = null;
     /** @type {{ macro: Macro, active: boolean } | null} */
     this.playing = null;
-    /** @type {{ kind: 'save', steps: MacroStep[] } | { kind: 'rename', index: number } | null}
-     * a finished recording awaiting a name, or an existing macro being renamed */
+    /** @type {{ kind: 'save', steps: MacroStep[] } | { kind: 'rename', index: number } | null} */
     this.naming = null;
     /** @type {string} text being typed for this.naming */
     this.nameBuffer = '';
@@ -82,11 +74,6 @@ export class MacrosPage {
   }
 
   /**
-   * Called from app.js's `send()` for every message a real keystroke or paste
-   * produces, while a recording is running. Anything that is not typed text,
-   * pasted text, or a 3270 action (a host switch, a model change, a copy
-   * request...) is simply not a macro step and is ignored here.
-   *
    * @param {import('../server/protocol.js').ClientMessage} message
    * @returns {void}
    */
@@ -103,8 +90,7 @@ export class MacrosPage {
 
   /**
    * @param {string} name
-   * @param {number} [excluding] an index in this.macros to leave out of the
-   *   collision check, when the name belongs to the macro being renamed
+   * @param {number} [excluding] index left out of the collision check
    * @returns {string}
    */
   uniqueName(name, excluding = -1) {
@@ -226,8 +212,7 @@ export class MacrosPage {
   }
 
   /**
-   * The rows of the page, top to bottom. The first is always the transport
-   * control; one follows for every saved macro.
+   * Row 0 is the transport control; one row follows per saved macro.
    *
    * @returns {{ key: string, label: string, value: string }[]}
    */
@@ -258,8 +243,7 @@ export class MacrosPage {
 
   /**
    * @param {number} rowIndex
-   * @returns {number | null} the index into this.macros the row shows, or
-   *   null for the transport control row
+   * @returns {number | null} null for the transport control row
    */
   macroIndexAt(rowIndex) {
     if (rowIndex < 1) return null;
@@ -393,8 +377,7 @@ export class MacrosPage {
       this.importMacros();
       return true;
     }
-    // Everything else is swallowed: the host must not see keystrokes aimed at
-    // a page it cannot see.
+    // Swallow the rest: the host must not see keys aimed at this page.
     return true;
   }
 

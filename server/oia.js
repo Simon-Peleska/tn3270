@@ -1,11 +1,7 @@
-/**
- * The Operator Information Area: the status line a real 3270 draws below the
- * screen, and the only place a user can see *why* the keyboard is dead.
- */
+// The Operator Information Area: the status line below a 3270 screen.
 
 /**
- * b3270's `lock` values in the wording an operator expects. Anything else still
- * shows, as "X <value>".
+ * b3270's `lock` values in operator wording; anything else shows as "X <value>".
  * @type {Readonly<Record<string, string>>}
  */
 const LOCK_TEXT = Object.freeze({
@@ -25,8 +21,7 @@ const LOCK_TEXT = Object.freeze({
   'scrolled': 'X Scrolled',
 });
 
-/** Held clear at the right for the browser's own buttons, which are one column
- *  narrower together (BUTTONS in public/app.js) so a space is left. */
+// Held clear at the right for the browser's buttons (BUTTONS in public/app.js).
 const BUTTON_COLUMNS = 19;
 
 export class OiaModel {
@@ -83,14 +78,14 @@ export class OiaModel {
     return this.connectionState.startsWith('connected');
   }
 
-  /** @returns {boolean} Locked means input is pointless. */
+  /** @returns {boolean} */
   get keyboardLocked() {
     return this.lock !== '' && this.lock !== 'unlocked';
   }
 
   /**
-   * Connection left, lock state middle, cursor position right — inside the width
-   * the buttons leave over, so the two never overlap.
+   * Connection left, lock middle, cursor position right. The position is
+   * 1-based, as a real OIA shows it; the cursor is not.
    *
    * @param {number} cols
    * @param {import('./screen.js').Cursor} cursor
@@ -107,7 +102,6 @@ export class OiaModel {
     const middle = lock;
 
     let line = left.slice(0, width);
-    // Centre the lock message when there is room, otherwise just append it.
     const centreStart = Math.max(line.length + 2, Math.floor((width - middle.length) / 2));
     if (middle && centreStart + middle.length <= width - right.length - 2) {
       line = line.padEnd(centreStart, ' ') + middle;

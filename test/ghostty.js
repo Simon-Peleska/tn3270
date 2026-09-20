@@ -1,33 +1,25 @@
 /**
  * Loads ghostty-web's WASM VT parser in Node, with no DOM.
  *
- * This is what makes the round-trip test possible: our VT output is checked
- * against the very parser the browser will run, without needing a browser.
- *
  * @returns {Promise<import('ghostty-web').Ghostty>}
  */
 export async function loadGhostty() {
-  // The bundle is built for the browser and touches `self` while loading.
+  // The browser bundle touches `self` while loading.
   if (typeof globalThis.self === 'undefined') {
-    // @ts-expect-error deliberately installing a browser global for the bundle
+    // @ts-expect-error installing a browser global for the bundle
     globalThis.self = globalThis;
   }
-  // Resolved through package.json rather than as a subpath: the package's
-  // `exports` map does not expose dist/ directly.
+  // Via package.json: `exports` does not expose dist/ directly.
   const { Ghostty } = await import('ghostty-web');
   return Ghostty.load();
 }
 
 /**
- * Feed VT bytes to a fresh terminal and read the resulting grid back.
- *
  * @param {import('ghostty-web').Ghostty} ghostty
  * @param {number} cols
  * @param {number} rows
  * @param {string} bytes
- * @param {number[]} [palette] packed 0xRRGGBB, indices 0-15, as ghostty-web
- *   expects — lets a test control what each ANSI slot resolves to instead of
- *   depending on ghostty's built-in default.
+ * @param {number[]} [palette] packed 0xRRGGBB, indices 0-15
  * @returns {{ text: string[], cell: (row: number, col: number) => import('ghostty-web').GhosttyCell, cursor: { x: number, y: number } }}
  */
 export function render(ghostty, cols, rows, bytes, palette) {

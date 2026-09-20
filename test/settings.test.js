@@ -3,11 +3,6 @@ import assert from 'node:assert/strict';
 import { SettingsPage, THEMES, FONTS } from '../public/settings.js';
 
 /**
- * The settings page is drawn as VT into the terminal, so it holds no DOM and can
- * be driven here exactly as a keyboard would drive it.
- */
-
-/**
  * @param {{ key?: string, code?: string, altKey?: boolean, ctrlKey?: boolean, metaKey?: boolean }} init
  * @returns {KeyboardEvent}
  */
@@ -24,8 +19,7 @@ function key(init) {
 }
 
 /**
- * The browser measures its own window; here it is a window of a fixed pixel
- * size, with cells that grow with the text the way a monospace font's do.
+ * A fixed-pixel window whose cells grow with the text, as a monospace font's do.
  *
  * @param {number} width
  * @param {number} height
@@ -38,7 +32,7 @@ function windowOf(width, height) {
   });
 }
 
-/** @param {(fontSize: number) => { cols: number, rows: number } | null} [fit] what the window would hold */
+/** @param {(fontSize: number) => { cols: number, rows: number } | null} [fit] */
 function fixture(fit = () => ({ cols: 158, rows: 60 })) {
   const calls = {
     /** @type {string[]} */ written: [],
@@ -294,9 +288,8 @@ test('fit to window asks for the screen the browser measured, on Enter', () => {
 });
 
 test('fitting again turns it off, and the model is the floor', () => {
-  // b3270 refuses an oversize smaller than the model it is running, so a window
-  // that measured fewer columns than the model has to ask for the model's own —
-  // drawn in text small enough for them, which is rows the measurement missed.
+  // b3270 refuses an oversize below its model, so a narrow window asks for the
+  // model's own columns, in text small enough to hold more rows than it measured.
   const { page } = fixture(() => ({ cols: 40, rows: 12 }));
   page.setModel(5);
   page.connected = true;
@@ -350,9 +343,7 @@ test('the text size stops at both ends instead of wrapping round', () => {
 });
 
 test('a screen bigger than b3270 can hold is trimmed to fit its buffer', () => {
-  // 16383 cells is the whole 3270 buffer b3270 allocates; asking for more is
-  // refused outright, which would be a mystery from a page that just measured
-  // a very large window.
+  // 16383 cells is b3270's whole buffer; more is refused outright.
   const { page } = fixture(() => ({ cols: 400, rows: 120 }));
   page.connected = true;
   page.show();
@@ -366,28 +357,22 @@ test('a screen bigger than b3270 can hold is trimmed to fit its buffer', () => {
 });
 
 test('a pane too narrow for the model still asks for the model', () => {
-  // A session in a quarter of the page measures far fewer than 80 columns.
-  // b3270 refuses a screen below the model and hands back the model's own size
-  // without saying so, leaving a screen that no longer matches its pane.
+  // b3270 silently hands back the model's own size for anything below it.
   const { page } = fixture();
 
-  // 80 columns in the width that measured 38 means text a little over half the
-  // size asked for, so the pane holds about twice the rows it measured.
+  // 80 columns in a width that measured 38 halves the text, so the pane holds twice the rows.
   assert.equal(page.fitSize({ cols: 38, rows: 42 }, 2), '80x90');
   assert.equal(page.fitSize({ cols: 100, rows: 20 }, 5), '132x27');
 
-  // Nothing below the model, however little the pane can show.
   assert.equal(page.fitSize({ cols: 38, rows: 5 }, 2), '80x24');
 
-  // And the taller screen still has to live in b3270's buffer.
   const [cols, rows] = page.fitSize({ cols: 4, rows: 40 }, 2).split('x').map(Number);
   assert.equal(cols, 80);
   assert.ok((cols ?? 0) * (rows ?? 0) <= 16383, `80x${rows} does not fit the buffer`);
 });
 
 test('nothing the page draws runs off the right edge', () => {
-  // Autowrap is off, so a line wider than the screen is silently cut in half
-  // rather than wrapping — which is exactly how the size warning first shipped.
+  // Autowrap is off, so a line wider than the screen is silently cut, not wrapped.
   const { page, calls } = fixture();
   page.setModel(2);
   page.connected = true;
@@ -421,7 +406,6 @@ test('escape leaves the screen size exactly as it was', () => {
 
   assert.deepEqual(calls.models, []);
   assert.equal(page.open, false);
-  // Reopening must not still be holding the size the user walked away from.
   page.show();
   assert.equal(page.pendingModel, 2);
 });
@@ -489,9 +473,7 @@ test("every theme's field colour stands out against both backgrounds it is drawn
   for (const theme of THEMES) {
     const { field, background, black } = theme.colors;
     assert.ok(field !== undefined, `${theme.name} has no field colour`);
-    // This page draws the field blocks on `background`; the server paints the
-    // host's typeable fields over `black`, where a host's default background
-    // lands. Matching either one makes the field invisible on that screen.
+    // The page draws field blocks on `background`, the server over `black`.
     assert.notEqual(field, background, `${theme.name}'s field colour is its background`);
     assert.notEqual(field, black, `${theme.name}'s field colour is its ANSI black`);
   }

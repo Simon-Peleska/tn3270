@@ -5,9 +5,6 @@ import { mapKey, buildLookup, withDefaults, DEFAULT_BINDINGS } from '../public/k
 const lookup = buildLookup(DEFAULT_BINDINGS);
 
 /**
- * The map only ever reads a handful of fields off the event, so a plain object
- * is a faithful stand-in and the tests need no browser.
- *
  * @param {{ key?: string, code?: string, ctrlKey?: boolean, altKey?: boolean, metaKey?: boolean, shiftKey?: boolean, repeat?: boolean }} init
  * @returns {KeyboardEvent}
  */
@@ -37,17 +34,14 @@ test('holding the Enter key down does not machine-gun the host', () => {
 });
 
 test('holding down any other AID key is dropped the same way, but ordinary keys still repeat', () => {
-  // Attn, PF and PA all unlock the keyboard and ask the host for a fresh
-  // screen, exactly like Enter — a repeat of any of them is just as capable
-  // of leaving a host like TSO keyboard-locked on a blank screen.
+  // Attn, PF and PA are AIDs like Enter: a repeat can leave TSO locked on a blank screen.
   assert.equal(mapKey(key({ key: 'Escape', code: 'Escape', repeat: true }), lookup), null);
   assert.equal(mapKey(key({ key: 'F3', code: 'F3', repeat: true }), lookup), null);
   assert.equal(mapKey(key({ key: 'Insert', code: 'Insert', altKey: true, repeat: true }), lookup), null);
 
   assert.deepEqual(mapKey(key({ key: 'Escape', code: 'Escape' }), lookup), { kind: 'action', action: 'Attn', args: [] });
 
-  // Cursor movement and editing keys are not AIDs, so the OS's normal
-  // key-repeat behaviour must keep working for them.
+  // Movement and editing keys are not AIDs, so key repeat must keep working.
   assert.deepEqual(mapKey(key({ key: 'ArrowRight', code: 'ArrowRight', repeat: true }), lookup), {
     kind: 'action', action: 'Right', args: [],
   });
@@ -107,8 +101,7 @@ test('Shift-PageUp is PA3, plain PageUp is unbound', () => {
 
 test('a printable key is text and Alt is otherwise left to the page', () => {
   assert.deepEqual(mapKey(key({ key: 'x', code: 'KeyX' }), lookup), { kind: 'text', value: 'x' });
-  // Alt+Space opens the settings page; mapKey never sees it in practice, but
-  // it must still refuse it since nothing binds the space bar.
+  // Alt+Space opens the settings page, and nothing binds the space bar.
   assert.equal(mapKey(key({ key: ' ', code: 'Space', altKey: true }), lookup), null);
 });
 
@@ -118,10 +111,7 @@ test('a binding can be removed even with none left for its command', () => {
 });
 
 test('a keymap saved before a command existed still gets that command\'s default binding', () => {
-  // The bug BackNewline hit: a saved keymap is the whole map, so a command
-  // added to the app afterwards is simply missing from it, and the dialog used
-  // to take the saved map as-is — leaving the new key dead for anyone who had
-  // ever saved one.
+  // A saved keymap is the whole map, so a command added later is missing from it.
   const { BackNewline: _omitted, ...older } = DEFAULT_BINDINGS;
   const filled = buildLookup(withDefaults(older));
   assert.deepEqual(mapKey(key({ key: 'Enter', code: 'Enter', shiftKey: true }), filled), {
@@ -136,8 +126,7 @@ test('filling in defaults leaves a deliberate unbinding, and a key the operator 
   const unbound = buildLookup(withDefaults({ ...older, Attn: [] }));
   assert.equal(mapKey(key({ key: 'Escape', code: 'Escape' }), unbound), null);
 
-  // Shift-Enter already belongs to Clear here, so BackNewline's default does
-  // not get to take it back.
+  // Shift-Enter already belongs to Clear, so BackNewline's default cannot take it back.
   const rebound = buildLookup(withDefaults({
     ...older,
     Clear: [...DEFAULT_BINDINGS.Clear, { code: 'Enter', shift: true, ctrl: false, alt: false }],
@@ -152,9 +141,7 @@ test('an empty saved keymap is simply the defaults', () => {
 });
 
 test('rebinding a combo to a new command steals it from whatever had it, at the lookup level', () => {
-  // buildLookup itself has no opinion on this — it is the keymap page's job to
-  // remove a combo from its old command before adding it to a new one — but a
-  // lookup built from bindings where that already happened must reflect it.
+  // Removing a combo from its old command is the keymap page's job, not buildLookup's.
   const moved = buildLookup({ ...DEFAULT_BINDINGS, Attn: [], Clear: [...DEFAULT_BINDINGS.Clear, { code: 'Escape', shift: false, ctrl: false, alt: false }] });
   assert.deepEqual(mapKey(key({ key: 'Escape', code: 'Escape' }), moved), { kind: 'action', action: 'Clear', args: [] });
 });

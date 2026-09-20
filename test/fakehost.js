@@ -2,13 +2,8 @@ import { createServer } from 'node:net';
 import { readFileSync } from 'node:fs';
 
 /**
- * A fake TN3270 host that replays a recorded x3270 trace file, so tests and
- * manual runs need no mainframe. This is a JavaScript port of x3270's
- * Common/Test/playback.py.
- *
- * Trace format: lines of `< 0xADDR <hex>` are bytes the host sent. A 3270
- * record ends with the TELNET EOR sequence `ff ef`. Everything else (`//`
- * comments, `> ...` lines the emulator sent) is ignored.
+ * Replays a recorded x3270 trace; a port of x3270's Common/Test/playback.py.
+ * `< 0xADDR <hex>` lines are host bytes; a record ends with TELNET EOR `ff ef`.
  */
 
 const IAC_DO_TIMING_MARK = Buffer.from([0xff, 0xfd, 0x06]);
@@ -91,9 +86,6 @@ export class FakeHost {
   }
 
   /**
-   * Send `count` complete 3270 records, then a timing mark so the caller knows
-   * the emulator has finished processing them.
-   *
    * @param {number} [count]
    * @param {{ timingMark?: boolean }} [options]
    * @returns {Promise<void>}
@@ -115,8 +107,7 @@ export class FakeHost {
   }
 
   /**
-   * A timing mark round trip is the only reliable way to know the emulator has
-   * consumed everything sent so far: it must answer IAC WONT TIMING-MARK.
+   * The only reliable way to know the emulator consumed everything: it must answer WONT.
    * @returns {Promise<void>}
    */
   async sendTimingMark() {
@@ -161,20 +152,15 @@ export class FakeHost {
   }
 }
 
-// Also runnable directly, for the manual end-to-end walkthrough:
-//   npm run fakehost
+// Also runnable directly: npm run fakehost
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/^.*\//, ''))) {
   const [, , traceFile, portArg] = process.argv;
   if (traceFile) {
     const host = await FakeHost.listen(traceFile, portArg ? Number(portArg) : 4001);
     process.stdout.write(`fake host replaying ${traceFile} on 127.0.0.1:${host.port}\n`);
 
-    // The whole trace from the top, per connection and independently of every
-    // other one: a screen-size change reopens the host, a reload leaves the
-    // old session connected until it times out, and either one would otherwise
-    // leave the next connection hanging in telnet negotiation with nothing to
-    // draw. Sent in one go rather than record by record — the timing marks
-    // above exist to synchronise tests, and a real host does not wait either.
+    // The whole trace from the top per connection: a reconnect would otherwise
+    // hang in telnet negotiation with nothing to draw.
     host.server.on('connection', (socket) => {
       for (const hex of host.payloads) socket.write(Buffer.from(hex, 'hex'));
       process.stdout.write(`emulator connected; sent ${host.payloads.length} payload(s)\n`);

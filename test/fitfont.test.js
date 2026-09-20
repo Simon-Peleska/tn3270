@@ -3,11 +3,9 @@ import assert from 'node:assert/strict';
 import { MAX_FONT_SIZE, MIN_FONT_SIZE, chooseFontSize } from '../public/fitfont.js';
 
 /**
- * The measurements a browser would give: a cell is a whole number of pixels,
- * and that rounding is the whole difficulty. The ratios are the IBM 3270 face's
- * own, measured in Chrome.
- */
-/**
+ * IBM 3270's own ratios, measured in Chrome. A cell is a whole number of
+ * pixels, and that rounding is the whole difficulty.
+ *
  * @param {number} size
  * @returns {{ width: number, height: number }}
  */
@@ -16,7 +14,7 @@ function cell(size) {
 }
 
 /**
- * What the search should have found, by trying every size there is.
+ * The oracle: every size tried in turn.
  *
  * @param {number} cols
  * @param {number} rows

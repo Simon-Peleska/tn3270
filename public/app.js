@@ -15,12 +15,6 @@ installBoxSelection();
 installCursorGlyph();
 
 /**
- * The browser side is deliberately thin: it renders VT bytes the server sends
- * and forwards keystrokes back, holding no screen state of its own. That is
- * what lets a second browser join a running session and be correct at once.
- */
-
-/**
  * @param {string} id
  * @returns {HTMLElement}
  */
@@ -34,10 +28,8 @@ const screenEl = element('screen');
 
 const RESET_LABEL = '[Reset]';
 const SETTINGS_LABEL = '[Settings]';
-// Macros, Record and Keymap are hidden for now — their pages and keyboard
-// shortcuts still work, just not surfaced as buttons here.
-/** Exactly one narrower than BUTTON_COLUMNS in server/oia.js, which holds these
- *  columns of the status line clear for them. */
+// Macros, Record and Keymap have pages and shortcuts, just no button here.
+// One narrower than BUTTON_COLUMNS in server/oia.js, which keeps these cells clear.
 const BUTTONS = `${RESET_LABEL} ${SETTINGS_LABEL}`;
 
 /** @type {{ code: string, message: string } | null} */
@@ -46,9 +38,6 @@ let activeError = null;
 let errorTimer;
 
 /**
- * A full-width bar over one row, cursor hidden so it cannot be left sitting in
- * chrome the host knows nothing about.
- *
  * @param {number} row 1-based
  * @param {number} cols
  * @param {string} text
@@ -61,14 +50,14 @@ function barBytes(row, cols, text, fg, bg) {
   return `${ESC}[?25l${ESC}[${row};1H${paint(fg, bg, true)}${line}${ESC}[0m`;
 }
 
-/** @returns {string} the active error over the terminal's last row, or '' */
+/** @returns {string} */
 function errorOverlayBytes() {
   const term = activeTerminal();
   if (activeError === null || term === null) return '';
   return barBytes(term.rows, term.cols, `[${activeError.code}] ${activeError.message}`, '#ffd9d9', '#3a1d20');
 }
 
-/** @returns {string} the session switcher, up only while Ctrl-B is armed */
+/** @returns {string} */
 function prefixBarBytes() {
   const term = activeTerminal();
   if (!prefix.armed || term === null) return '';
@@ -78,11 +67,7 @@ function prefixBarBytes() {
 }
 
 /**
- * The only way into settings or a refit for a mouse, so they live on the 3270's
- * own status line: the terminal is the whole UI. Every pane carries its own, so
- * a split is not a screen you have to switch away from to work on. The cursor is
- * saved and restored around the paint, or redrawing it on every host update
- * would steal the real cursor from whatever field the host put it in.
+ * Save and restore the cursor, or a repaint steals it from the host's field.
  *
  * @param {import('ghostty-web').Terminal} term
  * @returns {string}
@@ -96,8 +81,7 @@ function buttonBytes(term) {
 }
 
 /**
- * @returns {string} one letter over the first cell of every hinted field,
- *   while Ctrl-B is armed and the setting is on — '' otherwise
+ * @returns {string}
  */
 function hintOverlayBytes() {
   const term = activeTerminal();
@@ -113,12 +97,7 @@ function hintOverlayBytes() {
 }
 
 /**
- * All three live over cells the server does not own and neither exists on it,
- * so all are reasserted after every write that lands there.
- *
- * Nothing to paint is the usual answer and it has to stay unwritten:
- * ghostty-web 0.4.0 allocates a WASM buffer per write, zero bytes comes back as
- * the pointer -1, and copying into it throws mid-paint.
+ * Never write '': ghostty-web 0.4.0 throws on a zero-byte write.
  *
  * @returns {void}
  */
@@ -132,10 +111,6 @@ function writeOverlays() {
 }
 
 /**
- * Show a coded error in place, on the terminal's own status line. Never
- * navigate: the session is right there on screen and a redirect would throw it
- * away.
- *
  * @param {string} code
  * @param {string} message
  * @returns {void}
@@ -158,12 +133,7 @@ function clearError() {
   repaintStatus();
 }
 
-/**
- * Ask for the real status line back. Anything painted over that row exists only
- * in this browser, so only the server sending it again can undo it.
- *
- * @returns {void}
- */
+/** @returns {void} Only the server can undo a row this browser painted over. */
 function repaintStatus() {
   const painted = overlaySlot;
   overlaySlot = null;
@@ -175,8 +145,7 @@ function repaintStatus() {
   sendQuietly(painted, { type: 'refresh' });
 }
 
-/** @type {number} What to assume the server's hold time is until a hello says
- *  otherwise — only ever used by a socket that drops before its first one. */
+/** @type {number} */
 const DEFAULT_IDLE_TIMEOUT_MS = 300000;
 
 /** @returns {Promise<{ id: string, rows: number, cols: number }>} */
@@ -187,13 +156,7 @@ async function createSession() {
   return body;
 }
 
-/**
- * The sessions the server still has, or null if it did not answer at all —
- * which is a different thing entirely, and the only way this side can tell a
- * server that is down from a session that was reaped.
- *
- * @returns {Promise<Set<string> | null>}
- */
+/** @returns {Promise<Set<string> | null>} null when the server did not answer */
 async function liveSessionIds() {
   try {
     const response = await fetch('/api/sessions');
@@ -206,46 +169,29 @@ async function liveSessionIds() {
 }
 
 /**
- * One host session, of which the tab holds up to MAX_SESSIONS at once. Every
- * socket stays open whether its session is on screen or not: a hidden pane's
- * bytes are thrown away — the server holds the screen and repaints on demand —
- * but its viewer has to stay attached or the idle timeout would reap it.
- *
- * A session owns its pane and terminal for as long as it lives; laying the
- * screen out differently moves panes, it never hands one session's terminal
- * to another.
+ * A hidden pane's bytes are dropped, but its socket stays open or the server
+ * reaps the session.
  *
  * @typedef {object} SessionSlot
  * @property {string} id
  * @property {HTMLElement} pane
- * @property {import('ghostty-web').Terminal | null} terminal built the first
- *   time the pane is on screen with a known geometry
+ * @property {import('ghostty-web').Terminal | null} terminal
  * @property {WebSocket | null} socket
- * @property {number} attempt retries since the socket last dropped, for the
- *   backoff; 0 while connected
- * @property {number | null} reconnectUntil when reconnecting stops being worth
- *   it, because the server will have reaped the session by then; null while
- *   connected. Infinity when the server never reaps.
- * @property {number} idleTimeoutMs the server's own hold time, from the last
- *   hello; the window above is measured from it
- * @property {number} model the model the server has confirmed
- * @property {string} oversize the fitted screen it has confirmed
+ * @property {number} attempt
+ * @property {number | null} reconnectUntil null while connected, Infinity when
+ *   the server never reaps
+ * @property {number} idleTimeoutMs
+ * @property {number} model
+ * @property {string} oversize
  * @property {number} cols
- * @property {number} rows including the OIA row this side adds
- * @property {string} connection b3270's own connection state, '' until the
- *   first status arrives
- * @property {boolean | null} connected the server's verdict on that state;
- *   null until the first status, so it always counts as a change
- * @property {boolean} touched whether anyone has typed at this session — the
- *   server's answer, since another viewer's typing counts too
- * @property {boolean} locked the keyboard-lock state from the last status, so
- *   macro playback can wait for the host to catch up between steps
- * @property {'controller' | 'observer'} role this browser's own role, from the
- *   last hello or status
- * @property {boolean} allowSharing whether the controller lets a second viewer
- *   attach at all
- * @property {boolean} allowSharedEditing whether the controller lets a viewer
- *   who is not itself still type
+ * @property {number} rows including the OIA row
+ * @property {string} connection
+ * @property {boolean | null} connected null until the first status
+ * @property {boolean} touched
+ * @property {boolean} locked
+ * @property {'controller' | 'observer'} role
+ * @property {boolean} allowSharing
+ * @property {boolean} allowSharedEditing
  */
 
 /** @type {(SessionSlot | null)[]} */
@@ -255,16 +201,15 @@ for (let index = 0; index < MAX_SESSIONS; index++) sessions.push(null);
 /** @type {number} The slot the keyboard is aimed at; always one of `panes`. */
 let active = 0;
 
-/** @type {number[]} The slots on screen, in pane order — one entry per pane. */
+/** @type {number[]} The slots on screen, in pane order. */
 let panes = [0];
 
-/** @type {SessionSlot | null} The pane an overlay is currently painted over. */
+/** @type {SessionSlot | null} The pane an overlay is painted over. */
 let overlaySlot = null;
 
 const prefix = new SessionPrefix();
 
-/** @type {{ row: number, col: number, letter: string }[]} the last hints the
- *  server answered with, shown only while Ctrl-B is armed and hints are on */
+/** @type {{ row: number, col: number, letter: string }[]} */
 let hints = [];
 
 /** @returns {SessionSlot | null} */
@@ -299,14 +244,13 @@ function newSlot(id, cols = 0, rows = 0) {
   return slot;
 }
 
-/** @returns {void} Every session in the URL, so sharing shares all of them. */
+/** @returns {void} */
 function writeHash() {
   location.hash = sessionHash(sessions.map((slot) => slot?.id ?? null));
 }
 
 /**
- * @param {string | null} host null when the server has a configured host and
- *   connecting means asking it to reopen the one it already knows.
+ * @param {string | null} host null asks the server to reopen its configured host
  * @returns {void}
  */
 function connectHost(host) {
@@ -323,16 +267,14 @@ function connectHost(host) {
 }
 
 /**
- * Macro playback paces itself by the host's own keyboard-lock state rather
- * than a timer, the way a person driving the keyboard by hand would.
+ * Macro playback paces itself by the host's keyboard lock, not a timer.
  * @type {Map<SessionSlot, (() => void)[]>}
  */
 const unlockWaiters = new Map();
 
 /**
  * @param {SessionSlot | null} slot
- * @returns {Promise<void>} resolves once the slot's keyboard is unlocked,
- *   immediately if it already is
+ * @returns {Promise<void>}
  */
 function waitForUnlock(slot) {
   if (slot === null || !slot.locked) return Promise.resolve();
@@ -386,12 +328,12 @@ function pickFiles(accept) {
   });
 }
 
-/** @returns {Promise<string[]>} the text of every file picked, or [] if cancelled */
+/** @returns {Promise<string[]>} */
 function pickXmlFiles() {
   return pickFiles('.xml,text/xml,application/xml');
 }
 
-/** @returns {Promise<string[]>} the text of every file picked, or [] if cancelled */
+/** @returns {Promise<string[]>} */
 function pickKeymapFiles() {
   return pickFiles('.kmp,.txt,text/plain');
 }
@@ -471,8 +413,6 @@ const keymap = new KeymapPage({
   error: showError,
 });
 
-// Drawn as VT bytes into whichever pane is on screen, and mutually exclusive:
-// each toggles the others closed, so at most one is ever open at once.
 const overlayPages = [settings, macros, recorder, keymap];
 
 /** @returns {typeof overlayPages[number] | null} */
@@ -491,9 +431,8 @@ function closeOverlayPages() {
 }
 
 /**
- * ghostty-web 0.4.0 resizes the canvas in CSS pixels after a font or theme
- * change, discarding the device-pixel backing store its own resize() set up.
- * Put it back, or every glyph is soft on a HiDPI screen.
+ * ghostty-web 0.4.0 drops the device-pixel backing store on a font or theme
+ * change, so put it back or HiDPI glyphs go soft.
  *
  * @param {import('ghostty-web').Terminal} created
  * @returns {void}
@@ -506,9 +445,6 @@ function repaintCanvas(created) {
 }
 
 /**
- * Build the session's terminal, or resize the one it has to the geometry the
- * server last reported. A session with no geometry yet has nothing to build.
- *
  * @param {SessionSlot} slot
  * @returns {import('ghostty-web').Terminal | null}
  */
@@ -538,7 +474,7 @@ function ensureTerminal(slot) {
   return created;
 }
 
-/** @returns {void} A black frame around an amber screen looks like a bug. */
+/** @returns {void} */
 function paintFrame() {
   const background = settings.theme().colors['background'] ?? '#000000';
   screenEl.style.background = background;
@@ -549,10 +485,8 @@ function paintFrame() {
 }
 
 /**
- * `renderer.setTheme()` recolors the canvas chrome, but host colours index into
- * the WASM terminal's ANSI palette, which ghostty-web builds once at `open()`.
- * `reset()` picking up `options.theme` is what rebuilds it. The page is redrawn
- * over the blank screen immediately after, so nothing is lost.
+ * setTheme() only recolors chrome; reset() is what rebuilds the WASM ANSI
+ * palette host colours index into.
  *
  * @param {import('/settings.js').Theme} theme
  * @returns {void}
@@ -561,8 +495,6 @@ function applyTheme(theme) {
   paintFrame();
   for (const slot of sessions) {
     if (slot === null) continue;
-    // The server paints the typeable fields, so every session is told which
-    // colour this theme wants them. A theme is the page's, not one pane's.
     sendQuietly(slot, { type: 'fieldColor', color: theme.colors['field'] ?? null });
 
     const created = slot.terminal;
@@ -573,9 +505,8 @@ function applyTheme(theme) {
     renderer.setTheme(colors);
     created.options.theme = colors;
     created.reset();
-    // reset() frees the WASM terminal and builds a new one, but the selection
-    // manager keeps its own reference and is never told; copying would then
-    // read freed memory, against a stale, smaller grid.
+    // reset() rebuilds the WASM terminal; the selection manager keeps a stale
+    // pointer into the freed one.
     const selection = created['selectionManager'];
     const wasmTerm = created.wasmTerm;
     if (selection !== undefined && wasmTerm !== undefined) selection['wasmTerm'] = wasmTerm;
@@ -588,8 +519,7 @@ function applyTheme(theme) {
  * @returns {Promise<void>}
  */
 async function applyFont(font) {
-  // Measuring a face the browser has not loaded yet gives the fallback's
-  // metrics, and the grid would be fitted to the wrong size.
+  // An unloaded face measures as the fallback, fitting the grid to the wrong size.
   try {
     await document.fonts.load(`16px ${font.family}`);
   } catch (cause) {
@@ -605,9 +535,6 @@ async function applyFont(font) {
 }
 
 /**
- * The room a pane leaves its terminal. A hidden pane has none, which keeps a
- * session nobody is looking at out of every measurement.
- *
  * @param {HTMLElement} pane
  * @returns {{ width: number, height: number } | null}
  */
@@ -620,10 +547,6 @@ function paneBox(pane) {
 }
 
 /**
- * Make the grid as large as its pane allows without cutting it off. The row and
- * column counts belong to the 3270 model, so the font size is the only thing
- * free to move.
- *
  * @param {SessionSlot} slot
  * @returns {void}
  */
@@ -635,9 +558,7 @@ function fitFontSize(slot) {
   const box = paneBox(slot.pane);
   if (box === null) return;
 
-  // The only way to measure a cell is to set the size and ask, so the search
-  // leaves the terminal on whatever it probed last; the answer goes back on
-  // afterwards.
+  // Measuring means setting the size, so the search leaves its last probe on.
   created.options.fontSize = chooseFontSize({
     measure: (size) => {
       created.options.fontSize = size;
@@ -653,10 +574,7 @@ function fitFontSize(slot) {
 }
 
 /**
- * How big a screen this pane would hold with text `fontSize` pixels tall — the
- * inverse of fitFontSize(), where the grid is fixed and the text scales. It
- * measures the pane and not the window so that in a split a session gets the
- * screen its own share of the page can show.
+ * How big a screen this pane would hold with text `fontSize` pixels tall.
  *
  * @param {SessionSlot} slot
  * @param {number} fontSize
@@ -670,10 +588,8 @@ function paneFit(slot, fontSize) {
   const box = paneBox(slot.pane);
   if (box === null) return null;
 
-  // Measured at the size being asked about, never scaled from the size in
-  // force: ghostty rounds a cell up to whole pixels, so a scaled cell lands
-  // somewhere slightly different for every pane and no two panes ever agree on
-  // a screen. Assigning the size re-measures without redrawing.
+  // Never scale from the drawn size: ghostty rounds cells up to whole pixels,
+  // so scaled panes never agree on a screen.
   const drawn = created.options.fontSize;
   created.options.fontSize = fontSize;
   const cellWidth = renderer.charWidth;
@@ -681,18 +597,14 @@ function paneFit(slot, fontSize) {
   created.options.fontSize = drawn;
 
   const cols = Math.floor(box.width / cellWidth);
-  // One row of the grid is the OIA, which this side paints and the host knows
-  // nothing about.
+  // One row is the OIA, which this side paints and the host knows nothing about.
   const rows = Math.floor(box.height / cellHeight) - 1;
   if (cols < 1 || rows < 1) return null;
   return { cols, rows };
 }
 
 /**
- * Ask for this session's screen at the size of the pane it now sits in. The
- * size is negotiated when the connection opens, so on a connected session this
- * drops and reopens the host — the caller is the one that decides that is
- * acceptable.
+ * Changing the oversize drops and reopens the host connection.
  *
  * @param {SessionSlot} slot
  * @returns {void}
@@ -706,19 +618,11 @@ function fitSession(slot) {
 }
 
 /**
- * Give every pane a screen its own size, which keeps a split from being four
- * screens of unreadable text. Only for the sessions where that costs nothing:
- * one with no host on it, and one nobody has typed at yet. Losing the host's
- * idea of where the operator was just because the screen was split would be
- * indefensible — but before they have touched it there is nothing to lose, and
- * a pane of the wrong size is what they would have had to fix by hand anyway.
- * A session that has been used shrinks its text instead, until [Reset].
+ * Only untouched sessions: refitting a live one would lose the host's cursor.
  *
  * @returns {void}
  */
 function fitIdleSessions() {
-  // A model's own size, or the dynamic screen, is a size the operator asked for
-  // by name, and that is not a preference to be second-guessed here.
   if (!settings.fitsWindow()) return;
   for (const index of panes) {
     const slot = sessions[index];
@@ -727,7 +631,7 @@ function fitIdleSessions() {
   }
 }
 
-/** @returns {void} Refit every terminal the page is showing. */
+/** @returns {void} */
 function fitPanes() {
   for (const index of panes) {
     const slot = sessions[index];
@@ -735,8 +639,7 @@ function fitPanes() {
   }
 }
 
-// The screen box is sized by the page, so its own resizes are the signal to
-// refit. Coalesced into a frame because a drag fires this continuously.
+// Coalesced into a frame: a drag fires this continuously.
 let fitScheduled = false;
 /** @type {ReturnType<typeof setTimeout> | undefined} */
 let settleTimer;
@@ -748,17 +651,12 @@ new ResizeObserver(() => {
       fitPanes();
     });
   }
-  // Asking for a bigger screen costs a round trip to the host, so the sessions
-  // that can be resized wait for the window to stop moving first. The ones that
-  // cannot have already rescaled their text in the frame above.
+  // A refit costs a host round trip, so wait for the drag to settle.
   clearTimeout(settleTimer);
   settleTimer = setTimeout(fitIdleSessions, 400);
 }).observe(screenEl);
 
 /**
- * Everything the user types is aimed at the session the keyboard is on; the
- * other panes are being watched, not typed at.
- *
  * @param {import('../server/protocol.js').ClientMessage} message
  * @returns {void}
  */
@@ -779,8 +677,7 @@ function sendTo(slot, message) {
 }
 
 /**
- * For messages nobody asked for by hand — a theme push, a refit, a repaint of a
- * background pane — where a closed socket is routine rather than an error.
+ * For messages nobody asked for by hand, where a closed socket is routine.
  *
  * @param {SessionSlot | null} slot
  * @param {import('../server/protocol.js').ClientMessage} message
@@ -799,8 +696,7 @@ function sendQuietly(slot, message) {
  */
 function connectSocket(slot) {
   const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-  // On the URL, not a follow-up message, so the very first repaint already
-  // matches the saved preference instead of flashing host colours for a frame.
+  // On the URL so the first repaint already has the saved colours.
   const query = new URLSearchParams();
   if (!settings.hostColors) query.set('hostColors', '0');
   const field = settings.theme().colors['field'];
@@ -810,15 +706,11 @@ function connectSocket(slot) {
   slot.socket = ws;
 
   ws.addEventListener('message', (event) => {
-    // Binary frames are screen bytes, text frames are control messages. The
-    // hello that sizes the terminal always precedes the first screen bytes.
     if (!(event.data instanceof ArrayBuffer)) {
       handleServerMessage(slot, JSON.parse(String(event.data)));
       return;
     }
-    // Only a session with a pane on screen is painted; the settings page owns
-    // the pane it is drawn in. Dropping the rest is safe because the server is
-    // asked for a full repaint when they come back into view.
+    // Dropping bytes is safe: a pane coming back into view asks for a repaint.
     const term = slot.terminal;
     const covered = anyOverlayOpen() && slot === activeSession();
     if (term === null || slot.pane.hidden || covered) return;
@@ -827,17 +719,14 @@ function connectSocket(slot) {
     if (slot === activeSession()) writeOverlays();
   });
 
-  // A failed connect fires error and then close; close is where the waiting is
-  // decided, so the error only has to be said out loud once.
+  // A failed connect fires error then close; close decides the retry.
   ws.addEventListener('error', () => {
     showError('E5002', 'The connection to the server failed.');
   });
 
   ws.addEventListener('close', () => {
     slot.socket = null;
-    // The window is measured from the first drop, not from each retry: the
-    // server started reaping when the last viewer left, and every attempt
-    // since has been inside that same countdown.
+    // Measured from the first drop: the server started reaping then.
     if (slot.reconnectUntil === null) {
       slot.reconnectUntil = slot.idleTimeoutMs === 0 ? Infinity : Date.now() + slot.idleTimeoutMs;
     }
@@ -846,9 +735,6 @@ function connectSocket(slot) {
 }
 
 /**
- * Waits out one backoff step and then asks the server what is left of this
- * session, which decides whether to reattach, keep waiting, or start over.
- *
  * @param {SessionSlot} slot
  * @returns {void}
  */
@@ -875,9 +761,6 @@ function scheduleReconnect(slot) {
 }
 
 /**
- * The old session is not coming back, so the slot takes a new one and the URL
- * is rewritten to match before anything reconnects to it.
- *
  * @param {SessionSlot} slot
  * @returns {Promise<void>}
  */
@@ -899,24 +782,19 @@ async function startFreshSession(slot) {
 }
 
 /**
- * @param {SessionSlot} slot not necessarily the one on screen: every session
- *   keeps running and keeps reporting.
+ * @param {SessionSlot} slot not necessarily the one on screen
  * @param {import('../server/protocol.js').ServerMessage} message
  * @returns {void}
  */
 function handleServerMessage(slot, message) {
   const onScreen = slot === activeSession();
 
-  // A hello is the first thing a working socket says — an attach that is
-  // refused opens and closes without one — so this is where a connection
-  // counts as good again.
+  // A refused attach closes without a hello, so hello is the success signal.
   if (message.type === 'hello') {
     slot.idleTimeoutMs = message.idleTimeoutMs;
     slot.attempt = 0;
     if (slot.reconnectUntil !== null) {
-      // The server this reconnected to may be a newer one serving newer page
-      // code, so the page is reloaded rather than resumed. The hash still
-      // names the same sessions, so the reloaded page attaches right back.
+      // Reload rather than resume: the server may now serve newer page code.
       slot.reconnectUntil = null;
       location.reload();
       return;
@@ -939,8 +817,6 @@ function handleServerMessage(slot, message) {
       slot.allowSharedEditing = message.allowSharedEditing;
       settings.setRole(slot.role);
       settings.setSharing(slot.allowSharing, slot.allowSharedEditing);
-      // A host that comes from the config is the operator's business, not the
-      // browser's: it is neither shown nor editable here.
       settings.setHostLocked(message.hostLocked);
       screenEl.focus();
     }
@@ -955,8 +831,7 @@ function handleServerMessage(slot, message) {
     return;
   }
   if (message.type === 'hints') {
-    // A slow answer landing after the operator has already moved on would
-    // otherwise paint stale letters over whatever pane the keyboard is on now.
+    // A late answer would paint stale letters over the wrong pane.
     if (onScreen && prefix.armed) {
       hints = message.hints;
       writeOverlays();
@@ -979,22 +854,16 @@ function handleServerMessage(slot, message) {
         for (const resolve of waiters) resolve();
       }
     }
-    // A real 3270 swaps the block cursor for an underline in insert mode, and
-    // insert is the session's own state, not just the focused pane's.
     slot.terminal?.renderer?.setCursorStyle(message.insert ? 'underline' : 'block');
-    // A session opened to fill a new pane is only reachable once its socket has
-    // said hello, which is well after the layout that made the pane was applied.
+    // A new pane's session is only reachable once its socket has said hello,
+    // which is after the layout that made the pane.
     if (changed && !message.connected && !slot.pane.hidden && panes.length > 1) fitIdleSessions();
     if (!onScreen) return;
     settings.connected = message.connected;
     settings.setRole(slot.role);
     settings.setSharing(slot.allowSharing, slot.allowSharedEditing);
-    // b3270 reports the host without its port, so filling the field from it
-    // would quietly destroy what the user typed. Only seed an empty one, which
-    // is what a viewer joining someone else's session needs.
+    // b3270 reports the host without its port, so never overwrite a typed one.
     if (message.host !== null && settings.host === '' && !settings.hostLocked) settings.setHost(message.host);
-    // Only the moment the connection changes opens or closes the page; after
-    // that it stays where the user or the connection left it.
     if (changed) {
       if (message.connected) {
         closeOverlayPages();
@@ -1006,23 +875,16 @@ function handleServerMessage(slot, message) {
     return;
   }
   if (onScreen) {
-    // A refused change leaves the page showing something the server never
-    // accepted, so put it back to the size actually in force.
+    // A refused change leaves the page showing a size never accepted.
     settings.setModel(slot.model);
     settings.setOversize(slot.oversize);
     showError(message.code, message.message);
     return;
   }
-  // A session nobody is looking at can still die, and swallowing that would
-  // leave the operator switching to a screen that stopped ages ago.
   showError(message.code, `Session ${sessions.indexOf(slot) + 1}: ${message.message}`);
 }
 
 /**
- * Ask the server to paint a session's pane again. The screen lives entirely on
- * the server, so this is the only way back from a pane this side has drawn over
- * or one whose bytes were dropped while it was out of sight.
- *
  * @param {SessionSlot} slot
  * @returns {void}
  */
@@ -1032,18 +894,11 @@ function repaint(slot) {
     page.draw();
     return;
   }
-  // A session still opening has nothing to repaint yet, and whatever is on its
-  // terminal is older than the pane it now sits in.
+  // A session still opening has nothing to repaint; its screen is already stale.
   if (!sendQuietly(slot, { type: 'refresh' })) slot.terminal?.write(`${ESC}[2J`);
 }
 
-/**
- * Give every pane its place in the grid and hide the sessions the layout leaves
- * out. A pane coming back into sight is built if it has never been drawn in,
- * and repainted either way, since its bytes were thrown away while hidden.
- *
- * @returns {void}
- */
+/** @returns {void} */
 function applyLayout() {
   const areas = paneAreas(panes.length);
   /** @type {SessionSlot[]} */
@@ -1063,18 +918,13 @@ function applyLayout() {
   }
   paintFrame();
 
-  // The panes have to be laid out before a terminal can be fitted into one, and
-  // built before there is anything to repaint.
+  // Order matters: lay out, then build, then repaint.
   for (const slot of revealed) ensureTerminal(slot);
   fitPanes();
   for (const slot of revealed) repaint(slot);
 }
 
 /**
- * Aim the keyboard at a session. In a split it is already on screen and this is
- * only a change of focus; otherwise it takes over the pane the keyboard was on,
- * so the session you switch to is always the session you see.
- *
  * @param {number} index
  * @returns {void}
  */
@@ -1082,8 +932,7 @@ function focusSlot(index) {
   const slot = sessions[index] ?? null;
   if (slot === null || index === active) return;
 
-  // Closed before the switch, so the pane the page was drawn over is the one
-  // asked for its screen back.
+  // Close before the switch, or the wrong pane is asked for its screen back.
   closeOverlayPages();
 
   if (!panes.includes(index)) {
@@ -1107,8 +956,7 @@ let opening = false;
 
 /**
  * @param {number} index
- * @returns {Promise<SessionSlot>} the session in that slot, opening one first if
- *   the slot is still empty.
+ * @returns {Promise<SessionSlot>}
  */
 async function ensureSlot(index) {
   const existing = sessions[index];
@@ -1142,11 +990,7 @@ function switchTo(index) {
 }
 
 /**
- * Split the screen between the first `count` sessions, opening the ones that do
- * not exist yet — all at once, because each costs a b3270 startup on the server
- * and waiting them out one by one is the whole delay times four. One pane is
- * the exception: it shows the session the keyboard is already on rather than
- * jumping back to the first.
+ * Missing sessions are opened all at once: each costs a b3270 startup.
  *
  * @param {number} count
  * @returns {void}
@@ -1174,10 +1018,6 @@ function changeLayout(count) {
 }
 
 /**
- * Where a hint letter sends the cursor. The overlay comes off with the same
- * refresh that every other prefix action already asks for, so nothing extra
- * is needed to clear it.
- *
  * @param {string} letter
  * @returns {void}
  */
@@ -1187,10 +1027,8 @@ function jumpToHint(letter) {
   send({ type: 'action', action: 'MoveCursor1', args: [String(hint.row + 1), String(hint.col + 1)] });
 }
 
-// Alt+Space has to work wherever the focus is, so the settings page gets first
-// refusal on every key in the page; it swallows everything while it is open.
-// The switcher comes before even that: a session that is not connected has the
-// settings page open over it, and being unable to switch away would be a trap.
+// The prefix goes first: a disconnected session has settings open over it, and
+// being unable to switch away would be a trap.
 window.addEventListener('keydown', (event) => {
   const decision = prefix.handleKey(event, settings.hints ? hints.map((hint) => hint.letter) : []);
   if (decision.action !== 'ignore') {
@@ -1202,9 +1040,7 @@ window.addEventListener('keydown', (event) => {
       writeOverlays();
       return;
     }
-    // The bar has done its job either way, and the pane under it is the one to
-    // ask for its status row back — not necessarily the pane the keyboard is
-    // about to end up on.
+    // Before the switch: the pane under the bar is the one to repaint.
     clearError();
     repaintStatus();
     if (decision.action === 'switch') switchTo(decision.index);
@@ -1212,8 +1048,6 @@ window.addEventListener('keydown', (event) => {
     else if (decision.action === 'hint') jumpToHint(decision.letter);
     return;
   }
-  // Each page's own toggle key closes the other two first, so a keystroke
-  // never leaves more than one drawn over the terminal at once.
   for (const page of overlayPages) {
     if (event.altKey && event.code === page.toggleKey) {
       for (const other of overlayPages) if (other !== page) other.close();
@@ -1231,8 +1065,6 @@ window.addEventListener('keydown', (event) => {
 
 screenEl.addEventListener('keydown', (event) => {
   if (anyOverlayOpen()) return;
-  // A keystroke aimed at the live host is also the operator saying "I've seen
-  // it", exactly how a real 3270 clears an operator-error condition.
   clearError();
 
   const mapped = mapKey(event, keymap.lookup());
@@ -1249,19 +1081,16 @@ screenEl.addEventListener('keydown', (event) => {
     return;
   }
 
-  // Copy and Paste are not 3270 actions, they are this browser's own
-  // clipboard — the keymap dialog can rebind them like anything else, but
-  // dispatching them stays here rather than in keymap.js, which has no
-  // clipboard to reach.
+  // Copy and Paste are this browser's clipboard, not 3270 actions, so keymap.js
+  // maps them but cannot dispatch them.
   if (mapped.command === 'Copy') {
     const term = activeTerminal();
     if (term !== null && term.hasSelection()) navigator.clipboard.writeText(term.getSelection());
     else send({ type: 'copyField' });
     return;
   }
-  // Ctrl+V arrives as a native paste event instead (see below), because the
-  // browser reserves it; every other paste binding has to read the clipboard
-  // directly, which Chrome asks permission for once.
+  // Ctrl+V arrives as a paste event instead; every other binding must read the
+  // clipboard, which Chrome asks permission for once.
   navigator.clipboard.readText().then((text) => {
     if (text !== '') send({ type: 'paste', text });
   }).catch((cause) => {
@@ -1269,10 +1098,7 @@ screenEl.addEventListener('keydown', (event) => {
   });
 }, true);
 
-// Ctrl+V and the right-click menu arrive as one event carrying the text, which
-// needs no clipboard permission. Capture, because ghostty puts its own paste
-// handler on the hidden textarea and stops the event there, where it would be
-// dropped: ghostty is a renderer here, it has no host.
+// Capture: ghostty's own paste handler on the hidden textarea would eat this.
 screenEl.addEventListener('paste', (event) => {
   event.preventDefault();
   event.stopPropagation();
@@ -1283,16 +1109,8 @@ screenEl.addEventListener('paste', (event) => {
 }, true);
 
 /**
- * The operator asking for this session's screen back the way it should look in
- * the pane it now sits in, whatever it has been through — the way out of a pane
- * that was resized under a connection this side would not touch on its own.
- *
- * A screen measured from the window is asked for again at the pane's size,
- * which costs the host connection; that is why it is a button and not something
- * that happens behind their back. A screen the operator asked for by name — the
- * model's own, or the dynamic one — keeps its size and has its text scaled back
- * to the pane instead. Either way the screen is repainted, so this is also the
- * way back from anything drawn over it.
+ * Refits a window-measured screen, which costs the host connection — hence a
+ * button and not something that happens on its own.
  *
  * @param {SessionSlot} slot
  * @returns {void}
@@ -1304,9 +1122,6 @@ function resetScreen(slot) {
 }
 
 /**
- * A click is both "type here" and, in a split, "type at this session from now
- * on" — the pane is the only thing a mouse can aim at.
- *
  * @param {SessionSlot} slot
  * @param {MouseEvent} event
  * @returns {void}
@@ -1326,8 +1141,7 @@ function paneClicked(slot, event) {
   const resetStart = term.cols - BUTTONS.length;
 
   if (row === term.rows - 1) {
-    // Widest button first: each start is further left than the last, so a
-    // click right of any of them is also right of the ones still to check.
+    // Widest first: each start is left of the last, so the first match wins.
     const buttons = [
       { start: settingsStart, action: () => settings.toggle() },
       { start: resetStart, action: () => resetScreen(slot) },
@@ -1340,18 +1154,14 @@ function paneClicked(slot, event) {
     }
   }
 
-  // Clicking a cell puts the cursor there, the way every other 3270 client
-  // works. The status line under the screen is ours, not the host's, and a
-  // click that ends a drag was aiming at the selection, not at a field.
+  // The last row is ours, and a click ending a drag was aiming at the selection.
   if (row < 0 || row >= term.rows - 1 || col < 0 || col >= term.cols) return;
   if (term.hasSelection()) return;
   sendTo(slot, { type: 'action', action: 'MoveCursor1', args: [String(row + 1), String(col + 1)] });
 }
 
-// The renderer's WASM module and the saved settings have nothing to do with
-// each other, so they load together; the font can only be named once the
-// settings are in hand, and has to be loaded before the first terminal is
-// built or the first screen is painted in the wrong face and then restyled.
+// The font has to be loaded before the first terminal, or the first screen is
+// painted in the wrong face and then restyled.
 const [renderer, saved, savedMacros, savedKeymap] = await Promise.allSettled([init(), loadSettings(), loadMacros(), loadKeymap()]);
 if (renderer.status === 'rejected') {
   showError('E5001', `The terminal renderer failed to load: ${String(renderer.reason)}`);
@@ -1375,8 +1185,7 @@ if (storedHost !== null) settings.setHost(storedHost);
 
 const wanted = parseSessionHash(location.hash);
 if (wanted.some((id) => id !== null)) {
-  // A server that does not answer is not a server that has forgotten these
-  // sessions: the slots are kept either way, and their sockets do the waiting.
+  // No answer is not the same as forgotten: keep the slots and let the sockets wait.
   const live = await liveSessionIds();
   const gone = [];
   for (let index = 0; index < MAX_SESSIONS; index++) {
@@ -1394,9 +1203,6 @@ if (!sessions.some((slot) => slot !== null)) {
 }
 writeHash();
 
-// The page opens on one session filling the screen; a split is a keystroke away
-// and is not worth restoring across a reload, when the sessions behind it may
-// not have survived either.
 active = Math.max(0, sessions.findIndex((slot) => slot !== null));
 panes = [active];
 applyLayout();

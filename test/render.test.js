@@ -2,11 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startTracedSession, waitUntil } from './helpers.js';
 
-/**
- * The rendering assertions from x3270's own b3270/Test/testRender.py, carried
- * over to this stack: the same trace files, driven through a real b3270, but
- * checked against our ScreenModel instead of against raw protocol JSON.
- */
+// The assertions of x3270's b3270/Test/testRender.py, against our ScreenModel.
 
 test('reverse.trc: the reverse-video field gets a red background, the field before it does not', async (t) => {
   const fixture = await startTracedSession('test/traces/reverse.trc');
@@ -15,9 +11,7 @@ test('reverse.trc: the reverse-video field gets a red background, the field befo
   const { screen } = fixture.session;
   await waitUntil(() => screen.rowText(0).includes('_____'), 'the underscore field to be drawn');
 
-  // Trace: `ord.sfe 3270 protect,skip highlighting reverse fg red` at row 1
-  // column 2, so column 2 carries the attribute and the run after it is the
-  // visible reverse-video field.
+  // The trace puts a reverse/red attribute at row 1 column 2; the field follows it.
   const beforeField = screen.cellAt(0, 1);
   assert.equal(beforeField.bg, null, 'the attribute cell should not have an explicit background');
 
@@ -25,7 +19,6 @@ test('reverse.trc: the reverse-video field gets a red background, the field befo
   assert.equal(inField.bg, 'red', 'the reverse-video field should render with a red background');
   assert.equal(inField.ch, '_');
 
-  // Row 2 holds an unstyled label, which must inherit the screen default.
   assert.ok(screen.rowText(1).startsWith(' Field:'), `row 2 was ${JSON.stringify(screen.rowText(1))}`);
   assert.equal(screen.cellAt(1, 1).bg, null);
 });
@@ -62,8 +55,7 @@ test('a malformed data stream does not bring the session down', async (t) => {
   const fixture = await startTracedSession('test/traces/short_sba.trc', { records: 1 });
   t.after(() => fixture.close());
 
-  // The trace ends mid-order. b3270 must report the problem and stay alive;
-  // the session must still be usable.
+  // The trace ends mid-order, which b3270 reports without dying.
   await waitUntil(() => fixture.session.screen.rows > 0, 'the session to stay up');
   assert.equal(fixture.session.closed, false);
 });

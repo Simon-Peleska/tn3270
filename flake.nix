@@ -20,7 +20,7 @@
           default = self.packages.${pkgs.stdenv.hostPlatform.system}.b3270;
         }
         // nixpkgs.lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
-          # Cross-compiled from Linux; Nix has no way to run a Windows build itself.
+          # Cross-compiled; Nix cannot run a Windows build itself.
           b3270-windows = pkgs.pkgsCross.mingwW64.callPackage ./nix/b3270.nix { };
         }
       );

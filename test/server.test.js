@@ -9,11 +9,6 @@ import { INIT_SEQUENCE } from '../server/vt.js';
 import { FakeHost } from './fakehost.js';
 import { waitUntil } from './helpers.js';
 
-/**
- * The whole stack as a browser meets it: a real node server, a real b3270, a
- * real WebSocket, and a fake host replaying a real trace. Nothing is mocked.
- */
-
 /** @returns {Promise<number>} a port that was free a moment ago */
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -53,8 +48,7 @@ async function startServer(logLevel = 'warn', trustProxyHeaders = false) {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
-  // Logging is at warn here, so readiness is taken from the socket itself
-  // rather than from a log line that a level change could silently remove.
+  // Readiness comes from the socket, not a log line a level change could remove.
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', (chunk) => process.stderr.write(String(chunk)));
 
@@ -128,8 +122,6 @@ test('two browsers share one session over the real server', async (t) => {
   await host.sendRecords(1);
   await waitUntil(() => first.screen.join('').includes('_____'), 'the host screen to arrive');
 
-  // The second browser joins a session that is already up and must be correct
-  // straight away, without replaying anything.
   const second = await openViewer(`ws://127.0.0.1:${server.port}/ws/${created.id}`);
   t.after(() => second.socket.close());
   await waitUntil(() => second.screen.length > 0, 'the late viewer repaint');
@@ -137,7 +129,6 @@ test('two browsers share one session over the real server', async (t) => {
   assert.equal(second.messages[0]?.['role'], 'observer');
   assert.ok(second.screen[0]?.includes('_____'), 'the late viewer must see the current screen');
 
-  // The observer's input is refused with its code, and nothing is forwarded.
   second.socket.send(JSON.stringify({ type: 'text', value: 'x' }));
   await waitUntil(() => second.messages.some((m) => m['code'] === 'E3006'), 'the observer refusal');
 });
@@ -180,8 +171,7 @@ test('a path that tries to escape the public directory is refused', async (t) =>
   const server = await startServer();
   t.after(() => server.stop());
 
-  // Percent-encoded so fetch does not normalise the traversal away before it
-  // reaches the server, which is the case that actually needs guarding.
+  // Percent-encoded, or fetch normalises the traversal away before the server sees it.
   for (const path of ['/%2e%2e%2fconfig.jsonc', '/vendor/%2e%2e%2f%2e%2e%2fconfig.jsonc']) {
     const response = await fetch(`http://127.0.0.1:${server.port}${path}`);
     const body = await response.json();
@@ -201,7 +191,7 @@ async function logLine(server, needle) {
   return lines.find((line) => line.includes(needle)) ?? '';
 }
 
-/** The headers a proxy would set, and a direct client can just as easily claim. */
+/** What a proxy would set, and a direct client can just as easily claim. */
 const PROXY_HEADERS = { 'x-forwarded-for': '203.0.113.9, 10.0.0.1', 'x-remote-user': 'alice' };
 
 test('the log file names the session and the address every line came from', async (t) => {
@@ -221,8 +211,7 @@ test('the log file names the session and the address every line came from', asyn
   assert.match(attached, /ip=127\.0\.0\.1\b/);
   // Even the lines no browser caused say which session they belong to.
   assert.match(spawned, new RegExp(`session=${created.id}\\b`));
-  // Nobody has authenticated, so there is no user to name and no empty field
-  // pretending otherwise.
+  // Nobody authenticated, so no user field at all rather than an empty one.
   assert.doesNotMatch(attached, /user=/);
 });
 
@@ -240,7 +229,7 @@ test('a forwarded address and user are believed only when a proxy is configured'
   const createdLine = await logLine(server, 'session created');
   const attached = await logLine(server, 'viewer attached');
 
-  // The leftmost entry is the browser; the ones after it are the proxies.
+  // The leftmost X-Forwarded-For entry is the browser, the rest are proxies.
   assert.match(requested, /ip=203\.0\.113\.9 user=alice/);
   assert.match(createdLine, /ip=203\.0\.113\.9 user=alice/);
   assert.match(attached, /ip=203\.0\.113\.9 user=alice/);

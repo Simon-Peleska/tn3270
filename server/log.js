@@ -19,10 +19,7 @@ export function setLogLevel(level) {
 }
 
 /**
- * Also write every line to a file, which rolls over to `<path>.1` once it
- * passes `maxBytes` — so at most two files, and never more than twice
- * `maxBytes` on disk. Only `main.js` calls this: a test that imported a logger
- * has no business writing files.
+ * Mirror every line to a file, rolling over to `<path>.1` past `maxBytes`.
  *
  * @param {string} path
  * @param {number} maxBytes
@@ -61,8 +58,8 @@ function write(line) {
     file.fd = openSync(file.path, 'a');
     file.size = 0;
   } catch (cause) {
-    // Losing the file must not take the server with it, and must not leave
-    // every later line throwing the same way: stderr keeps it.
+    // Losing the file must not take the server down, nor throw on every later
+    // line: drop to stderr only.
     const lost = new AppError('E6006', file.path, cause);
     file = null;
     process.stderr.write(`${lost.message}\n`);
@@ -80,8 +77,6 @@ function emit(level, scope, context, message, fields) {
   if (RANK[level] < RANK[threshold]) return;
   const parts = [new Date().toISOString(), level.toUpperCase().padEnd(5), scope, message];
   for (const [key, value] of Object.entries({ ...context, ...fields })) {
-    // A field nobody filled in is not news: `user=` on every line until an
-    // authenticating proxy is in front of this server would be noise.
     if (value === '' || value === null || value === undefined) continue;
     parts.push(`${key}=${typeof value === 'string' ? value : JSON.stringify(value)}`);
   }
@@ -89,11 +84,7 @@ function emit(level, scope, context, message, fields) {
 }
 
 /**
- * Bound to one subsystem, so every line says where it came from, and to
- * whatever context that subsystem shares — the session id, the viewer's
- * address and user — so every line says who it was for without each call site
- * repeating it. Empty fields are left out, so a line only carries what is
- * actually known.
+ * Bound to one subsystem and its shared context; empty fields are dropped.
  *
  * @param {string} scope
  * @param {Record<string, unknown>} [context]
@@ -108,8 +99,7 @@ export function logger(scope, context = {}) {
     warn: (m, f) => emit('warn', scope, context, m, f),
 
     /**
-     * A one-line summary with the code, then the error itself so no stack
-     * trace is lost.
+     * A one-line summary with the code, then the error so no stack is lost.
      * @param {unknown} err
      * @param {Record<string, unknown>} [f]
      */
@@ -123,8 +113,6 @@ export function logger(scope, context = {}) {
     },
 
     /**
-     * The same subsystem, with more bound to it — one viewer's address on top
-     * of its session's id.
      * @param {Record<string, unknown>} extra
      */
     with: (extra) => logger(scope, { ...context, ...extra }),

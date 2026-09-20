@@ -1,15 +1,9 @@
 import { CanvasRenderer, SelectionManager } from '/vendor/dist/ghostty-web.js';
 
 /**
- * ghostty-web only knows stream selection — right for a shell, wrong for a
- * fixed 3270 grid where people copy a column out of a form. Its two selection
- * primitives are replaced with a rectangular one: the same column range on
- * every row. The library has no option for it, so the prototypes are patched
- * rather than the dependency forked.
- *
- * Its .d.ts marks these fields `private`, but the JS underneath enforces
- * nothing; bracket notation reaches them without tripping TypeScript's check,
- * which keeps the patch `any`-free.
+ * ghostty-web only does stream selection; a 3270 grid needs rectangular, and the
+ * library has no option for it, so its prototypes are patched. Bracket notation
+ * reaches the fields its .d.ts calls private without an `any`.
  */
 
 export function installBoxSelection() {

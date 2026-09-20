@@ -1,13 +1,9 @@
 import { CanvasRenderer, CellFlags } from '/vendor/dist/ghostty-web.js';
 
 /**
- * ghostty-web's block cursor is opaque, so it hides the character the operator
- * is about to overtype. Redrawing the glyph over it in the cursor accent makes
- * the cell read like selected text: the same two colours, swapped.
- *
- * Patched in place like box-select.js, and here rather than in patches/ because
- * an install that skipped patch-package would silently lose it — and a cursor
- * that swallows characters is not something a build log points out.
+ * ghostty-web's block cursor is opaque and hides the character under it, so the
+ * glyph is redrawn in the cursor accent. Patched here, not in patches/, because
+ * an install skipping patch-package would drop it silently.
  */
 export function installCursorGlyph() {
   CanvasRenderer.prototype['renderCursor'] = function renderCursor(

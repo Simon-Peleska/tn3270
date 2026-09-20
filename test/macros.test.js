@@ -4,12 +4,6 @@ import { MacrosPage } from '../public/macros.js';
 import { THEMES } from '../public/settings.js';
 
 /**
- * The macros page is drawn as VT into the terminal, so it holds no DOM and can
- * be driven here exactly as a keyboard would drive it, the same way
- * test/settings.test.js drives SettingsPage.
- */
-
-/**
  * @param {{ key?: string, code?: string, altKey?: boolean, ctrlKey?: boolean, metaKey?: boolean }} init
  * @returns {KeyboardEvent}
  */
@@ -25,7 +19,7 @@ function key(init) {
   });
 }
 
-/** @param {string[]} [files] what deps.importFiles() resolves with */
+/** @param {string[]} [files] */
 function fixture(files = []) {
   const calls = {
     /** @type {string[]} */ written: [],
@@ -271,7 +265,6 @@ test('playing a macro dispatches each step and waits for the keyboard to unlock 
   const played = page.play(macro);
   assert.equal(page.playing?.macro, macro);
 
-  // Nothing past the first action's wait should have gone out yet.
   await Promise.resolve();
   assert.deepEqual(calls.dispatched, [
     { type: 'paste', text: 'hello' },

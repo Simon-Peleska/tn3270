@@ -5,16 +5,8 @@ import { ansiColorIndex, DEFAULT_FOREGROUND_ANSI, DEFAULT_BACKGROUND_ANSI } from
 import { loadGhostty, render } from './ghostty.js';
 import { startTracedSession, waitUntil, settle } from './helpers.js';
 
-/**
- * The encoder is checked against the exact parser the browser will run: our VT
- * bytes go through ghostty's WASM, and the grid that comes back must equal the
- * ScreenModel that produced them.
- *
- * Host colours are now indexed into the terminal's own ANSI palette rather
- * than sent as fixed RGB, so these tests supply a palette of sixteen distinct,
- * arbitrary colours and check ghostty resolved each cell through the *same*
- * slot our encoder chose — not through any particular RGB value.
- */
+// Host colours are indexed, so the palette here is sixteen distinct values and
+// the checks are on which slot each cell resolved through, not on any RGB.
 
 const ghostty = await loadGhostty();
 
@@ -115,8 +107,7 @@ test('a keystroke moves the cursor and the delta carries it', async (t) => {
   await settle(session);
 
   const before = screen.cursor.col;
-  // The input field in this trace is nondisplay, so nothing is drawn — the
-  // cursor advancing is the whole visible effect, and it must reach the viewer.
+  // The field in this trace is nondisplay, so the advancing cursor is the whole effect.
   session.b3270.runActions([{ action: 'String', args: ['hello'] }]);
   await settle(session);
   assert.equal(screen.cursor.col, before + 5, 'five characters should advance the cursor five columns');
@@ -138,8 +129,7 @@ test('writing the last cell of the last row does not scroll the screen', async (
   const { screen } = fixture.session;
   await waitUntil(() => screen.rowText(0).includes('_____'), 'the screen to be drawn');
 
-  // Autowrap off is what makes this hold; with it on the whole screen shifts up
-  // by one and every absolute cursor address after it is wrong.
+  // Only autowrap being off keeps this from scrolling the whole screen up by one.
   const bottom = screen.rows - 1;
   screen.cellAt(bottom, screen.cols - 1).ch = 'Z';
   screen.cellAt(0, 0).ch = 'A';

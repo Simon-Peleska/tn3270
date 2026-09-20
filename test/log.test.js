@@ -6,8 +6,7 @@ import { join } from 'node:path';
 import { closeLogFile, logger, setLogFile } from '../server/log.js';
 
 /**
- * A log file of its own per test, since the file is module-global — one
- * process writes one log, the same as the server does.
+ * One file per test: the log is module-global, one per process.
  *
  * @param {import('node:test').TestContext} t
  * @param {number} maxBytes
@@ -52,8 +51,7 @@ test('the file rolls over once it passes its limit, keeping the lines before it'
   const path = logFile(t, maxBytes);
   const log = logger('session', { session: 'rolled' });
 
-  // Enough to cross the limit once, and no further: the line before a second
-  // rollover would be gone, which is the next test's business.
+  // Enough to cross the limit once and no further.
   log.info('the first line of all');
   for (let i = 0; i < 30; i++) log.info('filler', { i, padding: 'x'.repeat(100) });
   log.info('the last line of all');

@@ -3,24 +3,17 @@ import {
   DEFAULT_FOREGROUND_ANSI, DEFAULT_BACKGROUND_ANSI,
 } from './colors.js';
 
-/**
- * Turns the authoritative ScreenModel into the VT bytes ghostty-web renders.
- * The same model emits either a delta or a complete repaint, which is what
- * makes a late-joining viewer possible.
- */
-
 const ESC = '\x1b';
 
 /**
- * Written once per viewer, before any painting. Autowrap must be off: with it
- * on, a character in the last column of the last row scrolls the whole screen
- * and every absolute cursor address after it is wrong.
+ * Autowrap must stay off: a character in the last cell would scroll the screen
+ * and throw off every absolute cursor address after it.
  */
 export const INIT_SEQUENCE = `${ESC}[?7l${ESC}[?25l${ESC}[0m${ESC}[H${ESC}[2J`;
 
 /**
  * @param {number} index ANSI colour index, 0-15
- * @returns {number} the SGR foreground parameter
+ * @returns {number}
  */
 function fgSgr(index) {
   return index < 8 ? 30 + index : 82 + index;
@@ -28,19 +21,14 @@ function fgSgr(index) {
 
 /**
  * @param {number} index ANSI colour index, 0-15
- * @returns {number} the SGR background parameter
+ * @returns {number}
  */
 function bgSgr(index) {
   return index < 8 ? 40 + index : 92 + index;
 }
 
 /**
- * On an empty form a 3270 gives no hint of where the typeable fields are.
- * Tinting them is the one thing this emulator adds to what the host asked for,
- * and the viewer's own theme picks the colour.
- *
- * @param {string | null} hex `#rrggbb`; anything else means no tint, which is
- *   also the guard against a browser posting bytes every *other* viewer gets.
+ * @param {string | null} hex `#rrggbb`; anything else means no tint
  * @returns {number[] | null} SGR parameters selecting it as a background
  */
 export function fieldTintSgr(hex) {
@@ -53,10 +41,9 @@ export function fieldTintSgr(hex) {
 /**
  * @param {import('./screen.js').Cell} cell
  * @param {import('./screen.js').ScreenModel} screen
- * @param {boolean} hostColors false emits no colour at all, leaving the cell to
- *   the terminal's own theme; only graphic rendition still carries meaning.
+ * @param {boolean} hostColors false leaves the cell to the terminal's own theme
  * @param {number[] | null} fieldTint
- * @returns {string} the SGR sequence selecting this cell's appearance
+ * @returns {string}
  */
 function sgrFor(cell, screen, hostColors, fieldTint) {
   /** @type {number[]} */
@@ -65,8 +52,7 @@ function sgrFor(cell, screen, hostColors, fieldTint) {
   if (!hostColors) {
     // Nothing to add; the renderer's own default paints this cell.
   } else if (screen.color) {
-    // The host only names a colour; which RGB that is comes from the viewer's
-    // theme via the standard ANSI slot, as a shell's "red" does.
+    // The host names a colour; the viewer's theme picks the RGB, via the ANSI slot.
     const fg = ansiColorIndex(cell.fg ?? screen.defaultFg, DEFAULT_FOREGROUND_ANSI);
     const bg = ansiColorIndex(cell.bg ?? screen.defaultBg, DEFAULT_BACKGROUND_ANSI);
     params.push(fgSgr(fg), bgSgr(bg));
@@ -76,8 +62,7 @@ function sgrFor(cell, screen, hostColors, fieldTint) {
     params.push(48, 2, DEFAULT_BACKGROUND[0], DEFAULT_BACKGROUND[1], DEFAULT_BACKGROUND[2]);
   }
 
-  // Last background wins, so this goes after the host's — but never over one
-  // the host named itself, which was saying something.
+  // Last background wins, so tint after the host's — but never over one it named itself.
   if (fieldTint !== null && cell.editable && cell.bg === null) params.push(...fieldTint);
 
   return `${ESC}[${params.join(';')}m`;
@@ -86,16 +71,13 @@ function sgrFor(cell, screen, hostColors, fieldTint) {
 /**
  * @param {import('./screen.js').Cell} a
  * @param {import('./screen.js').Cell} b
- * @returns {boolean} whether the two would be painted identically
+ * @returns {boolean}
  */
 function sameStyle(a, b) {
   return a.fg === b.fg && a.bg === b.bg && a.gr === b.gr && a.editable === b.editable;
 }
 
 /**
- * One full row, grouping runs of identically-styled cells so a typical 3270 row
- * costs a handful of escape sequences rather than eighty.
- *
  * @param {import('./screen.js').ScreenModel} screen
  * @param {number} row 0-based
  * @param {boolean} hostColors
@@ -122,7 +104,7 @@ function encodeRow(screen, row, hostColors, fieldTint) {
 }
 
 /**
- * @param {number} row 1-based terminal row for the status line
+ * @param {number} row 1-based
  * @param {string} text
  * @returns {string}
  */
@@ -142,14 +124,10 @@ function encodeCursor(screen) {
 }
 
 /**
- * Everything a viewer needs to show the screen from nothing, sent the moment it
- * attaches however long the session has been running.
- *
  * @param {import('./screen.js').ScreenModel} screen
  * @param {string} oiaText
- * @param {boolean} [hostColors] Off renders every cell in the viewer's own
- *   theme. Defaults to on, the real 3270's behaviour.
- * @param {string | null} [fieldColor] see {@link fieldTintSgr}
+ * @param {boolean} [hostColors]
+ * @param {string | null} [fieldColor]
  * @returns {string}
  */
 export function fullRepaint(screen, oiaText, hostColors = true, fieldColor = null) {
@@ -165,9 +143,9 @@ export function fullRepaint(screen, oiaText, hostColors = true, fieldColor = nul
  * @param {number[]} dirtyRows 0-based
  * @param {string} oiaText
  * @param {boolean} oiaChanged
- * @param {boolean} [hostColors] see {@link fullRepaint}
- * @param {string | null} [fieldColor] see {@link fieldTintSgr}
- * @returns {string} empty when there is nothing to send
+ * @param {boolean} [hostColors]
+ * @param {string | null} [fieldColor]
+ * @returns {string}
  */
 export function delta(screen, dirtyRows, oiaText, oiaChanged, hostColors = true, fieldColor = null) {
   if (dirtyRows.length === 0 && !oiaChanged) return encodeCursor(screen);

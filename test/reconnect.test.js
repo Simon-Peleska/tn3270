@@ -2,11 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BASE_DELAY_MS, MAX_DELAY_MS, backoffDelay, reconnectStep } from '../public/reconnect.js';
 
-/**
- * The retry arithmetic a dropped page runs on. It is pure on purpose: the
- * browser half of reconnecting is a socket and a setTimeout around these.
- */
-
 test('the first retries are quick and every later one waits longer', () => {
   const delays = [0, 1, 2, 3].map((attempt) => backoffDelay(attempt, 0.5));
   assert.deepEqual(delays, [375, 750, 1500, 3000]);
@@ -31,8 +26,7 @@ test('half of every delay is random, so browsers do not all retry on the same ti
 
 test('a session the server still has is reconnected to', () => {
   assert.equal(reconnectStep({ answered: true, sessionLive: true, msLeft: 1 }), 'reconnect');
-  // Even past the window: the server is the one who decides, and it has not
-  // reaped this session, so the page keeps it.
+  // Past the window, but the server decides, and it has not reaped the session.
   assert.equal(reconnectStep({ answered: true, sessionLive: true, msLeft: -60000 }), 'reconnect');
 });
 

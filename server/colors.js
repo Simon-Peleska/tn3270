@@ -1,10 +1,5 @@
 /**
- * Which of the terminal's sixteen ANSI slots each 3270 host colour maps onto.
- * The host only names a colour; what RGB that is comes from the theme, as a
- * shell's `red` does. So this names a slot (0-15), never an RGB value.
- *
- * neutralBlack/black and neutralWhite/white shared a slot in the old x3270
- * palette already.
+ * A host colour names an ANSI slot (0-15), never an RGB value; the theme does.
  *
  * @type {Readonly<Record<string, number>>}
  */
@@ -50,8 +45,8 @@ export function ansiColorIndex(name, fallback) {
 }
 
 /**
- * Graphic renditions that map onto SGR. b3270 also emits `wide`, `order`,
- * `selectable` and others, which describe the character, not how to draw it.
+ * b3270's other renditions (`wide`, `order`, `selectable`) describe the
+ * character, not how to draw it.
  *
  * @type {Readonly<Record<string, number>>}
  */

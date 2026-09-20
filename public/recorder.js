@@ -1,8 +1,6 @@
 /**
- * The recorder page: capture the whole screen and every keystroke aimed at a
- * session, redacting a password field down to a single marker, and export the
- * result as JSON shaped for a later s3270 script to replay. Drawn as VT bytes
- * into the terminal, exactly like settings.js and macros.js.
+ * The recorder page: capture screens and keystrokes (password fields redacted)
+ * and export them as JSON for an s3270 script to replay.
  */
 
 import { cycle, drawListPanel } from './settings.js';
@@ -18,9 +16,7 @@ const FIELD_WIDTH = 28;
  * @property {() => { cols: number, rows: number }} geometry
  * @property {() => import('./settings.js').Theme} theme
  * @property {(message: import('../server/protocol.js').ClientMessage) => void} dispatch
- *   tells the server to start or stop recording this session
- * @property {() => void} restore called when the page closes, to get the host
- *   screen back
+ * @property {() => void} restore
  * @property {(filename: string, content: string) => void} exportFile
  */
 
@@ -28,7 +24,7 @@ export class RecorderPage {
   /** @param {RecorderDeps} deps */
   constructor(deps) {
     this.deps = deps;
-    /** @type {string} the Alt+key KeyboardEvent.code that toggles this page */
+    /** @type {string} the Alt+key code that toggles this page */
     this.toggleKey = 'KeyR';
     /** @type {boolean} */
     this.open = false;
@@ -36,8 +32,7 @@ export class RecorderPage {
     this.selected = 0;
     /** @type {boolean} */
     this.active = false;
-    /** @type {{ recordedAt: string, steps: RecorderStep[] } | null} the most
-     *  recent recording, live or finished — there is only ever one. */
+    /** @type {{ recordedAt: string, steps: RecorderStep[] } | null} */
     this.current = null;
   }
 
@@ -62,9 +57,6 @@ export class RecorderPage {
   }
 
   /**
-   * Called from app.js's handleServerMessage for every step the server sends
-   * while this session is being recorded.
-   *
    * @param {RecorderStep} step
    * @returns {void}
    */
@@ -159,8 +151,7 @@ export class RecorderPage {
       this.activate();
       return true;
     }
-    // Everything else is swallowed: the host must not see keystrokes aimed at
-    // a page it cannot see.
+    // Swallow the rest: the host must not see keys aimed at this page.
     return true;
   }
 

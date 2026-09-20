@@ -1,42 +1,28 @@
 {
-  // ---------------------------------------------------------------------
-  // HTTP / WebSocket server
-  // ---------------------------------------------------------------------
   "server": {
     "host": "127.0.0.1",
     "port": 8017
   },
 
-  // ---------------------------------------------------------------------
-  // The b3270 back end. One process is spawned per session.
-  // ---------------------------------------------------------------------
+  // One b3270 process per session.
   "b3270": {
-    // Resolved from PATH when left as a bare name. `nix develop` puts it there.
+    // A bare name is resolved from PATH.
     "path": "b3270",
 
-    // 3270 model: 2 = 24x80, 3 = 32x80, 4 = 43x80, 5 = 27x132.
-    // b3270's own default is 4; we default to 2 because that is what almost
-    // every host expects.
+    // 2 = 24x80, 3 = 32x80, 4 = 43x80, 5 = 27x132.
     "model": 2,
 
-    // Host to connect to when a session is created without an explicit one.
-    // null means the session starts disconnected and waits for the user.
+    // Used when a session is created without one; null starts disconnected.
     "defaultHost": "http://localhost:8017",
 
-    // Any b3270 resource, passed as -xrm "b3270.<name>: <value>". This is the
-    // general escape hatch: every setting b3270 has can be set here, whether or
-    // not this project knows about it. Names are documented at
+    // Any b3270 resource, passed as -xrm. A bare name is qualified "b3270.<name>";
+    // write "b3270.x" or "*x" in full for a different qualifier.
     // https://x3270.miraheze.org/wiki/Category:Resources
-    //
-    // A bare name is qualified as "b3270.<name>"; write "b3270.x" or "*x" in
-    // full when a resource needs a different qualifier.
     "settings": {
       // "codePage": "german",
 
-      // Columns x rows, both at least the model's own size. Setting this makes
-      // b3270 negotiate as IBM-DYNAMIC and let the host pick the screen size.
-      // This is only where a session starts: "Fit to window" in the settings
-      // page measures the browser and changes it per session.
+      // Columns x rows, at least the model's own size; negotiates IBM-DYNAMIC.
+      // Only a starting point: "Fit to window" changes it per session.
       "oversize": "160x62",
 
       // "monoCase": true,
@@ -45,51 +31,34 @@
       // "nopSeconds": 60
     },
 
-    // Extra command line arguments, appended verbatim. For options that are not
-    // resources: ["-cafile", "/path/to/ca.pem"]
+    // Appended verbatim, for options that are not resources: ["-cafile", "/path/to/ca.pem"]
     "extraArgs": []
   },
 
-  // ---------------------------------------------------------------------
-  // Sessions and viewers
-  // ---------------------------------------------------------------------
   "sessions": {
     "maxSessions": 16,
     "maxViewersPerSession": 8,
 
-    // A session with no viewers attached is torn down after this long. This is
-    // what lets a browser reload or a dropped connection survive without
-    // losing the host session.
+    // How long a session survives with no viewer, so a reload keeps the host session.
     "idleTimeoutMs": 300000,
 
-    // When false, the first viewer to attach controls the session and everyone
-    // else observes. When true, every viewer may type: input is serialised by
-    // b3270's single stdin, so this is safe, just chaotic.
+    // true lets every viewer type, not just the first to attach.
     "allowMultipleControllers": false
   },
 
-  // ---------------------------------------------------------------------
-  // Security
-  // ---------------------------------------------------------------------
   "security": {
-    // Hosts a client is permitted to ask for. An entry with a port matches
-    // exactly; an entry without one allows any port on that host. An empty
-    // list allows any host, which is only sensible on a trusted network.
+    // An entry without a port allows any port on that host; an empty list allows any host.
     "allowedHosts": [],
 
-    // Take the client's address from "X-Forwarded-For" and their name from
-    // "X-Remote-User" instead of from the socket. Turn this on only with a
-    // reverse proxy in front that sets both: a client talking to this server
-    // directly can put whatever it likes in a header, and it lands in the log.
+    // Take the client address and name from "X-Forwarded-For" / "X-Remote-User".
+    // Only with a reverse proxy in front: otherwise anyone can forge both.
     "trustProxyHeaders": false
   },
 
-  // "debug" logs every line exchanged with b3270. Very useful, very noisy.
+  // "debug" logs every line exchanged with b3270. Very noisy.
   "logLevel": "info",
 
-  // The log goes to stderr and to this file. The file rolls over to
-  // "<logFile>.1" once it passes logMaxBytes, so the pair is never more than
-  // twice that on disk. "" turns the file off and leaves stderr alone.
+  // Logged to stderr as well. Rolls over to "<logFile>.1" past logMaxBytes; "" is stderr only.
   "logFile": "log/tn3270.log",
   "logMaxBytes": 10485760
 }

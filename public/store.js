@@ -1,8 +1,6 @@
 /**
- * Settings in IndexedDB, one record under a fixed key. localStorage would be
- * shorter, but IndexedDB is the store that survives the "clear site data on
- * close" settings people use for a terminal they log into. Its callback API is
- * wrapped once here and never thought about again.
+ * Settings in IndexedDB, one record per fixed key. IndexedDB, not localStorage:
+ * it survives the "clear site data on close" settings people use here.
  */
 
 const DB_NAME = 'tn3270';
@@ -17,9 +15,9 @@ const KEYMAP_KEY = 'keymap';
  * @property {string} font
  * @property {number} model
  * @property {boolean} hostColors
- * @property {number} fitFontSize how tall the text is in the screen that "fit
- *   to window" measures; not the font size on screen, which floats
- * @property {boolean} hints Ctrl-B's field hints, a purely local preference
+ * @property {number} fitFontSize the size "fit to window" measures from, not
+ *   the size on screen
+ * @property {boolean} hints
  */
 
 /** @type {Promise<IDBDatabase> | null} */
@@ -38,8 +36,7 @@ function open() {
 }
 
 /**
- * @returns {Promise<Partial<StoredSettings>>} empty when nothing is saved yet,
- *   which is a first visit rather than an error
+ * @returns {Promise<Partial<StoredSettings>>} empty on a first visit
  */
 export async function loadSettings() {
   const db = await open();
@@ -68,8 +65,7 @@ export async function saveSettings(settings) {
 }
 
 /**
- * @returns {Promise<import('./macro-xml.js').Macro[]>} empty when nothing is
- *   saved yet, which is a first visit rather than an error
+ * @returns {Promise<import('./macro-xml.js').Macro[]>} empty on a first visit
  */
 export async function loadMacros() {
   const db = await open();
@@ -95,8 +91,7 @@ export async function saveMacros(macros) {
 }
 
 /**
- * @returns {Promise<import('./keymap.js').Bindings>} empty when nothing is
- *   saved yet, which is a first visit rather than an error
+ * @returns {Promise<import('./keymap.js').Bindings>} empty on a first visit
  */
 export async function loadKeymap() {
   const db = await open();

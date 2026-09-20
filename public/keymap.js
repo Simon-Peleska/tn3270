@@ -1,41 +1,13 @@
 /**
- * Keyboard → 3270 actions, as a table instead of a chain of `if`s: the keymap
- * dialog needs to list, add and remove bindings, and a table is the only shape
- * that lets it do that without duplicating the translation logic here.
- *
- * The terminal is a renderer only: we never use ghostty's `onData`, because it
- * would VT-encode the keypress and force us to decode it back, and 3270 keys
- * like PA1, Clear, Attn and Reset have no VT equivalent at all. Mapping the
- * KeyboardEvent directly is both lossless and shorter.
- *
- * The defaults below follow IBM Personal Communications' (PCOMM) default 3270
- * keyboard layout, not x3270's Ctrl-letter mnemonics: Esc is Attn, Pause is
- * Clear, Caps Lock is Reset, and Alt reaches the PA keys. Every one of them is
- * just a starting point the keymap dialog can change.
+ * Keyboard → 3270 actions as a table the keymap dialog can edit. Defaults
+ * follow IBM PCOMM's 3270 layout, not x3270's Ctrl-letter mnemonics.
  *
  * @typedef {{ code: string, shift: boolean, ctrl: boolean, alt: boolean }} Combo
- *   a physical key (`KeyboardEvent.code`, so left/right Ctrl and Shift+1 vs the
- *   `!` a French keyboard types there both stay distinct) plus the three
- *   modifiers this app lets a binding use. Meta is never one of them: Cmd/Win
- *   combinations stay the browser's.
  * @typedef {{ id: string, label: string }} Command
- * @typedef {Record<string, Combo[]>} Bindings command id -> its combos, zero or
- *   more; a command with none is bound to nothing, on purpose or otherwise
+ * @typedef {Record<string, Combo[]>} Bindings
  */
 
-/**
- * The commands a combo can be bound to. PF and PA are 24 and 3 separate
- * commands, not one parameterised action, because each needs its own combo
- * list. `DeleteField` and `DeleteWord` are actions b3270 accepts (see
- * `server/protocol.js`) that no default keyboard reaches; the dialog lets
- * someone bind them if they want to. `BackNewline` is Newline's mirror, which
- * b3270 has no action for — the server works it out from the field map and
- * sends a cursor move. `Copy` and `Paste` are not 3270 actions
- * at all — see CLIENT_COMMANDS below — but they are keys someone binds the
- * same way, so they live in the same table.
- *
- * @type {readonly Command[]}
- */
+/** @type {readonly Command[]} */
 export const COMMANDS = Object.freeze([
   { id: 'Enter', label: 'Enter (AID)' },
   { id: 'Newline', label: 'Newline' },
@@ -66,12 +38,7 @@ export const COMMANDS = Object.freeze([
   ...Array.from({ length: 3 }, (_, index) => ({ id: `PA${index + 1}`, label: `PA${index + 1}` })),
 ]);
 
-/**
- * Commands that are this browser's clipboard, not a 3270 action: `mapKey`
- * hands them back unresolved into a protocol action so the caller can reach
- * `navigator.clipboard` itself, exactly where that code already lived.
- * @type {ReadonlySet<string>}
- */
+/** @type {ReadonlySet<string>} */
 export const CLIENT_COMMANDS = new Set(['Copy', 'Paste']);
 
 /**
@@ -84,11 +51,7 @@ function combo(code, { shift = false, ctrl = false, alt = false } = {}) {
 }
 
 /**
- * The out-of-the-box bindings. `Dup`'s real PCOMM key, Shift-Insert, is given
- * to `Paste` instead — pasting there is the behaviour this app has always had,
- * and there is no reason to make `Dup` win it back by default. Someone who
- * wants PCOMM's Dup back can bind it in the dialog, same as any other change.
- *
+ * PCOMM's Dup key, Shift-Insert, goes to Paste here instead.
  * @type {Readonly<Bindings>}
  */
 export const DEFAULT_BINDINGS = Object.freeze({
@@ -123,10 +86,7 @@ export const DEFAULT_BINDINGS = Object.freeze({
 });
 
 /**
- * These send an Attention Identifier: the keyboard unlocks and the host draws a
- * whole new screen. A real 3270 keyboard physically cannot repeat one, and TSO
- * or ISPF mid-response to the first can be left locked on a blank screen by a
- * second, so auto-repeat must not fire them.
+ * AID keys must not auto-repeat: a second one mid-response can leave the host locked.
  *
  * @param {string} commandId
  * @returns {boolean}
@@ -138,7 +98,7 @@ function isAidCommand(commandId) {
 
 /**
  * @param {Combo} value
- * @returns {string} a key a Map can use, order-independent in the modifiers
+ * @returns {string}
  */
 export function serializeCombo(value) {
   return `${value.ctrl ? 'C' : ''}${value.shift ? 'S' : ''}${value.alt ? 'A' : ''}:${value.code}`;
@@ -161,11 +121,6 @@ const CODE_LABELS = Object.freeze({
 });
 
 /**
- * A human-readable name for a `KeyboardEvent.code`. Letters and digits get
- * their printed character (`KeyA` -> `A`); anything named above gets that
- * name; everything else — punctuation codes mostly — is shown as its raw code,
- * which is not pretty but is unambiguous and never needs a table entry.
- *
  * @param {string} code
  * @returns {string}
  */
@@ -186,15 +141,8 @@ export function comboLabel(value) {
 }
 
 /**
- * A saved keymap filled in with the defaults for commands it has never heard
- * of. A keymap is the whole map and not a diff, so without this a command
- * added to the app later stays unbound forever for anyone who has ever saved
- * one — which is exactly what happened to `BackNewline`.
- *
- * A command the saved map does list is left alone, including one deliberately
- * left with no combos at all: that is an unbinding, not an absence. A default
- * combo the saved map has already given to some other command is dropped
- * rather than bound twice, since the operator's own choice of key wins.
+ * A saved keymap is the whole map, not a diff, so commands added to the app
+ * later need filling in. An empty combo list is a deliberate unbinding.
  *
  * @param {Bindings} saved
  * @returns {Bindings}
@@ -212,8 +160,7 @@ export function withDefaults(saved) {
 
 /**
  * @param {Bindings} bindings
- * @returns {Map<string, string>} every combo across every command, keyed for
- *   `mapKey` to look up in one step
+ * @returns {Map<string, string>}
  */
 export function buildLookup(bindings) {
   /** @type {Map<string, string>} */
@@ -226,8 +173,7 @@ export function buildLookup(bindings) {
 
 /**
  * @param {string} commandId
- * @returns {{ action: string, args: string[] }} the 3270 protocol action a
- *   command sends; never called for a CLIENT_COMMANDS id
+ * @returns {{ action: string, args: string[] }} never called for a CLIENT_COMMANDS id
  */
 function commandToAction(commandId) {
   const pf = /^PF(\d+)$/.exec(commandId);
@@ -238,11 +184,8 @@ function commandToAction(commandId) {
 }
 
 /**
- * Translate a keydown into a 3270 action, a client-side command, or text to
- * type — or nothing, when the combination belongs to the browser.
- *
  * @param {KeyboardEvent} event
- * @param {Map<string, string>} lookup from `buildLookup`
+ * @param {Map<string, string>} lookup
  * @returns {{ kind: 'action', action: string, args: string[] }
  *   | { kind: 'client', command: string }
  *   | { kind: 'text', value: string } | null}
@@ -258,11 +201,10 @@ export function mapKey(event, lookup) {
     return { kind: 'action', action, args };
   }
 
-  // Nothing claims this combination: give it back to the browser rather than
-  // typing garbage or falling through to the key's unmodified meaning.
+  // Unclaimed Ctrl/Alt combos belong to the browser.
   if (event.ctrlKey || event.altKey) return null;
 
-  // A single character is text; anything longer is a named key nothing binds.
+  // One character is text; longer is a named key nothing binds.
   if ([...event.key].length === 1) return { kind: 'text', value: event.key };
 
   return null;

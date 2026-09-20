@@ -1,11 +1,4 @@
-/**
- * The keymap dialog: browse commands, drill into one to see its key
- * combinations, add another or remove any of them — down to none, since a
- * command with nothing bound is a valid choice, not an error. Drawn as VT
- * bytes into the terminal, exactly like settings.js and macros.js, and for
- * the same reason — there is already a renderer and a keyboard aimed at it
- * here.
- */
+/** The keymap dialog, drawn as VT bytes into the terminal like settings.js. */
 
 import { cycle, drawListPanel } from './settings.js';
 import { COMMANDS, DEFAULT_BINDINGS, buildLookup, comboFromEvent, comboLabel, serializeCombo, withDefaults } from './keymap.js';
@@ -20,9 +13,7 @@ const VISIBLE_ROWS = 12;
 
 /**
  * @param {Bindings} bindings
- * @returns {Bindings} a deep-enough copy: fresh arrays and combo objects, so
- *   mutating it never reaches back into the caller's copy (DEFAULT_BINDINGS,
- *   most of the time)
+ * @returns {Bindings}
  */
 function cloneBindings(bindings) {
   /** @type {Bindings} */
@@ -35,14 +26,11 @@ function cloneBindings(bindings) {
  * @typedef {object} KeymapDeps
  * @property {(bytes: string) => void} write
  * @property {() => { cols: number, rows: number }} geometry
- * @property {() => import('./settings.js').Theme} theme drawn in the app's
- *   current theme, which this page does not otherwise know about
- * @property {() => void} restore called when the page closes, to get the host
- *   screen back
+ * @property {() => import('./settings.js').Theme} theme
+ * @property {() => void} restore
  * @property {(bindings: Bindings) => void} persist
  * @property {(filename: string, content: string) => void} exportFile
- * @property {() => Promise<string[]>} importFiles the text of every file
- *   picked, or [] if the picker was cancelled
+ * @property {() => Promise<string[]>} importFiles empty when the picker was cancelled
  * @property {(code: string, message: string) => void} error
  */
 
@@ -50,26 +38,24 @@ export class KeymapPage {
   /** @param {KeymapDeps} deps */
   constructor(deps) {
     this.deps = deps;
-    /** @type {string} the Alt+key KeyboardEvent.code that toggles this page */
+    /** @type {string} the Alt+key code that toggles this page */
     this.toggleKey = 'KeyK';
     /** @type {boolean} */
     this.open = false;
     /** @type {Bindings} */
     this.bindings = cloneBindings(DEFAULT_BINDINGS);
-    /** @type {Map<string, string>} rebuilt after every change; read far more often than it changes */
+    /** @type {Map<string, string>} */
     this.lookupCache = buildLookup(this.bindings);
     /** @type {'commands' | 'combos' | 'listening'} */
     this.mode = 'commands';
     /** @type {number} index into COMMANDS */
     this.commandIndex = 0;
-    /** @type {number} index into the selected command's combos, one past the end is "Add binding" */
+    /** @type {number} index into the command's combos; one past the end is "Add binding" */
     this.comboIndex = 0;
   }
 
   /**
-   * @param {Bindings} bindings what was saved, which may be from a version of
-   *   this app with fewer commands in it — `withDefaults` is what stops one
-   *   added since from being unbound for good
+   * @param {Bindings} bindings
    * @returns {void}
    */
   setBindings(bindings) {
@@ -103,10 +89,7 @@ export class KeymapPage {
   }
 
   /**
-   * Adding a combo already bound elsewhere takes it from its old command
-   * first: two commands cannot both fire on the same keystroke, and a command
-   * losing a binding to a deliberate rebind is exactly what "remove even if
-   * another exists for the same command" already asks the dialog to allow.
+   * A combo bound elsewhere is taken from its old command: one keystroke, one command.
    *
    * @param {string} commandId
    * @param {Combo} combo
@@ -148,8 +131,7 @@ export class KeymapPage {
   }
 
   /**
-   * @returns {{ label: string, value: string }[]} one row per command, top to
-   *   bottom, in 'commands' mode
+   * @returns {{ label: string, value: string }[]}
    */
   commandRows() {
     return COMMANDS.map((command) => ({
@@ -159,8 +141,7 @@ export class KeymapPage {
   }
 
   /**
-   * @returns {{ label: string, value: string }[]} the selected command's
-   *   combos, plus a trailing "Add binding" row, in 'combos' mode
+   * @returns {{ label: string, value: string }[]}
    */
   comboRows() {
     const command = COMMANDS[this.commandIndex];
@@ -232,10 +213,7 @@ export class KeymapPage {
     if (!this.open) return false;
 
     if (this.mode === 'listening') {
-      // The one mode that must see everything, modifiers included, since a
-      // modifier key alone (e.g. ControlRight, this app's own Enter) is a
-      // valid binding. Escape still cancels, same as leaving Home alone would
-      // never be a physical key anyone binds here.
+      // A modifier key alone is a valid binding, so this mode sees everything.
       if (event.key === 'Escape') {
         this.mode = 'combos';
         this.draw();
@@ -291,7 +269,6 @@ export class KeymapPage {
       return true;
     }
 
-    // this.mode === 'combos'
     const command = COMMANDS[this.commandIndex];
     const rows = this.comboRows();
     if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {

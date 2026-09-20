@@ -5,11 +5,6 @@ import { INIT_SEQUENCE } from '../server/vt.js';
 import { AppError } from '../server/errors.js';
 import { testConfig, collectingViewer, waitUntil, settle, startTracedSession } from './helpers.js';
 
-/**
- * The multi-viewer contract: the session owns the screen, viewers come and go,
- * and a viewer that joins late is immediately correct.
- */
-
 test('the first viewer controls and the rest observe', async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
@@ -78,16 +73,13 @@ test('a viewer with host colours off gets no truecolor from the host, another vi
   session.attach(plain);
   session.attach(colored);
 
-  // "red" is ANSI slot 1, an indexed background SGR of 41 — a boundary check
-  // (not colours.includes('41')) because 41 can appear inside an unrelated
-  // number like a cursor row.
+  // 41 is the indexed red background; bounded, since 41 also occurs inside a cursor row.
   const redBackground = /(?:^|;)41(?:;|m)/;
   const plainRepaint = plain.screen[0] ?? '';
   const coloredRepaint = colored.screen[0] ?? '';
   assert.ok(!redBackground.test(plainRepaint), 'the red field must not reach a viewer with host colours off');
   assert.ok(redBackground.test(coloredRepaint), 'the other viewer must still see the host red');
 
-  // Flipping it live repaints only that viewer, in place.
   session.handleClientMessage(colored, { type: 'hostColors', enabled: false });
   const latest = colored.screen.at(-1) ?? '';
   assert.ok(!redBackground.test(latest), 'toggling off must repaint without the host colour');
@@ -125,8 +117,6 @@ test('a session counts as untouched until someone types at it', async (t) => {
     return status?.type === 'status' ? status.touched : false;
   };
 
-  // Connecting and configuring are not using the session; they are what the
-  // settings page does before the operator has done anything at all.
   session.handleClientMessage(viewer, { type: 'hostColors', enabled: false });
   session.handleClientMessage(viewer, { type: 'oversize', value: '100x40' });
   assert.equal(session.touched, false);
@@ -298,8 +288,7 @@ test('changing the model resizes the grid and tells every viewer before repainti
       type: 'screen', model: 2, rows: 24, cols: 80, oversize: '',
     });
 
-    // A repaint is meaningless to a viewer still holding a 43-row terminal, so
-    // the resize arriving first is part of the contract, not a coincidence.
+    // A repaint is meaningless to a viewer still holding a 43-row terminal.
     const next = viewer.events[at + 1];
     assert.ok(
       next?.kind === 'screen' && next.bytes.startsWith(INIT_SEQUENCE),
@@ -316,9 +305,8 @@ test('a host that only ever erases the default screen shrinks the grid to match'
   const viewer = collectingViewer('viewer');
   session.attach(viewer);
 
-  // A model 4 offers 43x80, but a host that never sends Erase/Write Alternate
-  // only ever uses the default 24x80 — b3270 reports that as an erase
-  // indication's logical-rows/logical-columns, not as a new screen-mode.
+  // A host that never sends Erase/Write Alternate stays at 24x80, which b3270
+  // reports as an erase indication's logical-rows, not as a new screen-mode.
   session.handleIndication({ kind: 'screen-mode', body: { model: 4, rows: 43, columns: 80, color: true } });
   await waitUntil(() => session.screen.rows === 43, 'the grid to grow to the model 4 size');
 
@@ -352,9 +340,7 @@ test('changing the model under a live connection drops it and reopens the same h
   session.attach(controller);
   session.handleClientMessage(controller, { type: 'model', model: 2 });
 
-  // b3270 refuses a model change while connected, so the session has to take the
-  // connection down first — and then put it back, on the host as it was typed,
-  // port and all.
+  // b3270 refuses a model change while connected.
   await waitUntil(() => session.screen.rows === 24, 'the grid to become a model 2');
   await waitUntil(
     () => session.oia.connectionState !== 'not-connected',
@@ -406,10 +392,8 @@ test('a refresh repaints only the viewer who asked, even an observer', async (t)
 });
 
 test('a Backspace action deletes the character behind the cursor, not just moves over it', async (t) => {
-  // b3270's own Backspace only moves the cursor left; a PC keyboard's
-  // Backspace deletes. The field here is nondisplay, so the deletion itself
-  // is checked through the cursor: typing "hello" then backspacing must land
-  // one column short of typing "hell" plus a bare cursor-left would.
+  // b3270's own Backspace only moves left. The field is nondisplay, so the
+  // deletion can only be checked through the cursor.
   const fixture = await startTracedSession('test/traces/reverse.trc');
   t.after(() => fixture.close());
   const { session } = fixture;
@@ -434,18 +418,14 @@ test('a Backspace action deletes the character behind the cursor, not just moves
 });
 
 test('a Backspace at the very start of a field does nothing, rather than locking the keyboard', async (t) => {
-  // Left doesn't know about fields, so from the first cell of one it lands on
-  // the attribute byte behind it — and Delete there is a protected-field
-  // error that locks the keyboard, not a no-op. The host places the cursor on
-  // exactly that first cell to begin with, so no typing is needed to reach it.
+  // Left from a field's first cell lands on the attribute byte behind it, where
+  // Delete is a protected-field error that locks the keyboard.
   const fixture = await startTracedSession('test/traces/reverse.trc');
   t.after(() => fixture.close());
   const { session } = fixture;
   const { screen } = session;
   await settle(session);
-  // Without the field map Backspace has no way to know it is at the start of
-  // one and moves left like any other key, so waiting for it is the difference
-  // between testing the guard and racing it.
+  // Without the field map Backspace cannot know it is at a field start; waiting is not optional.
   await waitUntil(() => screen.fieldsFormatted, 'the field map to load');
 
   const controller = collectingViewer('controller');
@@ -471,8 +451,7 @@ test('typing on the attribute byte just left of a field nudges the cursor into i
   session.attach(controller);
   const start = { ...screen.cursor };
 
-  // The cell right before the field is its attribute byte, protected; typing
-  // there directly would be a protected-cell error that locks the keyboard.
+  // The cell before the field is its attribute byte: protected, so typing there locks the keyboard.
   session.handleClientMessage(controller, { type: 'action', action: 'MoveCursor1', args: [String(start.row + 1), String(start.col)] });
   await settle(session);
 
@@ -490,8 +469,7 @@ test('typing on the attribute byte just left of a field nudges the cursor into i
 });
 
 test('BackNewline walks up to the first field of the row above, where Newline walks down', async (t) => {
-  // fields.trc: three fields, each starting at column 11 of rows 2, 4 and 6,
-  // on a 43-row screen. The cursor starts in the first of them.
+  // fields.trc: fields at column 11 of rows 2, 4 and 6; the cursor starts in the first.
   const fixture = await startTracedSession('test/traces/fields.trc');
   t.after(() => fixture.close());
   const { session } = fixture;
@@ -511,8 +489,6 @@ test('BackNewline walks up to the first field of the row above, where Newline wa
   await settle(session);
   assert.deepEqual({ row: screen.cursor.row, col: screen.cursor.col }, { row: 2, col: 11 }, 'BackNewline moves back up');
 
-  // Nothing is editable above the first field, so it wraps to the last one —
-  // the mirror of Newline wrapping off the bottom of the screen.
   session.handleClientMessage(controller, { type: 'action', action: 'BackNewline' });
   await settle(session);
   assert.deepEqual({ row: screen.cursor.row, col: screen.cursor.col }, { row: 6, col: 11 }, 'BackNewline wraps past the top');
@@ -559,9 +535,7 @@ test('a hints request answers with one letter per editable field, using the cach
 });
 
 test('clicking a cell moves the cursor there', async (t) => {
-  // The browser sends the clicked cell as 1-origin row/col, which is what
-  // MoveCursor1 takes; 0-origin would land the cursor one row and one column
-  // short of where the operator pointed.
+  // MoveCursor1 is 1-origin, which is how the browser sends the clicked cell.
   const fixture = await startTracedSession('test/traces/reverse.trc');
   t.after(() => fixture.close());
   const { session } = fixture;
@@ -578,9 +552,7 @@ test('clicking a cell moves the cursor there', async (t) => {
 });
 
 test('pasted text is typed literally, backslashes and all', async (t) => {
-  // String() reads a backslash as the start of an escape — "\b" is a backspace
-  // — so a paste that went through it would silently lose characters the
-  // operator copied. PasteString treats the whole thing as text.
+  // String() reads a backslash as an escape ("\b" is a backspace); PasteString does not.
   const fixture = await startTracedSession('test/traces/reverse.trc');
   t.after(() => fixture.close());
   const { session } = fixture;
@@ -608,16 +580,13 @@ test('pasting more than a field holds is truncated at its edge, not spilled into
   session.attach(controller);
   const start = { ...screen.cursor };
 
-  // The field runs from the cursor to the end of the row (see the trace); a
-  // row past it is a separate, fully protected field, so a paste that runs
-  // past the field's edge must stop there rather than lock the keyboard.
+  // The field runs from the cursor to the end of the row; past it is protected.
   const fieldWidth = screen.cols - start.col;
   session.handleClientMessage(controller, { type: 'paste', text: 'x'.repeat(fieldWidth + 3) });
   await settle(session);
   assert.equal(session.oia.keyboardLocked, false, 'landing on the protected field must not lock the keyboard');
 
-  // b3270's own screen indications do not report what a scripted paste typed
-  // (unlike a live keystroke), so the field is read back to check it directly.
+  // b3270's screen indications do not report what a scripted paste typed, so read the field back.
   session.handleClientMessage(controller, { type: 'action', action: 'MoveCursor1', args: [String(start.row + 1), String(start.col + 1)] });
   session.handleClientMessage(controller, { type: 'copyField' });
   await settle(session);
@@ -627,8 +596,6 @@ test('pasting more than a field holds is truncated at its edge, not spilled into
 });
 
 test('a b3270 resource set in the config reaches the emulator', async (t) => {
-  // oversize is the cheapest resource to observe: b3270 answers it in the
-  // screen-mode indication, which is the same path the browser sees.
   const session = new Session(testConfig({ b3270: { path: 'b3270', model: 2, settings: { oversize: '90x30' } } }));
   t.after(() => session.close());
   await session.ready;
@@ -662,9 +629,7 @@ test('fitting the screen to the window grows it while disconnected, and off puts
 });
 
 test('a model too wide for the fitted screen falls back to its own size', async (t) => {
-  // b3270 refuses a model whose columns the standing oversize is under
-  // ("Invalid oversize rows (24): Less than model 4 rows (43)"), so the two
-  // have to be reconciled here before either is sent.
+  // b3270 refuses a model bigger than the standing oversize, so the two are reconciled first.
   const session = new Session(testConfig());
   t.after(() => session.close());
   await session.ready;
@@ -692,8 +657,7 @@ test('fitting the screen under a live connection drops it and reopens the same h
   session.attach(controller);
   session.handleClientMessage(controller, { type: 'oversize', value: '100x50' });
 
-  // The host is told the screen size once, when the connection is made, so
-  // there is no way to change it but to make the connection again.
+  // The host learns the screen size only at connect time.
   await waitUntil(() => session.screen.cols === 100, 'the grid to become the size asked for');
   await waitUntil(
     () => session.oia.connectionState !== 'not-connected',
@@ -732,13 +696,6 @@ test('a closed session removes itself from the registry', async () => {
   assert.equal(registry.list().length, 0);
 });
 
-/**
- * Where the typeable fields are is not in b3270's screen indications, so the
- * session has to go and read them. These check the whole round trip: a viewer
- * says what colour it wants, the session asks b3270, and the tint comes back
- * in the bytes — all of it against a real emulator and a real trace.
- */
-
 test('a viewer that asked for a field colour gets the typeable fields tinted with it', async (t) => {
   const fixture = await startTracedSession('test/traces/reverse.trc');
   t.after(() => fixture.close());
@@ -765,20 +722,12 @@ test('a viewer that asked for no field colour is sent none, even though the fiel
   const viewer = collectingViewer('plain');
   session.attach(viewer);
 
-  // Nobody wants a tint, but the field map is read regardless — Backspace
-  // needs it on every session, not just one with a viewer tinting fields.
+  // The field map is read regardless: Backspace needs it on every session.
   await waitUntil(() => session.screen.cells.some((cell) => cell.editable), 'the field map to be read');
   await settle(session);
 
   assert.equal(viewer.screen.join('').includes('48;2;'), false, 'nobody asked for a tint, so none was sent');
 });
-
-/**
- * The recorder: every action and typed keystroke becomes a step carrying the
- * screen it was typed against, streamed live to every viewer so a `RecorderPage`
- * can build its export without polling. A password field is the one exception —
- * see readbuffer.test.js for how it is detected.
- */
 
 test('recording captures the screen and each step, and stops cleanly', async (t) => {
   const session = new Session(testConfig());
@@ -805,7 +754,6 @@ test('recording captures the screen and each step, and stops cleanly', async (t)
   session.handleClientMessage(controller, { type: 'recorder', action: 'stop' });
   assert.equal(session.recording, null, 'stopping clears the recording');
 
-  // Typing after a stop is not part of any recording anymore.
   session.handleClientMessage(controller, { type: 'text', value: 'ignored' });
   const after = controller.messages.filter((m) => m.type === 'recorderStep');
   assert.equal(after.length, 2, 'nothing more should have been recorded once stopped');
@@ -852,8 +800,7 @@ test('a run of keystrokes into a password field collapses to a single marker', a
   session.attach(controller);
 
   session.handleClientMessage(controller, { type: 'recorder', action: 'start' });
-  // Set directly rather than through a real ReadBuffer round trip: see
-  // readbuffer.test.js for the attribute-bit detection this state comes from.
+  // Set directly; readbuffer.test.js covers the attribute-bit detection behind it.
   session.passwordField = true;
 
   session.handleClientMessage(controller, { type: 'text', value: 's' });
@@ -866,24 +813,16 @@ test('a run of keystrokes into a password field collapses to a single marker', a
   assert.equal(steps[0].action, undefined, 'no action and no args, so nothing typed ever leaks out');
   assert.equal(steps[0].args, undefined);
 
-  // The Enter that submits the field is not the field's own content, and is
-  // needed to replay the form — so it is recorded normally, password or not.
+  // The Enter that submits the field is not its content, and replay needs it.
   session.handleClientMessage(controller, { type: 'action', action: 'Enter' });
   assert.equal(steps.length, 2);
   assert.equal(steps[1].action, 'Enter');
 
-  // Back to an ordinary field, typing is recorded in full again.
   session.passwordField = false;
   session.handleClientMessage(controller, { type: 'text', value: 'next' });
   assert.equal(steps.length, 3);
   assert.deepEqual(steps[2], { screen: steps[2].screen, action: 'String', args: ['next'] });
 });
-
-/**
- * A page that loses its socket reconnects to the same session, so the server
- * has to still have it. `sessions.idleTimeoutMs` is exactly the window that
- * makes that possible, and the client is told how wide it is.
- */
 
 test('a session with no viewers left is closed once the idle timeout passes', async (t) => {
   const session = new Session(testConfig({ sessions: { idleTimeoutMs: 30 } }));

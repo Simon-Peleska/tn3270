@@ -1,11 +1,6 @@
 /**
- * Several host sessions in one tab, switched tmux-style with Ctrl-B and a digit
- * and laid out side by side with Ctrl-B and a shifted digit. Each is a b3270 of
- * its own — b3270 *is* one terminal, with nothing to multiplex — so the tab
- * keeps up to MAX_SESSIONS attached and decides which are on screen.
- *
- * The parts with no browser in them live here, so a test can drive them exactly
- * as a keyboard does.
+ * Several host sessions in one tab, switched tmux-style with Ctrl-B and a
+ * digit. The browser-free parts live here so tests can drive them.
  */
 
 export const MAX_SESSIONS = 4;
@@ -14,15 +9,13 @@ export const MAX_SESSIONS = 4;
 const PREFIX_KEY = 'b';
 
 /**
- * Ctrl on the way to the digit is a keydown of its own; cancelling because the
- * operator reached for it would be absurd.
+ * Reaching for a modifier must not cancel the armed switcher.
  * @type {ReadonlySet<string>}
  */
 const MODIFIER_KEYS = new Set(['Control', 'Shift', 'Alt', 'Meta', 'AltGraph']);
 
 /**
- * Which digit key was pressed, whatever it prints: Shift-2 is `"` on a German
- * keyboard and `@` on a US one, so only `code` names what the operator means.
+ * `code`, not `key`: Shift-2 prints `"` on a German keyboard and `@` on a US one.
  *
  * @param {KeyboardEvent} event
  * @returns {number} 1-9, or 0 when this was not a digit key
@@ -41,13 +34,8 @@ export class SessionPrefix {
   }
 
   /**
-   * What a keystroke means to the switcher. The caller does the work, so this
-   * stays a small state machine rather than half the application.
-   *
    * @param {KeyboardEvent} event
-   * @param {readonly string[]} [hintLetters] the letters Ctrl-B's field hints
-   *   currently offer, empty when hint mode is off or none are showing yet —
-   *   letters and digits never collide, so this rides the same prefix.
+   * @param {readonly string[]} [hintLetters] letters Ctrl-B's field hints offer
    * @returns {{ action: 'ignore' | 'arm' | 'cancel' } | { action: 'switch', index: number }
    *   | { action: 'layout', panes: number } | { action: 'hint', letter: string }}
    */
@@ -62,8 +50,7 @@ export class SessionPrefix {
         return { action: 'switch', index: digit - 1 };
       }
       if (hintLetters.includes(event.key)) return { action: 'hint', letter: event.key };
-      // Aimed at the switcher and missed; swallowed, so a slip of the hand
-      // cannot type into a host.
+      // Swallowed, so a missed switcher key cannot type into a host.
       return { action: 'cancel' };
     }
     if (event.ctrlKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === PREFIX_KEY) {
@@ -75,9 +62,8 @@ export class SessionPrefix {
 }
 
 /**
- * The tab's sessions travel in the URL fragment, in slot order: `#id1,,id3`. An
- * unopened slot is an empty entry rather than a missing one, so a digit keeps
- * pointing at the same session; sharing the address shares them all.
+ * Sessions travel in the URL fragment in slot order (`#id1,,id3`); an empty
+ * entry keeps later digits pointing at the same session.
  *
  * @param {string} hash with or without its leading `#`
  * @returns {(string | null)[]} exactly MAX_SESSIONS entries
@@ -102,9 +88,6 @@ export function sessionHash(ids) {
 }
 
 /**
- * The bar shown while the switcher is armed: what is on screen, what else is
- * running, and which digits are free.
- *
  * @param {readonly (string | null)[]} ids
  * @param {number} active
  * @returns {string}
@@ -121,11 +104,7 @@ export function switcherText(ids, active) {
 }
 
 /**
- * Where each pane sits in a fixed 2x2 grid: one fills it, two split it down the
- * middle, three give the first the left half and stack the rest on the right,
- * four make quarters. Always 2x2, so a layout change is new areas on the panes
- * already there and the browser never rebuilds the boxes the terminals sit in.
- *
+ * Always a 2x2 grid, so a layout change only moves panes instead of rebuilding them.
  * @type {readonly (readonly string[])[]}
  */
 const PANE_AREAS = [
@@ -136,7 +115,7 @@ const PANE_AREAS = [
 ];
 
 /**
- * @param {number} panes how many sessions are on screen at once
+ * @param {number} panes
  * @returns {readonly string[]} one `grid-area` per pane, in session order
  */
 export function paneAreas(panes) {

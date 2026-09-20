@@ -6,13 +6,10 @@ import { AppError } from './errors.js';
 import { logger } from './log.js';
 
 /**
- * The indications we act on. b3270 emits many more (setting, thumb, tls-hello,
- * ...); those are ignored by the session but still logged at debug level.
- *
  * @typedef {object} ScreenChange
  * @property {number} column 1-based
- * @property {string} [text] for character changes
- * @property {number} [count] for attribute-only runs
+ * @property {string} [text]
+ * @property {number} [count]
  * @property {string} [fg]
  * @property {string} [bg]
  * @property {string} [gr] comma-separated graphic rendition list
@@ -79,8 +76,7 @@ import { logger } from './log.js';
  */
 
 /**
- * b3270 wraps each indication in a single-key object, `{"screen": {...}}`.
- * `initialize` is an array of nested ones, flattened here into one stream.
+ * b3270 wraps each indication in a single-key object; `initialize` nests an array of them.
  *
  * @typedef {object} Indication
  * @property {string} kind
@@ -100,16 +96,13 @@ import { logger } from './log.js';
  * @property {number} model
  * @property {Record<string, string>} settings b3270 resources, passed as -xrm
  * @property {string[]} extraArgs
- * @property {import('./restproxy.js').RestEndpoint | null} rest where to serve
- *   b3270's own REST interface, or null for a session without one
+ * @property {import('./restproxy.js').RestEndpoint | null} rest
  * @property {string} sessionId
  * @property {B3270Handlers} handlers
  */
 
 /**
- * Resources go on the command line as `-xrm "b3270.<name>: <value>"`. A bare
- * name is qualified here; one that already carries a qualifier is passed as
- * written, since a few resources need a different one.
+ * A name that already carries a qualifier is left alone: a few resources need one other than `b3270.`.
  *
  * @param {Record<string, string>} settings
  * @returns {string[]}
@@ -134,12 +127,9 @@ export class B3270 {
     /** @type {boolean} */
     this.stopped = false;
 
-    /** @type {import('./restproxy.js').RestEndpoint | null} Where this child
-     * serves the REST interface; `restproxy.js` forwards to it. */
+    /** @type {import('./restproxy.js').RestEndpoint | null} */
     this.rest = options.rest;
-    /** @type {string | null} Holds the httpd's security cookie. b3270 reads it
-     * once at startup and remembers the value, but says nothing about when, so
-     * the directory lives as long as the child does. */
+    /** @type {string | null} b3270 never says when it reads the cookie file, so it lives as long as the child. */
     this.cookieDir = null;
     /** @type {string[]} */
     const restArgs = [];
@@ -156,8 +146,7 @@ export class B3270 {
     try {
       this.child = spawn(options.path, args, {
         stdio: ['pipe', 'pipe', 'pipe'],
-        // b3270 formats run-result's `time` with the C library's locale, so
-        // under de_DE it emits `"time":0,011`, which is not JSON.
+        // Locale decides run-result's `time` format: de_DE emits `"time":0,011`, not JSON.
         env: { ...process.env, LC_ALL: 'C', LC_NUMERIC: 'C' },
       });
     } catch (cause) {
@@ -245,8 +234,7 @@ export class B3270 {
   }
 
   /**
-   * Actions run asynchronously and may complete out of order, which is why each
-   * batch carries a tag.
+   * Batches complete out of order, hence the tag.
    *
    * @param {Array<{ action: string, args?: string[] }>} actions
    * @returns {string} the r-tag echoed back in the matching run-result

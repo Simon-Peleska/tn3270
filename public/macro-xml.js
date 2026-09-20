@@ -1,17 +1,9 @@
 /**
- * IBM Host On-Demand macro XML, the "basic" format (`usevars="false"`): no
- * quoting or escaping of string values, keystrokes written as plain text with
- * `[keyword]` tokens spliced in for the ones that are not literal characters.
+ * IBM Host On-Demand macro XML, "basic" format (`usevars="false"`): unescaped
+ * text with `[keyword]` tokens for non-literal keys. A few actions have no HOD
+ * keyword and get invented ones, so only a round trip through this app sees them.
  *
- * A handful of this app's actions (`DeleteField`, `DeleteWord`, `BackNewline`,
- * the mode-setting `Insert`) have no Host On-Demand keyword at all, and mouse
- * clicks are a different HOD action (`<mouseclick>`) that recording here does
- * not attempt to produce. Those get invented keyword names, clearly not from
- * IBM's own vocabulary, so a round trip through this app still works; a real
- * Host On-Demand macro will simply never contain them.
- *
- * @typedef {{ text: string, action: string, args: string[] }} MacroStep one
- *   typed run of characters followed by at most one 3270 action
+ * @typedef {{ text: string, action: string, args: string[] }} MacroStep
  * @typedef {{ name: string, steps: MacroStep[] }} Macro
  */
 
@@ -45,7 +37,7 @@ const ACTION_TO_KEYWORD = Object.freeze({
   CursorSelect: 'cursel',
 });
 
-/** @type {Readonly<Record<string, string>>} keyword -> action, the reverse of the above */
+/** @type {Readonly<Record<string, string>>} */
 const KEYWORD_TO_ACTION = Object.freeze(
   Object.fromEntries(Object.entries(ACTION_TO_KEYWORD).map(([action, keyword]) => [keyword, action])),
 );
@@ -53,9 +45,7 @@ const KEYWORD_TO_ACTION = Object.freeze(
 /**
  * @param {string} action
  * @param {string[]} args
- * @returns {string | null} the `[keyword]` token, or null for an action with
- *   nothing to write into an `<input>` value (a mouse click has its own HOD
- *   action, not a keystroke)
+ * @returns {string | null} null for an action with no `<input>` keyword
  */
 export function actionToKeyword(action, args) {
   if (action === 'PF' || action === 'PA') return `${action.toLowerCase()}${args[0] ?? '1'}`;
@@ -64,8 +54,7 @@ export function actionToKeyword(action, args) {
 
 /**
  * @param {string} keyword lowercased, without the brackets
- * @returns {{ action: string, args: string[] } | null} null when the keyword
- *   is not one this app recognises, so it is left as literal text instead
+ * @returns {{ action: string, args: string[] } | null}
  */
 export function keywordToAction(keyword) {
   const pf = /^pf(\d+)$/.exec(keyword);
@@ -108,10 +97,7 @@ function stepToValue(step) {
 }
 
 /**
- * Split a basic-format `<input value="...">` back into steps. A `[word]` this
- * app does not recognise is left as literal text rather than dropped, so an
- * unsupported real Host On-Demand action still types something recognisable
- * instead of vanishing silently.
+ * An unrecognised `[word]` stays literal text rather than vanishing.
  *
  * @param {string} value already entity-unescaped
  * @returns {MacroStep[]}
@@ -154,9 +140,8 @@ function macroToXml(macro) {
 
 /**
  * @param {Macro[]} macros
- * @returns {string} a single macro is one `<HAScript>` document, matching what
- *   Host On-Demand itself writes; more than one is wrapped in `<Macros>`, this
- *   app's own convenience for a batch export — not part of IBM's format.
+ * @returns {string} one macro is a bare `<HAScript>` as HOD writes it; several
+ *   are wrapped in `<Macros>`, which is this app's own, not IBM's
  */
 export function macrosToXml(macros) {
   if (macros.length === 1) return `<?xml version="1.0" encoding="UTF-8"?>\n${macroToXml(macros[0])}\n`;
@@ -165,11 +150,6 @@ export function macrosToXml(macros) {
 }
 
 /**
- * Tolerant of exactly what a real Host On-Demand export looks like (one bare
- * `<HAScript>`), this app's own `<Macros>`-wrapped batch, or several
- * `<HAScript>` documents simply concatenated — all three reduce to the same
- * scan, since only the `<HAScript>...</HAScript>` blocks themselves matter.
- *
  * @param {string} xml
  * @returns {Macro[]}
  */

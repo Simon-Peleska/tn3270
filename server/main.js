@@ -19,8 +19,7 @@ const registry = new SessionRegistry(config);
 
 const ROOT = resolve('.');
 const PUBLIC_DIR = join(ROOT, 'public');
-// Served straight out of node_modules so its wasm resolves relative to the
-// module URL.
+// Served out of node_modules so its wasm resolves relative to the module URL.
 const VENDOR_DIR = join(ROOT, 'node_modules', 'ghostty-web');
 
 /** @type {Readonly<Record<string, string>>} */
@@ -49,8 +48,6 @@ function sendJson(res, status, body) {
 }
 
 /**
- * One file out of a directory, refusing anything that escapes it.
- *
  * @param {import('node:http').ServerResponse} res
  * @param {string} dir
  * @param {string} relative
@@ -85,8 +82,7 @@ async function sendFile(res, dir, relative) {
 }
 
 /**
- * One header, first value only, trimmed and cut short. A header is whatever
- * the sender chose to put in it, and it ends up in the log.
+ * First value only, cut short: headers are sender-controlled and get logged.
  *
  * @param {import('node:http').IncomingMessage} req
  * @param {string} name
@@ -99,26 +95,19 @@ function header(req, name) {
 }
 
 /**
- * Who a request is from, as far as the log is concerned.
- *
- * Straight off the socket by default: `X-Forwarded-For` and `X-Remote-User`
- * are whatever the client typed unless something in front of this server sets
- * them, so believing them without a proxy there lets anyone write their own
- * address and name into the log. `security.trustProxyHeaders` is the operator
- * saying there is one. The user is empty until something authenticates — the
- * place NTLM terminated at a proxy hands its result over.
+ * Proxy headers are client-controlled unless a proxy really is in front, so
+ * they are only believed when `security.trustProxyHeaders` says so.
  *
  * @param {import('node:http').IncomingMessage} req
  * @returns {{ ip: string, user: string }}
  */
 function clientIdentity(req) {
-  // Node reports an IPv4 client on a dual-stack listener as `::ffff:127.0.0.1`,
-  // and the plain form is what anyone reading the log will search for.
+  // Node reports an IPv4 client on a dual-stack listener as `::ffff:127.0.0.1`.
   const address = req.socket.remoteAddress ?? '';
   const socketIp = address.startsWith('::ffff:') ? address.slice('::ffff:'.length) : address;
   if (!config.security.trustProxyHeaders) return { ip: socketIp, user: '' };
 
-  // Leftmost, which is the original client: each proxy appends its own peer.
+  // Leftmost is the original client: each proxy appends its own peer.
   const forwarded = header(req, 'x-forwarded-for');
   return { ip: forwarded === '' ? socketIp : forwarded, user: header(req, 'x-remote-user') };
 }
@@ -151,9 +140,8 @@ async function handleRequest(req, res) {
     return;
   }
 
-  // s3270's own `-httpd` URL shape, one session id up. Matched against the raw
-  // request target rather than the parsed path: an action's arguments arrive
-  // percent-encoded and must reach b3270 exactly as they were sent.
+  // Matched on the raw target, not the parsed path: percent-encoded action
+  // arguments must reach b3270 exactly as sent.
   const restMatch = /^\/api\/sessions\/([0-9a-fA-F-]{36})(\/3270\/.*)$/.exec(req.url ?? '');
   if (restMatch !== null) {
     const session = registry.get(String(restMatch[1]));
@@ -207,8 +195,7 @@ server.on('upgrade', (req, socket, head) => {
     return;
   }
 
-  // Read before the terminal exists, so the first repaint already matches the
-  // browser's saved preference instead of flashing host colours for a frame.
+  // Read before the first repaint, or it flashes host colours for a frame.
   const hostColors = url.searchParams.get('hostColors') !== '0';
   const requested = url.searchParams.get('fieldColor');
   const fieldColor = requested !== null && HEX_COLOR.test(requested) ? requested : null;

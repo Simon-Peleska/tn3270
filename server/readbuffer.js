@@ -1,16 +1,13 @@
 const FIELD_ATTRIBUTE = /^SF\(c0=([0-9a-f]{2})/;
 
 /**
- * The field under the cursor, from a `ReadBuffer(Ascii,Field)` result: some
- * `key: value` lines, then the content as hex byte pairs behind its attribute
- * byte —  `Contents: SF(c0=cd,41=f4) 20 20 68 65 6c 6c 6f 00 00 ...`
- *
- * `c0` is x3270's tag for the 3270 attribute byte; its 0x20 bit is the
- * protected flag, and an untyped cell reads back null rather than blank.
+ * From `ReadBuffer(Ascii,Field)`: `Contents: SF(c0=cd,41=f4) 68 69 00 00 ...`
+ * `c0` is the 3270 field attribute byte and 0x20 its protected bit; an untyped
+ * cell reads back null rather than blank.
  *
  * @param {string[]} lines
- * @returns {string | null} the content, blanks trimmed off both ends — or null
- *   if there was no field under the cursor, or it was protected
+ * @returns {string | null} trimmed content, or null if the field is protected
+ *   or there is none under the cursor
  */
 export function editableFieldText(lines) {
   const contents = lines.find((line) => line.startsWith('Contents: '));
@@ -26,17 +23,12 @@ export function editableFieldText(lines) {
 }
 
 /**
- * Which cells the operator may type into, and which are non-display (a
- * password field's own attribute never shows what is typed there — 3270
- * intensity bits `11`, mask 0x0c), from a whole-screen `ReadBuffer(Ascii)`:
- * one line per row, one token per cell —
- *   `SF(c0=f0) 55 73 65 72 3a 20 SF(c0=cd,41=f4) 00 00 00 ...`
+ * From a whole-screen `ReadBuffer(Ascii)`, one line per row, one token per cell:
+ * `SF(c0=f0) 55 73 65 72 SF(c0=cd,41=f4) 00 00 ...`
  *
- * `SA(...)` tokens carry an extended attribute for the cell after them and take
- * up no column; everything else is one cell. A field attribute holds until the
- * next one, wrapping round the end of the buffer — so row 0 starts in whatever
- * the *last* attribute on the screen says. An attribute's own cell is always
- * blank and never typeable.
+ * 0x20 is the protected bit, 0x0c the non-display (password) intensity bits.
+ * `SA(...)` tokens take up no column. A field attribute holds until the next
+ * one, wrapping past the end of the buffer, and its own cell is never typeable.
  *
  * @param {string[]} lines one per row, as b3270 returned them
  * @param {number} rows
@@ -64,8 +56,7 @@ export function fieldMap(lines, rows, cols) {
     }
   }
 
-  // An unformatted screen is technically all unprotected, but tinting every
-  // cell of it would be nonsense.
+  // An unformatted screen is all unprotected, but tinting every cell is wrong.
   if (lastAttribute === null) {
     return {
       editable: new Array(rows * cols).fill(false),

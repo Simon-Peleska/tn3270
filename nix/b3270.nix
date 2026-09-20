@@ -8,15 +8,8 @@
   openssl,
 }:
 
-# The nixpkgs `x3270` package builds the whole suite, which drags in all of X11.
-# We only ever run the headless back ends, so build just those. Note that
-# `--enable-b3270` alone is not enough: suite3270's configure enables every
-# component by default, so the unwanted ones must be turned off explicitly or
-# it fails looking for X (or, on Windows, for the interactive wc3270 client).
-# pr3287 and x3270if stay on because the b3270 build and install targets
-# depend on them. s3270 is headless too, and is the oracle the REST proxy's
-# comparison test measures itself against; the Windows build has no such test
-# to run, so it is left out of the cross build.
+# Headless back ends only. Every unwanted component needs an explicit
+# --disable: configure enables all of them and then goes looking for X11.
 let
   isWindows = stdenv.hostPlatform.isWindows;
 in
@@ -37,10 +30,8 @@ stdenv.mkDerivation (
         --replace-fail "int(os.environ['SOURCE_DATE_EPOCH'])" "1"
     '';
 
-    # The Windows half of configure.in expects to run inside an MSYS2/mingw
-    # shell, where the bare names "gcc", "gcc-ar" and "windres" already mean
-    # the right cross tools. Nix's mingw toolchain only exposes triple-prefixed
-    # names, so hand it a PATH where the short names resolve to them too.
+    # configure.in's Windows half expects MSYS2, where bare "gcc"/"gcc-ar"/"windres"
+    # are the cross tools; Nix's mingw exposes only triple-prefixed names.
     preConfigure = lib.optionalString isWindows ''
       mkdir -p .nix-windows-tools
       ln -s "${stdenv.cc}/bin/${stdenv.cc.targetPrefix}gcc" .nix-windows-tools/gcc
@@ -60,29 +51,15 @@ stdenv.mkDerivation (
     ]
     ++ (if isWindows then [ "--disable-s3270" ] else [ "--enable-s3270" ]);
 
-    # The build stamps a human-readable date into version.c; the bare epoch that
-    # nixpkgs sets is not in the format it expects.
+    # version.c wants a human-readable date, not the bare epoch nixpkgs sets.
     preBuild = ''
       if [ -n "$SOURCE_DATE_EPOCH" ]; then
         export SOURCE_DATE_EPOCH="$(date -u -d "@$SOURCE_DATE_EPOCH" '+%a %b %d %H:%M:%S UTC %Y')"
       fi
     '';
 
-    # `b3270-install` also installs pr3287 and x3270if, which the b3270 target
-    # depends on. They are small and pull in no extra libraries. Windows has no
-    # such install target at all - "make b3270" there just drops the .exe in
-    # place, so it is copied out by hand.
-    #
-    # Naming the targets rather than "make all" keeps the unbuilt components
-    # out of it: configure only disabled them, the top-level target still
-    # descends into every directory it knows about.
-    #
-    # One target per make run, though, never "make b3270 s3270": both goals
-    # descend into the same lib/3270 and lib/32xx, as separate sub-makes that
-    # know nothing of each other, and under -j that is two `ar` runs over one
-    # archive. CI caught it as "lib3270.a: error reading telnet_sio.o: file
-    # truncated". Inside a single goal -j is fine, which is why the shared
-    # libraries are already built by the time s3270 links.
+    # One goal per make run, never "make b3270 s3270": both descend into the same
+    # lib/3270 as unrelated sub-makes, which under -j is two `ar` runs on one archive.
     buildFlags = [ "b3270" ];
 
     postBuild = lib.optionalString (!isWindows) ''
@@ -91,8 +68,8 @@ stdenv.mkDerivation (
 
     enableParallelBuilding = true;
 
-    # Both install targets install pr3287 and x3270if, and two `install -c` runs
-    # racing over the same path fail outright rather than one winning.
+    # Both install targets install pr3287 and x3270if; two `install -c` runs on
+    # one path fail outright rather than one winning.
     enableParallelInstalling = false;
 
     nativeBuildInputs = [
@@ -100,10 +77,7 @@ stdenv.mkDerivation (
       python3
     ];
 
-    # Windows TLS goes through the native SChannel/CryptoAPI libraries that
-    # mingw already links (crypt32, secur32), and its libexpat is vendored and
-    # built from source by the suite's own Makefile - so neither dependency
-    # applies there.
+    # Windows uses the SChannel libraries mingw already links, and vendors expat.
     buildInputs = lib.optionals (!isWindows) [
       expat
       openssl

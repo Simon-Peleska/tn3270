@@ -1,16 +1,6 @@
 /**
- * The keymap dialog's export/import file, modelled on the one real,
- * documented piece of Host On-Demand keyboard-mapping syntax: an
- * administrator's `CustomKeyFunction` entries, written as
- * `KEY=ACTION` lines with `S-`/`C-`/`A-` modifier prefixes (`S-F1=...`). There
- * is no standalone, publicly documented file for a full HOD keymap export —
- * unlike macros, whose `HAScript` XML (`macro-xml.js`) really is what Host
- * On-Demand writes — so this format borrows HOD's real line syntax and
- * modifier prefixes, but the action words on the right of `=` are this app's
- * own (shared with macro-xml.js, plus `copy`/`paste`, which are not 3270
- * actions and so have no Host On-Demand keyword of any kind). The file
- * extension, `.kmp`, is the one HOD's own admin documentation uses for a "key
- * remap file".
+ * Keymap export/import: `KEY=action` lines with Host On-Demand's `S-`/`C-`/`A-`
+ * modifier prefixes, but this app's own action words on the right of `=`.
  *
  * @typedef {import('./keymap.js').Bindings} Bindings
  * @typedef {import('./keymap.js').Combo} Combo
@@ -29,15 +19,14 @@ const CODE_TO_KEY_NAME = Object.freeze({
   ControlLeft: 'LCtrl', ControlRight: 'RCtrl', ShiftLeft: 'LShift', ShiftRight: 'RShift', AltLeft: 'LAlt', AltRight: 'RAlt',
 });
 
-/** @type {Readonly<Record<string, string>>} key name -> code, the reverse of the above */
+/** @type {Readonly<Record<string, string>>} */
 const KEY_NAME_TO_CODE = Object.freeze(
   Object.fromEntries(Object.entries(CODE_TO_KEY_NAME).map(([code, name]) => [name, code])),
 );
 
 /**
  * @param {string} code a KeyboardEvent.code
- * @returns {string} its HOD-style key name; codes with no entry above (mostly
- *   punctuation, and every F-key) are already their own readable name
+ * @returns {string}
  */
 function codeToKeyName(code) {
   return CODE_TO_KEY_NAME[code] ?? code;
@@ -77,8 +66,7 @@ function keyToCombo(text) {
 
 /**
  * @param {string} commandId
- * @returns {string} the `=`-value for a command; PF/PA reuse macro-xml's own
- *   keyword logic so the two file formats never drift apart
+ * @returns {string}
  */
 function commandToKeyword(commandId) {
   if (commandId === 'Copy') return 'copy';
@@ -106,8 +94,7 @@ function keywordToCommand(keyword) {
 
 /**
  * @param {Bindings} bindings
- * @returns {string} one `KEY=action` line per binding, commands in the
- *   dialog's own order so a diff between two exports stays readable
+ * @returns {string}
  */
 export function keymapToText(bindings) {
   /** @type {string[]} */
@@ -122,9 +109,7 @@ export function keymapToText(bindings) {
 
 /**
  * @param {string} text
- * @returns {Bindings} a line this app does not recognise — a command keyword
- *   it has no match for, or a line with no `=` — is skipped rather than
- *   thrown away noisily; an import is still useful with a few such lines in it
+ * @returns {Bindings} unrecognised lines are skipped, not an error
  */
 export function parseKeymapText(text) {
   /** @type {Bindings} */

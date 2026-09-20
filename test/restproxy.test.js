@@ -10,19 +10,7 @@ import { FakeHost } from './fakehost.js';
 import { testConfig, waitUntil, collectingViewer } from './helpers.js';
 
 /**
- * Every session's b3270 serves s3270's own REST interface on a loopback port
- * of its own, and this app forwards to it: same protocol, one session id added
- * to the URL. See https://x3270.miraheze.org/wiki/HTTP_server and
- * https://x3270.miraheze.org/wiki/Action_syntax.
- *
- * So what is under test is the forwarding: that it is faithful, that the port a
- * session's emulator listens on is not open to everyone, and, where an s3270
- * binary is available, that the answers are the ones s3270 itself gives.
- */
-
-/**
- * A server and b3270's httpd both open a little after their process does, and
- * say nothing when they have: a request that gets an answer is the only sign.
+ * An httpd opens a little after its process does and says nothing when it has.
  *
  * @param {string} url
  * @param {string} [cookie]
@@ -125,18 +113,14 @@ test('the text and stext flavours are forwarded too, not just json', async (t) =
   assert.match(text.headers.get('content-type') ?? '', /text\/plain/);
   assert.match(await text.text(), /cpgid/);
 
-  // stext prefixes the status line, which is what makes it worth having: one
-  // request, answer and state together.
+  // stext prefixes the status line: one request, answer and state together.
   const stext = await fetch(`${sessionBase}/3270/rest/stext/Query(CodePage)`);
   assert.equal(stext.status, 200);
   const lines = (await stext.text()).trim().split(/\r?\n/);
   assert.ok(lines[0]?.startsWith('L U U N N'), `status line first, got ${JSON.stringify(lines[0])}`);
 });
 
-// Ported from s3270's own httpd test suite (s3270/Test/testHttpd.py in the
-// suite3270 source, TestS3270Httpd.s3270_httpd_json_error_test and
-// .test_s3270_httpd_persist): the real suite checks these by substring, and so
-// does this, against b3270's own wording.
+// From suite3270's s3270/Test/testHttpd.py, checked by substring as it does.
 test('json error responses match s3270\'s own httpd test suite (ported from testHttpd.py)', async (t) => {
   const server = await startServer();
   t.after(() => server.stop());
@@ -155,10 +139,7 @@ test('json error responses match s3270\'s own httpd test suite (ported from test
     assert.match(body.result[0], new RegExp(mustContain), path);
   }
 
-  // test_s3270_httpd_persist's actual point (connection reuse) isn't ours to
-  // test — fetch always reuses keep-alive connections — but the action it
-  // exercises is worth keeping: a toggle name with no second argument is a
-  // query, not a set, and answers with the toggle's current value.
+  // A toggle name with no second argument is a query, not a set.
   const query = await fetch(`${sessionBase}/Set(monoCase)`);
   assert.equal(query.status, 200);
   assert.equal((await query.json()).result[0], 'false');
@@ -176,9 +157,7 @@ test('an awkward argument survives the proxy and reaches the screen', async (t) 
   await host.waitForConnection();
   await host.sendRecords(1);
 
-  // PasteString takes one hex-encoded argument, so a string full of the
-  // characters that break action syntax can be put on the screen and read
-  // back: whatever the proxy did to the URL, this is what arrived.
+  // PasteString's argument is hex, so characters that break action syntax survive the round trip.
   const text = 'a, b "c"';
   const hex = Buffer.from(text, 'utf8').toString('hex');
   /** @param {string} call */
@@ -234,8 +213,6 @@ test('a REST call runs even for a viewer sharing would refuse', async (t) => {
   t.after(() => session.close());
   await session.ready;
 
-  // A browser viewer that is not the controller is refused with E3006 — that
-  // is the permission model REST is exempt from, on purpose.
   const controller = collectingViewer('controller');
   const observer = collectingViewer('observer');
   session.attach(controller);
@@ -252,7 +229,7 @@ test('a REST call runs even for a viewer sharing would refuse', async (t) => {
   assert.equal(answer.status, 200, 'the REST call must still go through');
 });
 
-/** @returns {string | null} an s3270 binary to compare against, if one is reachable */
+/** @returns {string | null} */
 function findS3270() {
   const candidate = process.env['S3270_PATH'] ?? 's3270';
   const probe = spawnSync(candidate, ['--version'], { stdio: 'pipe' });
@@ -267,10 +244,8 @@ test('comparison: what we forward is byte for byte what a real s3270 -httpd answ
   }
 
   const oraclePort = await freePort();
-  // Model 2 on both sides, where the alternate screen size is the default one
-  // too. Any larger model would differ in the status line's geometry while
-  // disconnected — b3270 starts in the model's own size, s3270 at 24x80 until
-  // a host switches it — and that difference is the emulators', not ours.
+  // Model 2 both sides: on any larger one the status line geometry differs while
+  // disconnected, b3270 starting at the model's size and s3270 at 24x80.
   const oracle = spawn(s3270, ['-model', '2', '-httpd', `127.0.0.1:${oraclePort}`], { stdio: 'pipe' });
   t.after(() => oracle.kill());
   await waitForAnswer(`http://127.0.0.1:${oraclePort}/3270/rest/json/Query(CodePage)`);

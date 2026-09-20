@@ -3,8 +3,7 @@ import assert from 'node:assert/strict';
 import { pasteSegments } from '../server/paste.js';
 
 /**
- * Builds a one-row array of cells from a picture string: '_' is an editable
- * blank, anything else is protected content holding that character.
+ * '_' is an editable blank; anything else is protected content.
  *
  * @param {string} picture
  * @returns {{ ch: string, editable: boolean }[]}
@@ -14,9 +13,7 @@ function row(picture) {
 }
 
 /**
- * Simulates what typing each segment onto b3270 would leave on the screen: a
- * PasteString skips over protected cells without writing them, the same as
- * pasteSegments assumed when it decided what to skip and what to consume.
+ * Stands in for b3270: PasteString skips protected cells without writing them.
  *
  * @param {{ ch: string, editable: boolean }[]} cells
  * @param {number} cols
@@ -61,9 +58,7 @@ test('a protected run matching by coincidence is left alone, not consumed, when 
 });
 
 test('a label the pasted line ends inside is left alone, not typed into the field below', () => {
-  // Copying a filled-in form off the screen and pasting it back where it came
-  // from: the second line is the "Address:" label itself, already on screen and
-  // longer than what is left of the line, so there is nothing to place there.
+  // The second pasted line is the "Address:" label itself, longer than the line has left.
   const cells = [
     ...row('name: ____          '),
     ...row('Address:            '),

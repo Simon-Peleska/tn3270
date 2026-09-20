@@ -4,11 +4,6 @@ import { parseJsonc, stripJsonc, validateConfig, loadConfig } from '../server/co
 import { parseClientMessage, isHostAllowed } from '../server/protocol.js';
 import { AppError } from '../server/errors.js';
 
-/**
- * The comment stripper is hand-written, so it is worth the boring tests: a bug
- * here silently changes settings rather than failing loudly.
- */
-
 test('comments are stripped and JSON survives', () => {
   const text = `{
     // a line comment
@@ -57,8 +52,7 @@ test('missing sections fall back to defaults', () => {
   assert.equal(config.server.host, '127.0.0.1');
   assert.equal(config.b3270.defaultHost, null);
   assert.deepEqual(config.security.allowedHosts, []);
-  // Believing a forwarded address has to be asked for: without a proxy in
-  // front, any client could write its own into the log.
+  // Without a proxy in front, any client could forge its own address.
   assert.equal(config.security.trustProxyHeaders, false);
   assert.equal(config.logFile, 'log/tn3270.log');
   assert.equal(config.logMaxBytes, 10 * 1024 * 1024);
@@ -94,8 +88,7 @@ test('any b3270 resource can be set, and reaches b3270 as a string', () => {
 });
 
 test('a resource name that is not a resource name is refused', () => {
-  // These land in `-xrm "b3270.<name>: <value>"`, so anything with a space or a
-  // colon in it would rewrite the argument rather than name a setting.
+  // These land in `-xrm "b3270.<name>: <value>"`: a space or colon rewrites the argument.
   for (const name of ['code page', 'codePage: x', '', 'a;b', '-model']) {
     assert.throws(() => validateConfig({ b3270: { settings: { [name]: 'x' } } }), (err) => {
       assert.ok(err instanceof AppError);
@@ -135,7 +128,6 @@ test('well-formed client messages are parsed', () => {
   assert.deepEqual(parseClientMessage('{"type":"connect","host":"mainframe:23"}'), {
     type: 'connect', host: 'mainframe:23',
   });
-  // The settings page draws over the terminal and asks for the screen back.
   assert.deepEqual(parseClientMessage('{"type":"refresh"}'), { type: 'refresh' });
   // A page whose host is locked in the config cannot name it.
   assert.deepEqual(parseClientMessage('{"type":"connect"}'), { type: 'connect', host: null });
@@ -165,8 +157,7 @@ test('only the four real 3270 models may be asked for', () => {
 });
 
 test('a paste far larger than a screen is refused', () => {
-  // b3270 types a paste one character at a time, so a stray copy of a log file
-  // would keep the session busy for minutes.
+  // b3270 types a paste one character at a time; a stray log file would busy it for minutes.
   assert.throws(() => parseClientMessage(JSON.stringify({ type: 'paste', text: 'x'.repeat(16385) })), (err) => {
     assert.ok(err instanceof AppError);
     assert.equal(err.code, 'E4003');
@@ -175,8 +166,7 @@ test('a paste far larger than a screen is refused', () => {
 });
 
 test('an action outside the allow-list never reaches b3270', () => {
-  // b3270 has actions that read files and run programs; the allow-list is the
-  // only thing standing between a browser and them.
+  // The allow-list is all that stands between a browser and b3270's file and program actions.
   for (const action of ['Source', 'Script', 'Execute', 'Trace', 'Quit']) {
     assert.throws(() => parseClientMessage(JSON.stringify({ type: 'action', action })), (err) => {
       assert.ok(err instanceof AppError);

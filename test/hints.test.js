@@ -3,8 +3,7 @@ import assert from 'node:assert/strict';
 import { computeHints } from '../server/hints.js';
 
 /**
- * Builds a one-row array of cells from a picture string: '_' is an editable
- * blank, anything else is protected content holding that character.
+ * '_' is an editable blank; anything else is protected content.
  *
  * @param {string} picture
  * @returns {{ ch: string, editable: boolean }[]}
@@ -34,8 +33,7 @@ test('a field with no label before it takes the first letter of the qwertz seque
 });
 
 test('a second field wanting the same first letter falls back to its next letter by keyboard order', () => {
-  // Both fields are labelled "name"; the second cannot have 'n' again, and
-  // reaches for 'e' (earlier in the qwertz row) before 'a' or 'm'.
+  // Both labelled "name": the second cannot reuse 'n', and 'e' comes first in the qwertz row.
   const { cells, cols } = screen(['name:  ____  name:  ____']);
   const hints = computeHints(cells, cols);
   assert.deepEqual(hints, [
@@ -45,8 +43,7 @@ test('a second field wanting the same first letter falls back to its next letter
 });
 
 test('a field whose entire label is already claimed falls back to normal qwertz labeling', () => {
-  // Both fields are labelled "a"; the second has nowhere left to go once the
-  // first has taken its only letter, and gets the next free sequence letter.
+  // The first field takes "a"'s only letter, so the second falls back to the sequence.
   const { cells, cols } = screen(['a: __  a: __']);
   const hints = computeHints(cells, cols);
   assert.deepEqual(hints, [

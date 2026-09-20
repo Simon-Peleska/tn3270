@@ -1,18 +1,12 @@
 import { AppError } from './errors.js';
 
 /**
- * The authoritative screen. b3270 sends incremental updates, so someone has to
- * hold the whole picture; holding it here is what lets a browser join an
- * existing session and be sent a complete repaint.
- *
  * @typedef {object} Cell
  * @property {string} ch A single character; ' ' when blank.
  * @property {string | null} fg Host colour name, or null for the screen default.
  * @property {string | null} bg
  * @property {string | null} gr Comma-separated graphic rendition, or null.
- * @property {boolean} editable In an unprotected field. Not in the screen
- *   indications — b3270 leaves field boundaries out of them — but from a
- *   ReadBuffer the session asks for; see applyFields.
+ * @property {boolean} editable From a ReadBuffer, not from screen indications.
  */
 
 /**
@@ -37,7 +31,7 @@ export class ScreenModel {
     this.rows = rows;
     /** @type {number} */
     this.cols = cols;
-    /** @type {boolean} Whether the host reports colours (3279 vs 3278). */
+    /** @type {boolean} Whether the host reports colours: 3279 vs 3278. */
     this.color = true;
     /** @type {string | null} */
     this.defaultFg = null;
@@ -47,10 +41,9 @@ export class ScreenModel {
     this.cursor = { row: 0, col: 0, enabled: false };
     /** @type {Cell[]} Row-major, length rows*cols. */
     this.cells = [];
-    /** @type {boolean} Whether the last field map read found any fields at
-     *  all — false for an unformatted screen, or before the first read. */
+    /** @type {boolean} False for an unformatted screen, or before the first read. */
     this.fieldsFormatted = false;
-    /** @type {Set<number>} Rows changed since takeDirtyRows() last ran. */
+    /** @type {Set<number>} */
     this.dirtyRows = new Set();
 
     this.resize(rows, cols);
@@ -88,8 +81,7 @@ export class ScreenModel {
   }
 
   /**
-   * Blank, no graphic rendition, cursor at the top left. The fg/bg given here
-   * become the screen-wide defaults.
+   * The fg/bg an erase carries become the screen-wide defaults.
    *
    * @param {import('./b3270.js').EraseIndication} erase
    * @returns {void}
@@ -116,11 +108,8 @@ export class ScreenModel {
   }
 
   /**
-   * Replace the "can the operator type here" map, dirtying only the rows that
-   * changed — the host rewrites the screen far oftener than its fields.
-   *
-   * @param {boolean[]} editable row-major, as {@link import('./readbuffer.js').fieldMap} returns
-   * @param {boolean} formatted whether the screen has any fields on it at all
+   * @param {boolean[]} editable row-major
+   * @param {boolean} formatted whether the screen has any fields at all
    * @returns {void}
    */
   applyFields(editable, formatted) {
@@ -135,7 +124,6 @@ export class ScreenModel {
   }
 
   /**
-   * Screen dimensions only change while disconnected.
    * @param {import('./b3270.js').ScreenModeIndication} mode
    * @returns {void}
    */
@@ -147,9 +135,8 @@ export class ScreenModel {
   }
 
   /**
-   * One screen indication; b3270's rows and columns are 1-based. Attributes are
-   * retained per cell, as its protocol specifies: a change that does not
-   * mention `fg` leaves every covered cell's foreground alone.
+   * b3270's rows and columns are 1-based, and an attribute it does not mention
+   * keeps its old value per cell.
    *
    * @param {import('./b3270.js').ScreenIndication} screen
    * @returns {void}
@@ -191,7 +178,7 @@ export class ScreenModel {
   }
 
   /**
-   * @returns {number[]} dirty row indices, ascending; the set is then cleared.
+   * @returns {number[]} dirty row indices, ascending; the set is then cleared
    */
   takeDirtyRows() {
     const rows = [...this.dirtyRows].sort((a, b) => a - b);
@@ -201,7 +188,7 @@ export class ScreenModel {
 
   /**
    * @param {number} row 0-based
-   * @returns {string} the row's text, trailing blanks included
+   * @returns {string} trailing blanks included
    */
   rowText(row) {
     let text = '';
