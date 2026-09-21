@@ -5,7 +5,7 @@ import { AppError } from './errors.js';
  * @typedef {object} Config
  * @property {{ host: string, port: number }} server
  * @property {{ path: string, model: number, defaultHost: string | null, settings: Record<string, string>, extraArgs: string[] }} b3270
- * @property {{ maxSessions: number, maxViewersPerSession: number, idleTimeoutMs: number, allowMultipleControllers: boolean }} sessions
+ * @property {{ maxSessions: number, maxViewersPerSession: number, idleTimeoutMs: number, allowMultipleControllers: boolean, allowAutomation: boolean }} sessions
  * @property {{ allowedHosts: string[], trustProxyHeaders: boolean }} security
  * @property {'debug' | 'info' | 'warn' | 'error'} logLevel
  * @property {string} logFile Empty is stderr only.
@@ -94,6 +94,7 @@ const DEFAULTS = {
     maxViewersPerSession: 8,
     idleTimeoutMs: 300000,
     allowMultipleControllers: false,
+    allowAutomation: false,
   },
   security: { allowedHosts: [], trustProxyHeaders: false },
   logLevel: 'info',
@@ -258,6 +259,7 @@ export function validateConfig(raw) {
       maxViewersPerSession: num(sessionsSection, 'maxViewersPerSession', 'sessions.maxViewersPerSession', DEFAULTS.sessions.maxViewersPerSession, 1, 1000),
       idleTimeoutMs: num(sessionsSection, 'idleTimeoutMs', 'sessions.idleTimeoutMs', DEFAULTS.sessions.idleTimeoutMs, 0, 86400000),
       allowMultipleControllers: bool(sessionsSection, 'allowMultipleControllers', 'sessions.allowMultipleControllers', DEFAULTS.sessions.allowMultipleControllers),
+      allowAutomation: bool(sessionsSection, 'allowAutomation', 'sessions.allowAutomation', DEFAULTS.sessions.allowAutomation),
     },
     security: {
       allowedHosts: strArray(securitySection, 'allowedHosts', 'security.allowedHosts', DEFAULTS.security.allowedHosts),

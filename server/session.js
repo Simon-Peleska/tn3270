@@ -54,6 +54,8 @@ export class Session {
     this.allowSharing = true;
     /** @type {boolean} */
     this.allowSharedEditing = config.sessions.allowMultipleControllers;
+    /** @type {boolean} Whether REST calls over the proxy may drive this session. */
+    this.allowAutomation = config.sessions.allowAutomation;
     /** @type {boolean} Any viewer's input sets this, and it is never cleared. */
     this.touched = false;
     /** @type {number | null} A model waiting for the connection to go away. */
@@ -487,6 +489,7 @@ export class Session {
       viewers: this.viewers.size,
       allowSharing: this.allowSharing,
       allowSharedEditing: this.allowSharedEditing,
+      allowAutomation: this.allowAutomation,
       idleTimeoutMs: this.config.sessions.idleTimeoutMs,
     });
 
@@ -646,6 +649,11 @@ export class Session {
         }
         this.broadcastStatus();
         return;
+      case 'automation':
+        this.log.info('automation over REST', { allowed: message.allowed, viewer: viewer.id });
+        this.allowAutomation = message.allowed;
+        this.broadcastStatus();
+        return;
       case 'recorder':
         this.recording = message.action === 'start' ? { steps: [] } : null;
         return;
@@ -714,6 +722,7 @@ export class Session {
         viewers: this.viewers.size,
         allowSharing: this.allowSharing,
         allowSharedEditing: this.allowSharedEditing,
+        allowAutomation: this.allowAutomation,
       });
     }
   }

@@ -35,6 +35,13 @@ const CONTENT_TYPES = Object.freeze({
   '.woff2': 'font/woff2',
 });
 
+/** @type {Readonly<Record<string, number>>} Anything not named here is a 500. */
+const ERROR_STATUS = Object.freeze({
+  E3001: 404,
+  E6001: 404,
+  E7004: 403,
+});
+
 /**
  * @param {import('node:http').ServerResponse} res
  * @param {number} status
@@ -165,7 +172,7 @@ const server = createServer((req, res) => {
       res.end();
       return;
     }
-    sendJson(res, code === 'E6001' || code === 'E3001' ? 404 : 500, { code, message: summary });
+    sendJson(res, ERROR_STATUS[code] ?? 500, { code, message: summary });
   });
 });
 

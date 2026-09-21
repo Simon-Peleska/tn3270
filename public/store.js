@@ -13,7 +13,10 @@ const KEYMAP_KEY = 'keymap';
  * @typedef {object} StoredSettings
  * @property {string} theme
  * @property {string} font
- * @property {number} model
+ * @property {number | null} model the screen model every new session is asked
+ *   for, null until one has been chosen here
+ * @property {'model' | 'fit' | 'dynamic' | null} screenSize what the model is
+ *   stretched to, likewise null until chosen
  * @property {boolean} hostColors
  * @property {number} fitFontSize the size "fit to window" measures from, not
  *   the size on screen

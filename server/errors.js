@@ -52,6 +52,7 @@ const ERRORS = Object.freeze({
   // E7001 is spent.
   E7002: 'REST is not available for this session',
   E7003: 'REST request to b3270 failed',
+  E7004: 'Automation is turned off for this session',
 });
 
 /** @typedef {keyof typeof ERRORS} ErrorCode */

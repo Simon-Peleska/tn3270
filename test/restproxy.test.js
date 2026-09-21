@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
+import { WebSocket } from 'ws';
 import { writeFile, rm } from 'node:fs/promises';
 import { Session } from '../server/session.js';
 import { AppError } from '../server/errors.js';
@@ -41,7 +42,7 @@ function freePort() {
 }
 
 /**
- * @param {{ defaultHost?: string, model?: number }} [options]
+ * @param {{ defaultHost?: string, model?: number, automation?: boolean }} [options]
  * @returns {Promise<{ port: number, stop: () => Promise<void> }>}
  */
 async function startServer(options = {}) {
@@ -52,7 +53,8 @@ async function startServer(options = {}) {
     JSON.stringify({
       server: { host: '127.0.0.1', port },
       b3270: { path: 'b3270', model: options.model ?? 4, ...(options.defaultHost ? { defaultHost: options.defaultHost } : {}) },
-      sessions: { idleTimeoutMs: 0 },
+      // Off is the shipped default, so a REST test says so rather than assuming it.
+      sessions: { idleTimeoutMs: 0, allowAutomation: options.automation ?? true },
       logLevel: 'warn',
       logFile: '',
     }),
@@ -227,6 +229,37 @@ test('a REST call runs even for a viewer sharing would refuse', async (t) => {
   await waitForAnswer(url, endpoint.cookie);
   const answer = await fetch(url, { headers: { cookie: `x3270-security=${endpoint.cookie}` } });
   assert.equal(answer.status, 200, 'the REST call must still go through');
+});
+
+test('the proxy is shut with 403 and E7004 until the controller opens it, and shuts again on request', async (t) => {
+  const server = await startServer({ automation: false });
+  t.after(() => server.stop());
+  const base = `http://127.0.0.1:${server.port}`;
+
+  const created = await (await fetch(`${base}/api/sessions`, { method: 'POST' })).json();
+  const call = () => fetch(`${base}/api/sessions/${created.id}/3270/rest/json/Query(CodePage)`);
+
+  const refused = await call();
+  assert.equal(refused.status, 403, 'a session nobody has opened up takes no REST calls');
+  assert.equal((await refused.json()).code, 'E7004');
+
+  const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws/${created.id}`);
+  t.after(() => socket.close());
+  /** @type {Record<string, unknown>[]} */
+  const messages = [];
+  socket.on('message', (data, isBinary) => {
+    if (!isBinary) messages.push(JSON.parse(String(data)));
+  });
+  await waitUntil(() => messages.some((m) => m['type'] === 'hello'), 'the viewer to say hello');
+  assert.equal(messages[0]?.['allowAutomation'], false);
+
+  socket.send(JSON.stringify({ type: 'automation', allowed: true }));
+  await waitUntil(() => messages.some((m) => m['type'] === 'status' && m['allowAutomation'] === true), 'automation to be allowed');
+  assert.equal((await call()).status, 200, 'the controller turning it on is enough: nothing restarts');
+
+  socket.send(JSON.stringify({ type: 'automation', allowed: false }));
+  await waitUntil(() => messages.some((m) => m['type'] === 'status' && m['allowAutomation'] === false), 'automation to be denied again');
+  assert.equal((await call()).status, 403);
 });
 
 /** @returns {string | null} */

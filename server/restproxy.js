@@ -42,11 +42,16 @@ export function reserveRestEndpoint() {
  * @returns {Promise<unknown>}
  */
 export async function proxyRestRequest(req, res, session, target, client = { ip: '', user: '' }) {
-  const endpoint = session.b3270.rest;
-  if (endpoint === null) throw new AppError('E7002', session.id);
-
   const log = session.log.with(client);
   const method = req.method ?? 'GET';
+
+  const endpoint = session.b3270.rest;
+  if (endpoint === null) throw new AppError('E7002', session.id);
+  if (!session.allowAutomation) {
+    log.warn('REST refused: automation is off for this session', { method, target });
+    throw new AppError('E7004', session.id);
+  }
+
   log.info('REST proxying', { method, target });
 
   return new Promise((resolve, reject) => {

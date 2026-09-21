@@ -248,7 +248,19 @@ const MAX_FIT_FONT_SIZE = 32;
 // and 62x160 is the biggest screen an IBM host will bind.
 const DYNAMIC_ROWS = 62;
 const DYNAMIC_COLS = 160;
-const DYNAMIC_OVERSIZE = `${DYNAMIC_COLS}x${DYNAMIC_ROWS}`;
+export const DYNAMIC_OVERSIZE = `${DYNAMIC_COLS}x${DYNAMIC_ROWS}`;
+
+/**
+ * A fit is measured from the window it was made in, so what is worth saving is
+ * the choice, not the cells that window happened to come to.
+ *
+ * @param {string} oversize
+ * @returns {'model' | 'fit' | 'dynamic'}
+ */
+export function sizeMode(oversize) {
+  if (oversize === DYNAMIC_OVERSIZE) return 'dynamic';
+  return oversize === '' ? 'model' : 'fit';
+}
 
 /**
  * @typedef {object} SettingsDeps
@@ -261,6 +273,7 @@ const DYNAMIC_OVERSIZE = `${DYNAMIC_COLS}x${DYNAMIC_ROWS}`;
  * @property {(fontSize: number) => { cols: number, rows: number } | null} windowFit
  * @property {(enabled: boolean) => void} applyHostColors
  * @property {(allowView: boolean, allowEdit: boolean) => void} applySharing
+ * @property {(allowed: boolean) => void} applyAutomation
  * @property {(host: string | null) => void} connect
  * @property {() => void} restore
  * @property {(settings: import('./store.js').StoredSettings) => void} persist
@@ -290,6 +303,11 @@ export class SettingsPage {
     this.pendingOversize = '';
     /** @type {number} */
     this.fitFontSize = DEFAULT_FIT_FONT_SIZE;
+    /** @type {number | null} The model saved in this browser: every tab starts
+     * its own sessions, so each one has to ask for it again. */
+    this.savedModel = null;
+    /** @type {'model' | 'fit' | 'dynamic' | null} The saved screen size. */
+    this.savedSize = null;
     /** @type {import('../server/b3270.js').ModelInfo[]} */
     this.models = [];
     /** @type {boolean} */
@@ -306,6 +324,8 @@ export class SettingsPage {
     this.allowSharing = true;
     /** @type {boolean} */
     this.allowSharedEditing = false;
+    /** @type {boolean} Whether REST over the proxy may drive this session. */
+    this.allowAutomation = false;
     /** @type {boolean} Ctrl-B field hints: local only, so no deps.applyX(). */
     this.hints = false;
   }
@@ -321,7 +341,7 @@ export class SettingsPage {
    * @returns {boolean}
    */
   fitsWindow() {
-    return this.oversize !== '' && this.oversize !== DYNAMIC_OVERSIZE;
+    return sizeMode(this.oversize) === 'fit';
   }
 
   /**
@@ -362,8 +382,13 @@ export class SettingsPage {
     }
     rows.push({ key: 'hostColors', label: 'Host colors', value: this.hostColors ? 'On' : 'Off' });
     rows.push({ key: 'hints', label: 'Field hints (Ctrl-B)', value: this.hints ? 'On' : 'Off' });
-    // Only the controller's call: it is their screen being shared.
+    // Only the controller's call: it is their screen being shared and driven.
     if (this.role === 'controller') {
+      rows.push({
+        key: 'allowAutomation',
+        label: 'Allow automation',
+        value: this.allowAutomation ? 'On' : 'Off',
+      });
       rows.push({ key: 'allowSharing', label: 'Allow sharing', value: this.allowSharing ? 'On' : 'Off' });
       if (this.allowSharing) {
         rows.push({
@@ -420,6 +445,15 @@ export class SettingsPage {
     if (this.open) this.draw();
   }
 
+  /**
+   * @param {boolean} allowAutomation
+   * @returns {void}
+   */
+  setAutomation(allowAutomation) {
+    this.allowAutomation = allowAutomation;
+    if (this.open) this.draw();
+  }
+
   /** @returns {Theme} */
   theme() {
     return THEMES[this.themeIndex] ?? THEMES[0];
@@ -443,6 +477,10 @@ export class SettingsPage {
     if (font !== -1) this.fontIndex = font;
     if (typeof saved.hostColors === 'boolean') this.hostColors = saved.hostColors;
     if (typeof saved.hints === 'boolean') this.hints = saved.hints;
+    if (typeof saved.model === 'number') this.savedModel = saved.model;
+    if (saved.screenSize === 'model' || saved.screenSize === 'fit' || saved.screenSize === 'dynamic') {
+      this.savedSize = saved.screenSize;
+    }
     if (typeof saved.fitFontSize === 'number') {
       this.fitFontSize = Math.max(MIN_FIT_FONT_SIZE, Math.min(MAX_FIT_FONT_SIZE, saved.fitFontSize));
     }
@@ -453,7 +491,8 @@ export class SettingsPage {
     this.deps.persist({
       theme: this.theme().name,
       font: this.font().name,
-      model: this.model,
+      model: this.savedModel,
+      screenSize: this.savedSize,
       hostColors: this.hostColors,
       fitFontSize: this.fitFontSize,
       hints: this.hints,
@@ -581,6 +620,8 @@ export class SettingsPage {
       }
       if (this.pendingModel !== this.model) this.deps.applyModel(this.pendingModel);
       if (this.pendingOversize !== this.oversize) this.deps.applyOversize(this.pendingOversize);
+      this.savedModel = this.pendingModel;
+      this.savedSize = sizeMode(this.pendingOversize);
       this.save();
       this.close();
       return true;
@@ -640,6 +681,9 @@ export class SettingsPage {
     } else if (key === 'allowSharedEditing') {
       this.allowSharedEditing = !this.allowSharedEditing;
       this.deps.applySharing(this.allowSharing, this.allowSharedEditing);
+    } else if (key === 'allowAutomation') {
+      this.allowAutomation = !this.allowAutomation;
+      this.deps.applyAutomation(this.allowAutomation);
     }
     this.draw();
   }

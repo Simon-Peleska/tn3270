@@ -18,9 +18,10 @@ export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
  * @typedef {{ type: 'copyField' }} CopyFieldMessage
  * @typedef {{ type: 'fieldColor', color: string | null }} FieldColorMessage
  * @typedef {{ type: 'sharing', allowView: boolean, allowEdit: boolean }} SharingMessage
+ * @typedef {{ type: 'automation', allowed: boolean }} AutomationMessage whether REST over the proxy may drive this session
  * @typedef {{ type: 'recorder', action: 'start' | 'stop' }} RecorderMessage
  * @typedef {{ type: 'hints' }} HintsRequestMessage
- * @typedef {ActionMessage | TextMessage | PasteMessage | ConnectMessage | DisconnectMessage | ModelMessage | OversizeMessage | RefreshMessage | HostColorsMessage | CopyFieldMessage | FieldColorMessage | SharingMessage | RecorderMessage | HintsRequestMessage} ClientMessage
+ * @typedef {ActionMessage | TextMessage | PasteMessage | ConnectMessage | DisconnectMessage | ModelMessage | OversizeMessage | RefreshMessage | HostColorsMessage | CopyFieldMessage | FieldColorMessage | SharingMessage | AutomationMessage | RecorderMessage | HintsRequestMessage} ClientMessage
  *
  * @typedef {object} HelloMessage
  * @property {'hello'} type
@@ -35,6 +36,7 @@ export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
  * @property {number} viewers
  * @property {boolean} allowSharing
  * @property {boolean} allowSharedEditing
+ * @property {boolean} allowAutomation
  * @property {number} idleTimeoutMs How long a viewerless session survives; 0 never reaps.
  *
  * Always sent immediately before the repaint that uses it, so no viewer writes
@@ -59,6 +61,7 @@ export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
  * @property {number} viewers
  * @property {boolean} allowSharing
  * @property {boolean} allowSharedEditing
+ * @property {boolean} allowAutomation
  *
  * @typedef {object} ErrorMessage
  * @property {'error'} type
@@ -189,6 +192,12 @@ export function parseClientMessage(raw) {
       throw new AppError('E4002', 'sharing.allowView and allowEdit must be booleans');
     }
     return { type: 'sharing', allowView, allowEdit };
+  }
+
+  if (type === 'automation') {
+    const allowed = message['allowed'];
+    if (typeof allowed !== 'boolean') throw new AppError('E4002', 'automation.allowed must be a boolean');
+    return { type: 'automation', allowed };
   }
 
   if (type === 'recorder') {

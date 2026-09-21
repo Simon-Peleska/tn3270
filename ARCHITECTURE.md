@@ -143,6 +143,16 @@ drives the session whoever else is watching. That is safe for the screen model
 because b3270 still emits its indications on the JSON stream for actions that
 arrived over httpd, so viewers see the result the same as any other change.
 
+It is not automatically safe for the person watching, though, so the controller
+owns a switch over it — **Allow automation**, off until asked for — and the proxy
+is the one place it is checked: one `session.allowAutomation` test in
+`proxyRestRequest` before anything is forwarded, `E7004` and a 403 when it is
+off. b3270 itself is left alone; its httpd keeps listening and keeps its cookie,
+because a switch that respawns the emulator would cost the session its host
+connection. `sessions.allowAutomation` moves the starting point rather than
+capping it, which is what a browserless automation deployment sets — there is no
+controller there to ask.
+
 ## Screen size: who decides what
 
 Two different things are called "size", and keeping them apart is what makes the

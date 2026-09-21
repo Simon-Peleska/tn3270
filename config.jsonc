@@ -43,7 +43,12 @@
     "idleTimeoutMs": 300000,
 
     // true lets every viewer type, not just the first to attach.
-    "allowMultipleControllers": false
+    "allowMultipleControllers": false,
+
+    // Whether a new session takes REST calls over /3270/. The controller can
+    // turn it on or off for their own session from the settings page either
+    // way; true is for automation that runs with no browser to ask.
+    "allowAutomation": false
   },
 
   "security": {

@@ -45,6 +45,7 @@ function fixture(fit = () => ({ cols: 158, rows: 60 })) {
     /** @type {number} */ restores: 0,
     /** @type {import('../public/store.js').StoredSettings[]} */ saved: [],
     /** @type {{ allowView: boolean, allowEdit: boolean }[]} */ sharing: [],
+    /** @type {boolean[]} */ automation: [],
   };
   const page = new SettingsPage({
     write: (bytes) => calls.written.push(bytes),
@@ -56,6 +57,7 @@ function fixture(fit = () => ({ cols: 158, rows: 60 })) {
     windowFit: fit,
     applyHostColors: (enabled) => calls.hostColors.push(enabled),
     applySharing: (allowView, allowEdit) => calls.sharing.push({ allowView, allowEdit }),
+    applyAutomation: (allowed) => calls.automation.push(allowed),
     connect: (host) => calls.hosts.push(host),
     restore: () => { calls.restores += 1; },
     persist: (values) => calls.saved.push(values),
@@ -109,7 +111,8 @@ test('theme and font apply as you scroll through them and are saved by name', ()
   assert.deepEqual(calls.saved.at(-1), {
     theme: THEMES[1]?.name,
     font: FONTS[1]?.name,
-    model: 2,
+    model: null,
+    screenSize: null,
     hostColors: true,
     fitFontSize: 16,
     hints: false,
@@ -141,7 +144,8 @@ test('host colours default on, and either arrow key flips the saved toggle', () 
   assert.deepEqual(calls.saved.at(-1), {
     theme: THEMES[0]?.name,
     font: FONTS[0]?.name,
-    model: 2,
+    model: null,
+    screenSize: null,
     hostColors: false,
     fitFontSize: 16,
     hints: false,
@@ -190,12 +194,35 @@ test('the controller can toggle sharing and shared editing, and turning sharing 
   assert.deepEqual(calls.sharing.at(-1), { allowView: false, allowEdit: false });
   assert.deepEqual(
     page.rows().map((row) => row.key),
-    ['theme', 'font', 'model', 'fit', 'hostColors', 'hints', 'allowSharing'],
+    ['theme', 'font', 'model', 'fit', 'hostColors', 'hints', 'allowAutomation', 'allowSharing'],
     'shared editing is only offered while sharing is on',
   );
 });
 
-test('an observer is not offered the sharing rows at all — it is not their session to share', () => {
+test('the controller can allow automation over the REST proxy, and the server is told at once', () => {
+  const { page, calls } = fixture();
+  page.connected = true;
+  page.show();
+
+  page.selected = page.rows().findIndex((row) => row.key === 'allowAutomation');
+  assert.equal(page.rows()[page.selected]?.value, 'Off', 'automation starts off');
+
+  page.handleKey(key({ key: 'ArrowRight' }));
+  assert.equal(page.allowAutomation, true);
+  assert.deepEqual(calls.automation, [true], 'no Enter needed: it opens a door that is shut now');
+  assert.equal(page.rows()[page.selected]?.value, 'On');
+
+  page.handleKey(key({ key: 'ArrowLeft' }));
+  assert.equal(page.allowAutomation, false);
+  assert.deepEqual(calls.automation, [true, false]);
+
+  // The server owns the answer: the session may have been started open to it.
+  page.setAutomation(true);
+  assert.equal(page.rows()[page.selected]?.value, 'On');
+  assert.deepEqual(calls.automation, [true, false], 'being told is not asking');
+});
+
+test('an observer is not offered the automation or sharing rows at all — it is not their session to share', () => {
   const { page } = fixture();
   page.connected = true;
   page.setRole('observer');
@@ -242,7 +269,7 @@ test('the dynamic screen is one more choice after the models, asked for as an ov
   assert.equal(page.pendingOversize, '160x62');
   assert.deepEqual(
     page.rows().map((row) => row.key),
-    ['theme', 'font', 'model', 'hostColors', 'hints', 'allowSharing', 'allowSharedEditing'],
+    ['theme', 'font', 'model', 'hostColors', 'hints', 'allowAutomation', 'allowSharing', 'allowSharedEditing'],
     'a size asked for by name has nothing to fit to the window',
   );
 
@@ -309,11 +336,11 @@ test('the text size appears with the fit and drives what it measures', () => {
   page.show();
 
   page.selected = 3;
-  assert.equal(page.rows().length, 8, 'the text size is not offered while the fit is off');
+  assert.equal(page.rows().length, 9, 'the text size is not offered while the fit is off');
 
   page.handleKey(key({ key: 'ArrowRight' }));
   assert.equal(page.pendingOversize, '166x40');
-  assert.equal(page.rows().length, 9);
+  assert.equal(page.rows().length, 10);
   assert.equal(page.rows()[4]?.key, 'fitSize');
   assert.equal(page.rows()[4]?.value, '16 px');
 
@@ -369,6 +396,57 @@ test('a pane too narrow for the model still asks for the model', () => {
   const [cols, rows] = page.fitSize({ cols: 4, rows: 40 }, 2).split('x').map(Number);
   assert.equal(cols, 80);
   assert.ok((cols ?? 0) * (rows ?? 0) <= 16383, `80x${rows} does not fit the buffer`);
+});
+
+test('applying a screen size saves it as a choice, so another tab can ask for it again', () => {
+  const { page, calls } = fixture();
+  page.connected = true;
+  page.show();
+
+  page.selected = 2;
+  page.handleKey(key({ key: 'ArrowRight' }));
+  page.selected = 3;
+  page.handleKey(key({ key: 'ArrowRight' }));
+  page.handleKey(key({ key: 'Enter' }));
+
+  assert.deepEqual(calls.models, [3]);
+  assert.deepEqual(calls.oversizes, ['158x60']);
+  assert.equal(calls.saved.at(-1)?.model, 3);
+  assert.equal(calls.saved.at(-1)?.screenSize, 'fit', 'the measured cells are this window, the choice is not');
+
+  const fresh = fixture().page;
+  fresh.restoreSaved(calls.saved.at(-1) ?? {});
+  assert.equal(fresh.savedModel, 3);
+  assert.equal(fresh.savedSize, 'fit');
+});
+
+test('the dynamic screen and a plain model are saved as themselves', () => {
+  const { page, calls } = fixture();
+  page.connected = true;
+  page.show();
+
+  page.selected = 2;
+  page.handleKey(key({ key: 'ArrowLeft' }));
+  assert.equal(page.pendingOversize, '160x62', 'one step back from model 2 is the dynamic screen');
+  page.handleKey(key({ key: 'Enter' }));
+  assert.equal(calls.saved.at(-1)?.screenSize, 'dynamic');
+
+  page.setOversize('160x62');
+  page.show();
+  page.selected = 2;
+  page.handleKey(key({ key: 'ArrowRight' }));
+  page.handleKey(key({ key: 'Enter' }));
+  assert.equal(calls.saved.at(-1)?.screenSize, 'model');
+});
+
+test('a size from a version that never saved one is left to the server', () => {
+  const { page } = fixture();
+  page.restoreSaved({ theme: 'Amber' });
+  assert.equal(page.savedModel, null);
+  assert.equal(page.savedSize, null, 'no choice means the server default stands');
+
+  page.restoreSaved({ screenSize: /** @type {'fit'} */ ('a size from a later version') });
+  assert.equal(page.savedSize, null);
 });
 
 test('nothing the page draws runs off the right edge', () => {

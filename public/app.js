@@ -1,6 +1,6 @@
 import { init, Terminal } from '/vendor/dist/ghostty-web.js';
 import { mapKey } from '/keymap.js';
-import { ESC, SettingsPage, paint, terminalColors } from '/settings.js';
+import { DYNAMIC_OVERSIZE, ESC, SettingsPage, paint, terminalColors } from '/settings.js';
 import { MacrosPage } from '/macros.js';
 import { RecorderPage } from '/recorder.js';
 import { KeymapPage } from '/keymap-page.js';
@@ -181,6 +181,8 @@ async function liveSessionIds() {
  * @property {number | null} reconnectUntil null while connected, Infinity when
  *   the server never reaps
  * @property {number} idleTimeoutMs
+ * @property {boolean} started this tab opened the session, so the size saved
+ *   here is its to ask for; one attached to by id belongs to whoever is in it
  * @property {number} model
  * @property {string} oversize
  * @property {number} cols
@@ -192,6 +194,7 @@ async function liveSessionIds() {
  * @property {'controller' | 'observer'} role
  * @property {boolean} allowSharing
  * @property {boolean} allowSharedEditing
+ * @property {boolean} allowAutomation
  */
 
 /** @type {(SessionSlot | null)[]} */
@@ -224,21 +227,22 @@ function activeTerminal() {
 
 /**
  * @param {string} id
+ * @param {boolean} started
  * @param {number} cols
  * @param {number} rows including the OIA row
  * @returns {SessionSlot}
  */
-function newSlot(id, cols = 0, rows = 0) {
+function newSlot(id, started = false, cols = 0, rows = 0) {
   const pane = document.createElement('div');
   pane.className = 'pane';
   pane.hidden = true;
   screenEl.append(pane);
   /** @type {SessionSlot} */
   const slot = {
-    id, pane, terminal: null, socket: null,
+    id, pane, terminal: null, socket: null, started,
     attempt: 0, reconnectUntil: null, idleTimeoutMs: DEFAULT_IDLE_TIMEOUT_MS,
     model: 0, oversize: '', cols, rows, connection: '', connected: null, touched: false, locked: false,
-    role: 'controller', allowSharing: true, allowSharedEditing: false,
+    role: 'controller', allowSharing: true, allowSharedEditing: false, allowAutomation: false,
   };
   pane.addEventListener('click', (event) => paneClicked(slot, event));
   return slot;
@@ -354,6 +358,7 @@ const settings = new SettingsPage({
   },
   applyHostColors: (enabled) => send({ type: 'hostColors', enabled }),
   applySharing: (allowView, allowEdit) => send({ type: 'sharing', allowView, allowEdit }),
+  applyAutomation: (allowed) => send({ type: 'automation', allowed }),
   connect: connectHost,
   restore: () => send({ type: 'refresh' }),
   persist: (values) => {
@@ -607,14 +612,39 @@ function paneFit(slot, fontSize) {
  * Changing the oversize drops and reopens the host connection.
  *
  * @param {SessionSlot} slot
+ * @param {number} model the floor the fit may not go below, which is the one
+ *   being asked for rather than the one in force when both move together
  * @returns {void}
  */
-function fitSession(slot) {
+function fitSession(slot, model = slot.model) {
   const fit = paneFit(slot, settings.fitFontSize);
   if (fit === null) return;
-  const value = settings.fitSize(fit, slot.model);
+  const value = settings.fitSize(fit, model);
   if (value === slot.oversize) return;
   sendQuietly(slot, { type: 'oversize', value });
+}
+
+/**
+ * A new tab starts its own sessions at the server's default size, so the size
+ * this browser saved has to be asked for again each time one says hello.
+ *
+ * @param {SessionSlot} slot
+ * @returns {void}
+ */
+function applySavedSize(slot) {
+  if (!slot.started) return;
+
+  const model = settings.savedModel ?? slot.model;
+  if (model !== slot.model) sendQuietly(slot, { type: 'model', model });
+
+  // Nothing saved leaves the stretch to the server's own configuration.
+  if (settings.savedSize === null) return;
+  if (settings.savedSize === 'fit') {
+    fitSession(slot, model);
+    return;
+  }
+  const value = settings.savedSize === 'dynamic' ? DYNAMIC_OVERSIZE : '';
+  if (value !== slot.oversize) sendQuietly(slot, { type: 'oversize', value });
 }
 
 /**
@@ -775,6 +805,7 @@ async function startFreshSession(slot) {
     return;
   }
   slot.id = created.id;
+  slot.started = true;
   slot.cols = created.cols;
   slot.rows = created.rows + 1;
   writeHash();
@@ -808,6 +839,7 @@ function handleServerMessage(slot, message) {
     slot.rows = message.rows + 1;
     if (message.type === 'hello') settings.models = message.models;
     if (!slot.pane.hidden) ensureTerminal(slot);
+    if (message.type === 'hello') applySavedSize(slot);
     if (!onScreen) return;
     settings.setModel(slot.model);
     settings.setOversize(slot.oversize);
@@ -815,8 +847,10 @@ function handleServerMessage(slot, message) {
       slot.role = message.role;
       slot.allowSharing = message.allowSharing;
       slot.allowSharedEditing = message.allowSharedEditing;
+      slot.allowAutomation = message.allowAutomation;
       settings.setRole(slot.role);
       settings.setSharing(slot.allowSharing, slot.allowSharedEditing);
+      settings.setAutomation(slot.allowAutomation);
       settings.setHostLocked(message.hostLocked);
       screenEl.focus();
     }
@@ -847,6 +881,7 @@ function handleServerMessage(slot, message) {
     slot.role = message.role;
     slot.allowSharing = message.allowSharing;
     slot.allowSharedEditing = message.allowSharedEditing;
+    slot.allowAutomation = message.allowAutomation;
     if (!slot.locked) {
       const waiters = unlockWaiters.get(slot);
       if (waiters !== undefined) {
@@ -862,6 +897,7 @@ function handleServerMessage(slot, message) {
     settings.connected = message.connected;
     settings.setRole(slot.role);
     settings.setSharing(slot.allowSharing, slot.allowSharedEditing);
+    settings.setAutomation(slot.allowAutomation);
     // b3270 reports the host without its port, so never overwrite a typed one.
     if (message.host !== null && settings.host === '' && !settings.hostLocked) settings.setHost(message.host);
     if (changed) {
@@ -945,6 +981,7 @@ function focusSlot(index) {
   settings.connected = slot.connected === true;
   settings.setRole(slot.role);
   settings.setSharing(slot.allowSharing, slot.allowSharedEditing);
+  settings.setAutomation(slot.allowAutomation);
   applyLayout();
   screenEl.focus();
 
@@ -962,7 +999,7 @@ async function ensureSlot(index) {
   const existing = sessions[index];
   if (existing != null) return existing;
   const created = await createSession();
-  const slot = newSlot(created.id, created.cols, created.rows + 1);
+  const slot = newSlot(created.id, true, created.cols, created.rows + 1);
   sessions[index] = slot;
   writeHash();
   connectSocket(slot);
@@ -1199,7 +1236,7 @@ if (wanted.some((id) => id !== null)) {
 
 if (!sessions.some((slot) => slot !== null)) {
   const created = await createSession();
-  sessions[0] = newSlot(created.id, created.cols, created.rows + 1);
+  sessions[0] = newSlot(created.id, true, created.cols, created.rows + 1);
 }
 writeHash();
 
