@@ -1,6 +1,13 @@
-import { closeSync, fstatSync, mkdirSync, openSync, renameSync, writeSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { AppError, describeError } from './errors.js';
+import {
+  closeSync,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  renameSync,
+  writeSync,
+} from "node:fs";
+import { dirname } from "node:path";
+import { AppError, describeError } from "./errors.js";
 
 /** @typedef {'debug' | 'info' | 'warn' | 'error'} Level */
 
@@ -8,7 +15,7 @@ import { AppError, describeError } from './errors.js';
 const RANK = { debug: 10, info: 20, warn: 30, error: 40 };
 
 /** @type {Level} */
-let threshold = 'info';
+let threshold = "info";
 
 /** @type {{ path: string, maxBytes: number, fd: number, size: number } | null} */
 let file = null;
@@ -28,10 +35,10 @@ export function setLogLevel(level) {
 export function setLogFile(path, maxBytes) {
   try {
     mkdirSync(dirname(path), { recursive: true });
-    const fd = openSync(path, 'a');
+    const fd = openSync(path, "a");
     file = { path, maxBytes, fd, size: fstatSync(fd).size };
   } catch (cause) {
-    throw new AppError('E6005', path, cause);
+    throw new AppError("E6005", path, cause);
   }
 }
 
@@ -55,12 +62,12 @@ function write(line) {
     if (file.size < file.maxBytes) return;
     closeSync(file.fd);
     renameSync(file.path, `${file.path}.1`);
-    file.fd = openSync(file.path, 'a');
+    file.fd = openSync(file.path, "a");
     file.size = 0;
   } catch (cause) {
     // Losing the file must not take the server down, nor throw on every later
     // line: drop to stderr only.
-    const lost = new AppError('E6006', file.path, cause);
+    const lost = new AppError("E6006", file.path, cause);
     file = null;
     process.stderr.write(`${lost.message}\n`);
   }
@@ -75,12 +82,19 @@ function write(line) {
  */
 function emit(level, scope, context, message, fields) {
   if (RANK[level] < RANK[threshold]) return;
-  const parts = [new Date().toISOString(), level.toUpperCase().padEnd(5), scope, message];
+  const parts = [
+    new Date().toISOString(),
+    level.toUpperCase().padEnd(5),
+    scope,
+    message,
+  ];
   for (const [key, value] of Object.entries({ ...context, ...fields })) {
-    if (value === '' || value === null || value === undefined) continue;
-    parts.push(`${key}=${typeof value === 'string' ? value : JSON.stringify(value)}`);
+    if (value === "" || value === null || value === undefined) continue;
+    parts.push(
+      `${key}=${typeof value === "string" ? value : JSON.stringify(value)}`,
+    );
   }
-  write(parts.join(' ') + '\n');
+  write(parts.join(" ") + "\n");
 }
 
 /**
@@ -92,11 +106,11 @@ function emit(level, scope, context, message, fields) {
 export function logger(scope, context = {}) {
   return {
     /** @param {string} m @param {Record<string, unknown>} [f] */
-    debug: (m, f) => emit('debug', scope, context, m, f),
+    debug: (m, f) => emit("debug", scope, context, m, f),
     /** @param {string} m @param {Record<string, unknown>} [f] */
-    info: (m, f) => emit('info', scope, context, m, f),
+    info: (m, f) => emit("info", scope, context, m, f),
     /** @param {string} m @param {Record<string, unknown>} [f] */
-    warn: (m, f) => emit('warn', scope, context, m, f),
+    warn: (m, f) => emit("warn", scope, context, m, f),
 
     /**
      * A one-line summary with the code, then the error so no stack is lost.
@@ -105,7 +119,7 @@ export function logger(scope, context = {}) {
      */
     error: (err, f) => {
       const { code, summary } = describeError(err);
-      emit('error', scope, context, `[${code}] ${summary}`, f);
+      emit("error", scope, context, `[${code}] ${summary}`, f);
       if (RANK.error >= RANK[threshold] && err instanceof Error) {
         write(`${err.stack ?? err.message}\n`);
         if (err.cause) write(`  caused by: ${String(err.cause)}\n`);

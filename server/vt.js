@@ -1,9 +1,13 @@
 import {
-  ansiColorIndex, grToSgr, MONO_FOREGROUND, DEFAULT_BACKGROUND,
-  DEFAULT_FOREGROUND_ANSI, DEFAULT_BACKGROUND_ANSI,
-} from './colors.js';
+  ansiColorIndex,
+  grToSgr,
+  MONO_FOREGROUND,
+  DEFAULT_BACKGROUND,
+  DEFAULT_FOREGROUND_ANSI,
+  DEFAULT_BACKGROUND_ANSI,
+} from "./colors.js";
 
-const ESC = '\x1b';
+const ESC = "\x1b";
 
 /**
  * Autowrap must stay off: a character in the last cell would scroll the screen
@@ -32,7 +36,7 @@ function bgSgr(index) {
  * @returns {number[] | null} SGR parameters selecting it as a background
  */
 export function fieldTintSgr(hex) {
-  const match = /^#([0-9a-fA-F]{6})$/.exec(hex ?? '');
+  const match = /^#([0-9a-fA-F]{6})$/.exec(hex ?? "");
   if (match === null) return null;
   const value = Number.parseInt(match[1], 16);
   return [48, 2, (value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff];
@@ -53,19 +57,38 @@ function sgrFor(cell, screen, hostColors, fieldTint) {
     // Nothing to add; the renderer's own default paints this cell.
   } else if (screen.color) {
     // The host names a colour; the viewer's theme picks the RGB, via the ANSI slot.
-    const fg = ansiColorIndex(cell.fg ?? screen.defaultFg, DEFAULT_FOREGROUND_ANSI);
-    const bg = ansiColorIndex(cell.bg ?? screen.defaultBg, DEFAULT_BACKGROUND_ANSI);
+    const fg = ansiColorIndex(
+      cell.fg ?? screen.defaultFg,
+      DEFAULT_FOREGROUND_ANSI,
+    );
+    const bg = ansiColorIndex(
+      cell.bg ?? screen.defaultBg,
+      DEFAULT_BACKGROUND_ANSI,
+    );
     params.push(fgSgr(fg), bgSgr(bg));
   } else {
     // A 3278 reports no colour, so it is the green-on-black terminal it is.
-    params.push(38, 2, MONO_FOREGROUND[0], MONO_FOREGROUND[1], MONO_FOREGROUND[2]);
-    params.push(48, 2, DEFAULT_BACKGROUND[0], DEFAULT_BACKGROUND[1], DEFAULT_BACKGROUND[2]);
+    params.push(
+      38,
+      2,
+      MONO_FOREGROUND[0],
+      MONO_FOREGROUND[1],
+      MONO_FOREGROUND[2],
+    );
+    params.push(
+      48,
+      2,
+      DEFAULT_BACKGROUND[0],
+      DEFAULT_BACKGROUND[1],
+      DEFAULT_BACKGROUND[2],
+    );
   }
 
   // Last background wins, so tint after the host's — but never over one it named itself.
-  if (fieldTint !== null && cell.editable && cell.bg === null) params.push(...fieldTint);
+  if (fieldTint !== null && cell.editable && cell.bg === null)
+    params.push(...fieldTint);
 
-  return `${ESC}[${params.join(';')}m`;
+  return `${ESC}[${params.join(";")}m`;
 }
 
 /**
@@ -74,7 +97,9 @@ function sgrFor(cell, screen, hostColors, fieldTint) {
  * @returns {boolean}
  */
 function sameStyle(a, b) {
-  return a.fg === b.fg && a.bg === b.bg && a.gr === b.gr && a.editable === b.editable;
+  return (
+    a.fg === b.fg && a.bg === b.bg && a.gr === b.gr && a.editable === b.editable
+  );
 }
 
 /**
@@ -88,7 +113,7 @@ function encodeRow(screen, row, hostColors, fieldTint) {
   let out = `${ESC}[${row + 1};1H`;
   /** @type {import('./screen.js').Cell | null} */
   let styled = null;
-  let runText = '';
+  let runText = "";
 
   for (let col = 0; col < screen.cols; col++) {
     const cell = screen.cellAt(row, col);
@@ -96,9 +121,9 @@ function encodeRow(screen, row, hostColors, fieldTint) {
       out += runText;
       out += sgrFor(cell, screen, hostColors, fieldTint);
       styled = cell;
-      runText = '';
+      runText = "";
     }
-    runText += cell.ch === '' ? ' ' : cell.ch;
+    runText += cell.ch === "" ? " " : cell.ch;
   }
   return out + runText;
 }
@@ -130,10 +155,16 @@ function encodeCursor(screen) {
  * @param {string | null} [fieldColor]
  * @returns {string}
  */
-export function fullRepaint(screen, oiaText, hostColors = true, fieldColor = null) {
+export function fullRepaint(
+  screen,
+  oiaText,
+  hostColors = true,
+  fieldColor = null,
+) {
   const fieldTint = fieldTintSgr(fieldColor);
   let out = INIT_SEQUENCE;
-  for (let row = 0; row < screen.rows; row++) out += encodeRow(screen, row, hostColors, fieldTint);
+  for (let row = 0; row < screen.rows; row++)
+    out += encodeRow(screen, row, hostColors, fieldTint);
   out += encodeOia(screen.rows + 1, oiaText);
   return out + encodeCursor(screen);
 }
@@ -147,13 +178,21 @@ export function fullRepaint(screen, oiaText, hostColors = true, fieldColor = nul
  * @param {string | null} [fieldColor]
  * @returns {string}
  */
-export function delta(screen, dirtyRows, oiaText, oiaChanged, hostColors = true, fieldColor = null) {
+export function delta(
+  screen,
+  dirtyRows,
+  oiaText,
+  oiaChanged,
+  hostColors = true,
+  fieldColor = null,
+) {
   if (dirtyRows.length === 0 && !oiaChanged) return encodeCursor(screen);
 
   const fieldTint = fieldTintSgr(fieldColor);
-  let out = '';
+  let out = "";
   for (const row of dirtyRows) {
-    if (row >= 0 && row < screen.rows) out += encodeRow(screen, row, hostColors, fieldTint);
+    if (row >= 0 && row < screen.rows)
+      out += encodeRow(screen, row, hostColors, fieldTint);
   }
   if (oiaChanged) out += encodeOia(screen.rows + 1, oiaText);
   return out + encodeCursor(screen);

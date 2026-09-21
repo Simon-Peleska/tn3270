@@ -1,7 +1,7 @@
 {
   "server": {
     "host": "127.0.0.1",
-    "port": 8017
+    "port": 8017,
   },
 
   // One b3270 process per session.
@@ -32,7 +32,7 @@
     },
 
     // Appended verbatim, for options that are not resources: ["-cafile", "/path/to/ca.pem"]
-    "extraArgs": []
+    "extraArgs": [],
   },
 
   "sessions": {
@@ -48,7 +48,7 @@
     // Whether a new session takes REST calls over /3270/. The controller can
     // turn it on or off for their own session from the settings page either
     // way; true is for automation that runs with no browser to ask.
-    "allowAutomation": false
+    "allowAutomation": false,
   },
 
   "security": {
@@ -57,7 +57,7 @@
 
     // Take the client address and name from "X-Forwarded-For" / "X-Remote-User".
     // Only with a reverse proxy in front: otherwise anyone can forge both.
-    "trustProxyHeaders": false
+    "trustProxyHeaders": false,
   },
 
   // "debug" logs every line exchanged with b3270. Very noisy.
@@ -65,5 +65,5 @@
 
   // Logged to stderr as well. Rolls over to "<logFile>.1" past logMaxBytes; "" is stderr only.
   "logFile": "log/tn3270.log",
-  "logMaxBytes": 10485760
+  "logMaxBytes": 10485760,
 }

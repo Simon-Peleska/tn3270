@@ -34,7 +34,7 @@ Status as of 2026-09-20.
 - [x] **REST** — `server/restproxy.js`: each session's b3270 runs its own
       `-httpd` on a loopback port guarded by a per-session cookie, and
       `/api/sessions/<id>/3270/…` is forwarded to it untouched. s3270's REST
-      interface, because it *is* s3270's REST interface — verified byte for byte
+      interface, because it _is_ s3270's REST interface — verified byte for byte
       against a real `s3270 -httpd`.
 - [x] **Frontend** — `public/index.html`, `app.js`, `keymap.js`, `style.css`:
       ghostty-web renderer, binary frames → `write()`, text frames → status and
@@ -115,7 +115,7 @@ By hand, without a mainframe:
    page, in place.
 
 All five were walked through in a real browser on 2026-09-07 and passed, plus one
-more that is not in the list: killing and restarting the *server* with two tabs
+more that is not in the list: killing and restarting the _server_ with two tabs
 attached. Both tabs recovered on their own, each with a fresh session id — the
 `opened` flag in `connectSocket` is what distinguishes "the link dropped, retry
 the same session" from "the server is new, get another session".

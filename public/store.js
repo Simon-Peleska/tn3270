@@ -3,11 +3,11 @@
  * it survives the "clear site data on close" settings people use here.
  */
 
-const DB_NAME = 'tn3270';
-const STORE_NAME = 'settings';
-const KEY = 'ui';
-const MACROS_KEY = 'macros';
-const KEYMAP_KEY = 'keymap';
+const DB_NAME = "tn3270";
+const STORE_NAME = "settings";
+const KEY = "ui";
+const MACROS_KEY = "macros";
+const KEYMAP_KEY = "keymap";
 
 /**
  * @typedef {object} StoredSettings
@@ -31,9 +31,11 @@ function open() {
   if (opening !== null) return opening;
   opening = new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, 1);
-    request.onupgradeneeded = () => request.result.createObjectStore(STORE_NAME);
+    request.onupgradeneeded = () =>
+      request.result.createObjectStore(STORE_NAME);
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error('indexedDB.open failed'));
+    request.onerror = () =>
+      reject(request.error ?? new Error("indexedDB.open failed"));
   });
   return opening;
 }
@@ -44,12 +46,15 @@ function open() {
 export async function loadSettings() {
   const db = await open();
   return new Promise((resolve, reject) => {
-    const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(KEY);
+    const request = db
+      .transaction(STORE_NAME, "readonly")
+      .objectStore(STORE_NAME)
+      .get(KEY);
     request.onsuccess = () => {
       const value = request.result;
-      resolve(typeof value === 'object' && value !== null ? value : {});
+      resolve(typeof value === "object" && value !== null ? value : {});
     };
-    request.onerror = () => reject(request.error ?? new Error('read failed'));
+    request.onerror = () => reject(request.error ?? new Error("read failed"));
   });
 }
 
@@ -60,10 +65,11 @@ export async function loadSettings() {
 export async function saveSettings(settings) {
   const db = await open();
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, 'readwrite');
+    const transaction = db.transaction(STORE_NAME, "readwrite");
     transaction.objectStore(STORE_NAME).put(settings, KEY);
     transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error ?? new Error('write failed'));
+    transaction.onerror = () =>
+      reject(transaction.error ?? new Error("write failed"));
   });
 }
 
@@ -73,9 +79,13 @@ export async function saveSettings(settings) {
 export async function loadMacros() {
   const db = await open();
   return new Promise((resolve, reject) => {
-    const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(MACROS_KEY);
-    request.onsuccess = () => resolve(Array.isArray(request.result) ? request.result : []);
-    request.onerror = () => reject(request.error ?? new Error('read failed'));
+    const request = db
+      .transaction(STORE_NAME, "readonly")
+      .objectStore(STORE_NAME)
+      .get(MACROS_KEY);
+    request.onsuccess = () =>
+      resolve(Array.isArray(request.result) ? request.result : []);
+    request.onerror = () => reject(request.error ?? new Error("read failed"));
   });
 }
 
@@ -86,10 +96,11 @@ export async function loadMacros() {
 export async function saveMacros(macros) {
   const db = await open();
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, 'readwrite');
+    const transaction = db.transaction(STORE_NAME, "readwrite");
     transaction.objectStore(STORE_NAME).put(macros, MACROS_KEY);
     transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error ?? new Error('write failed'));
+    transaction.onerror = () =>
+      reject(transaction.error ?? new Error("write failed"));
   });
 }
 
@@ -99,12 +110,15 @@ export async function saveMacros(macros) {
 export async function loadKeymap() {
   const db = await open();
   return new Promise((resolve, reject) => {
-    const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(KEYMAP_KEY);
+    const request = db
+      .transaction(STORE_NAME, "readonly")
+      .objectStore(STORE_NAME)
+      .get(KEYMAP_KEY);
     request.onsuccess = () => {
       const value = request.result;
-      resolve(typeof value === 'object' && value !== null ? value : {});
+      resolve(typeof value === "object" && value !== null ? value : {});
     };
-    request.onerror = () => reject(request.error ?? new Error('read failed'));
+    request.onerror = () => reject(request.error ?? new Error("read failed"));
   });
 }
 
@@ -115,9 +129,10 @@ export async function loadKeymap() {
 export async function saveKeymap(bindings) {
   const db = await open();
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, 'readwrite');
+    const transaction = db.transaction(STORE_NAME, "readwrite");
     transaction.objectStore(STORE_NAME).put(bindings, KEYMAP_KEY);
     transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error ?? new Error('write failed'));
+    transaction.onerror = () =>
+      reject(transaction.error ?? new Error("write failed"));
   });
 }

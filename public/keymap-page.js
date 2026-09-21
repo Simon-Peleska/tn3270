@@ -1,8 +1,16 @@
 /** The keys panel: an ISPF list of commands, each opening its own list of keystrokes. */
 
-import { Panel } from './panel.js';
-import { COMMANDS, DEFAULT_BINDINGS, buildLookup, comboFromEvent, comboLabel, serializeCombo, withDefaults } from './keymap.js';
-import { keymapToText, parseKeymapText } from './keymap-format.js';
+import { Panel } from "./panel.js";
+import {
+  COMMANDS,
+  DEFAULT_BINDINGS,
+  buildLookup,
+  comboFromEvent,
+  comboLabel,
+  serializeCombo,
+  withDefaults,
+} from "./keymap.js";
+import { keymapToText, parseKeymapText } from "./keymap-format.js";
 
 /** @typedef {import('./keymap.js').Bindings} Bindings */
 /** @typedef {import('./keymap.js').Combo} Combo */
@@ -14,7 +22,8 @@ import { keymapToText, parseKeymapText } from './keymap-format.js';
 function cloneBindings(bindings) {
   /** @type {Bindings} */
   const copy = {};
-  for (const [commandId, combos] of Object.entries(bindings)) copy[commandId] = combos.map((combo) => ({ ...combo }));
+  for (const [commandId, combos] of Object.entries(bindings))
+    copy[commandId] = combos.map((combo) => ({ ...combo }));
   return copy;
 }
 
@@ -33,14 +42,13 @@ function cloneBindings(bindings) {
 export class KeymapPage extends Panel {
   /** @param {KeymapDeps} deps */
   constructor(deps) {
-    super('keymap', deps);
-    this.toggleKey = 'KeyK';
+    super("keymap", deps);
     /** @type {Bindings} */
     this.bindings = cloneBindings(DEFAULT_BINDINGS);
     /** @type {Map<string, string>} */
     this.lookupCache = buildLookup(this.bindings);
     /** @type {'commands' | 'combos' | 'listening'} */
-    this.mode = 'commands';
+    this.mode = "commands";
     /** @type {number} index into COMMANDS, the command the combos list belongs to */
     this.commandIndex = 0;
   }
@@ -90,7 +98,9 @@ export class KeymapPage extends Panel {
     const key = serializeCombo(combo);
     for (const [otherId, combos] of Object.entries(this.bindings)) {
       if (otherId === commandId) continue;
-      const kept = combos.filter((existing) => serializeCombo(existing) !== key);
+      const kept = combos.filter(
+        (existing) => serializeCombo(existing) !== key,
+      );
       if (kept.length !== combos.length) this.bindings[otherId] = kept;
     }
     const current = this.combosFor(commandId);
@@ -117,7 +127,7 @@ export class KeymapPage extends Panel {
   resetToDefaults() {
     this.bindings = cloneBindings(DEFAULT_BINDINGS);
     this.commandIndex = 0;
-    this.mode = 'commands';
+    this.mode = "commands";
     this.persist();
   }
 
@@ -125,7 +135,7 @@ export class KeymapPage extends Panel {
    * @returns {void}
    */
   exportKeymap() {
-    this.deps.exportFile('keymap.kmp', keymapToText(this.bindings));
+    this.deps.exportFile("keymap.kmp", keymapToText(this.bindings));
   }
 
   /** @returns {Promise<void>} */
@@ -139,14 +149,18 @@ export class KeymapPage extends Panel {
       try {
         imported = parseKeymapText(text);
       } catch (cause) {
-        this.deps.error('E5012', `A keymap file could not be read: ${String(cause)}`);
+        this.deps.error(
+          "E5012",
+          `A keymap file could not be read: ${String(cause)}`,
+        );
         continue;
       }
-      for (const [commandId, combos] of Object.entries(imported)) merged[commandId] = combos;
+      for (const [commandId, combos] of Object.entries(imported))
+        merged[commandId] = combos;
     }
     this.bindings = merged;
     this.commandIndex = 0;
-    this.mode = 'commands';
+    this.mode = "commands";
     this.persist();
     if (this.open) this.draw();
   }
@@ -156,19 +170,27 @@ export class KeymapPage extends Panel {
    * @returns {import('./panel.js').PanelLine[]}
    */
   lines() {
-    if (this.mode === 'commands') {
+    if (this.mode === "commands") {
       return COMMANDS.map((command, index) => ({
         option: String(index + 1),
         text: command.label,
         dots: true,
-        value: this.combosFor(command.id).map(comboLabel).join(', ') || '(unbound)',
+        value:
+          this.combosFor(command.id).map(comboLabel).join(", ") || "(unbound)",
       }));
     }
     const command = COMMANDS[this.commandIndex];
     const combos = command ? this.combosFor(command.id) : [];
     return [
-      ...combos.map((combo, index) => ({ option: String(index + 1), text: comboLabel(combo) })),
-      { option: 'A', text: 'Add a binding', value: 'Enter listens for a keystroke' },
+      ...combos.map((combo, index) => ({
+        option: String(index + 1),
+        text: comboLabel(combo),
+      })),
+      {
+        option: "A",
+        text: "Add a binding",
+        value: "Enter listens for a keystroke",
+      },
     ];
   }
 
@@ -177,8 +199,8 @@ export class KeymapPage extends Panel {
    * @returns {string}
    */
   title() {
-    if (this.mode === 'commands') return 'TN3270 Keys';
-    return `TN3270 Keys - ${COMMANDS[this.commandIndex]?.label ?? ''}`;
+    if (this.mode === "commands") return "TN3270 Keys";
+    return `TN3270 Keys - ${COMMANDS[this.commandIndex]?.label ?? ""}`;
   }
 
   /**
@@ -194,9 +216,13 @@ export class KeymapPage extends Panel {
    * @returns {string[]}
    */
   notes() {
-    if (this.mode === 'listening') return ['Press the key combination to bind. F12 or Escape cancels.'];
-    if (this.mode === 'combos') return ['Enter opens a line, DELETE removes a binding, F3 goes back to the list.'];
-    return ['Enter opens a command. Commands: EXPORT, IMPORT, RESET.'];
+    if (this.mode === "listening")
+      return ["Press the key combination to bind. F12 or Escape cancels."];
+    if (this.mode === "combos")
+      return [
+        "Enter opens a line, DELETE removes a binding, F3 goes back to the list.",
+      ];
+    return ["Enter opens a command. Commands: EXPORT, IMPORT, RESET."];
   }
 
   /**
@@ -204,8 +230,16 @@ export class KeymapPage extends Panel {
    * @returns {string[]}
    */
   keys() {
-    if (this.mode === 'combos') return ['F1=Help', 'F3=Back', 'F4=Menu', 'F7=Bkwd', 'F8=Fwd', 'Enter=Open'];
-    return ['F1=Help', 'F3=Exit', 'F4=Menu', 'F7=Bkwd', 'F8=Fwd', 'Enter=Open'];
+    if (this.mode === "combos")
+      return [
+        "F1=Help",
+        "F3=Back",
+        "F4=Menu",
+        "F7=Bkwd",
+        "F8=Fwd",
+        "Enter=Open",
+      ];
+    return ["F1=Help", "F3=Exit", "F4=Menu", "F7=Bkwd", "F8=Fwd", "Enter=Open"];
   }
 
   /**
@@ -213,9 +247,10 @@ export class KeymapPage extends Panel {
    * @returns {void}
    */
   show() {
-    super.show();
-    this.mode = 'commands';
+    this.reset();
+    this.mode = "commands";
     this.selected = this.commandIndex;
+    this.draw();
   }
 
   /**
@@ -223,13 +258,13 @@ export class KeymapPage extends Panel {
    * @returns {void} F3 in the combos list is one level back, not out of the panel.
    */
   close() {
-    if (this.open && this.mode === 'combos') {
-      this.mode = 'commands';
+    if (this.open && this.mode === "combos") {
+      this.mode = "commands";
       this.selected = this.commandIndex;
       this.draw();
       return;
     }
-    this.mode = 'commands';
+    this.mode = "commands";
     super.close();
   }
 
@@ -238,14 +273,14 @@ export class KeymapPage extends Panel {
    * @returns {void}
    */
   activate() {
-    if (this.mode === 'commands') {
+    if (this.mode === "commands") {
       this.commandIndex = this.selected;
-      this.mode = 'combos';
+      this.mode = "combos";
       this.selected = 0;
       this.draw();
       return;
     }
-    if (this.selected === this.lines().length - 1) this.mode = 'listening';
+    if (this.selected === this.lines().length - 1) this.mode = "listening";
     this.draw();
   }
 
@@ -255,21 +290,21 @@ export class KeymapPage extends Panel {
    * @returns {boolean}
    */
   word(word) {
-    if (word === 'EXPORT' || word === 'EXP') {
+    if (word === "EXPORT" || word === "EXP") {
       this.exportKeymap();
       return true;
     }
-    if (word === 'IMPORT' || word === 'IMP') {
+    if (word === "IMPORT" || word === "IMP") {
       this.importKeymap();
       return true;
     }
-    if (word === 'RESET' || word === 'DEFAULTS') {
+    if (word === "RESET" || word === "DEFAULTS") {
       this.resetToDefaults();
       this.selected = 0;
       this.draw();
       return true;
     }
-    if (word === 'DELETE' || word === 'DEL') {
+    if (word === "DELETE" || word === "DEL") {
       this.removeSelectedCombo();
       return true;
     }
@@ -279,8 +314,8 @@ export class KeymapPage extends Panel {
   /** @returns {void} */
   removeSelectedCombo() {
     const command = COMMANDS[this.commandIndex];
-    if (this.mode !== 'combos' || command === undefined) {
-      this.say('Open a command first');
+    if (this.mode !== "combos" || command === undefined) {
+      this.say("Open a command first");
       return;
     }
     if (this.selected >= this.lines().length - 1) return;
@@ -298,16 +333,16 @@ export class KeymapPage extends Panel {
    * @returns {boolean}
    */
   override(event) {
-    if (!this.open || this.mode !== 'listening') return false;
-    if (event.key === 'Escape' || event.key === 'F12') {
-      this.mode = 'combos';
+    if (this.mode !== "listening") return false;
+    if (event.key === "Escape" || event.key === "F12") {
+      this.mode = "combos";
       this.draw();
       return true;
     }
     if (event.metaKey) return true;
     const command = COMMANDS[this.commandIndex];
     if (command) this.addCombo(command.id, comboFromEvent(event));
-    this.mode = 'combos';
+    this.mode = "combos";
     this.selected = 0;
     this.draw();
     return true;
@@ -319,7 +354,7 @@ export class KeymapPage extends Panel {
    * @returns {boolean}
    */
   typed(event) {
-    if (this.mode !== 'combos' || event.key !== 'Delete') return false;
+    if (this.mode !== "combos" || event.key !== "Delete") return false;
     this.removeSelectedCombo();
     return true;
   }

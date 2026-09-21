@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { AppError } from './errors.js';
+import { readFileSync } from "node:fs";
+import { AppError } from "./errors.js";
 
 /**
  * @typedef {object} Config
@@ -20,7 +20,7 @@ import { AppError } from './errors.js';
  * @returns {string}
  */
 export function stripJsonc(text) {
-  const out = text.split('');
+  const out = text.split("");
   let inString = false;
   let comma = -1;
 
@@ -29,24 +29,24 @@ export function stripJsonc(text) {
     const next = text[i + 1];
 
     if (inString) {
-      if (ch === '\\') i++;
+      if (ch === "\\") i++;
       else if (ch === '"') inString = false;
       continue;
     }
 
-    if (ch === '/' && next === '/') {
-      while (i < text.length && text[i] !== '\n') out[i++] = ' ';
+    if (ch === "/" && next === "/") {
+      while (i < text.length && text[i] !== "\n") out[i++] = " ";
       continue;
     }
 
-    if (ch === '/' && next === '*') {
-      out[i] = ' ';
+    if (ch === "/" && next === "*") {
+      out[i] = " ";
       i++;
       while (i < text.length) {
-        const closing = text[i] === '*' && text[i + 1] === '/';
-        if (text[i] !== '\n') out[i] = ' ';
+        const closing = text[i] === "*" && text[i + 1] === "/";
+        if (text[i] !== "\n") out[i] = " ";
         if (closing) {
-          out[i + 1] = ' ';
+          out[i + 1] = " ";
           i++;
           break;
         }
@@ -55,22 +55,22 @@ export function stripJsonc(text) {
       continue;
     }
 
-    if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') continue;
+    if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r") continue;
 
-    if (ch === ',') {
+    if (ch === ",") {
       comma = i;
       continue;
     }
 
-    if (ch === '}' || ch === ']') {
-      if (comma !== -1) out[comma] = ' ';
+    if (ch === "}" || ch === "]") {
+      if (comma !== -1) out[comma] = " ";
     } else if (ch === '"') {
       inString = true;
     }
     comma = -1;
   }
 
-  return out.join('');
+  return out.join("");
 }
 
 /**
@@ -81,14 +81,24 @@ export function parseJsonc(text) {
   try {
     return JSON.parse(stripJsonc(text));
   } catch (cause) {
-    throw new AppError('E1002', cause instanceof Error ? cause.message : String(cause), cause);
+    throw new AppError(
+      "E1002",
+      cause instanceof Error ? cause.message : String(cause),
+      cause,
+    );
   }
 }
 
 /** @type {Config} */
 const DEFAULTS = {
-  server: { host: '127.0.0.1', port: 8017 },
-  b3270: { path: 'b3270', model: 2, defaultHost: null, settings: {}, extraArgs: [] },
+  server: { host: "127.0.0.1", port: 8017 },
+  b3270: {
+    path: "b3270",
+    model: 2,
+    defaultHost: null,
+    settings: {},
+    extraArgs: [],
+  },
   sessions: {
     maxSessions: 16,
     maxViewersPerSession: 8,
@@ -97,8 +107,8 @@ const DEFAULTS = {
     allowAutomation: false,
   },
   security: { allowedHosts: [], trustProxyHeaders: false },
-  logLevel: 'info',
-  logFile: 'log/tn3270.log',
+  logLevel: "info",
+  logFile: "log/tn3270.log",
   logMaxBytes: 10 * 1024 * 1024,
 };
 
@@ -110,8 +120,8 @@ const DEFAULTS = {
 function section(source, path) {
   const value = source[path];
   if (value === undefined) return {};
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new AppError('E1003', `"${path}" must be an object`);
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new AppError("E1003", `"${path}" must be an object`);
   }
   return /** @type {Record<string, unknown>} */ (value);
 }
@@ -126,7 +136,8 @@ function section(source, path) {
 function str(obj, key, name, fallback) {
   const value = obj[key];
   if (value === undefined) return fallback;
-  if (typeof value !== 'string') throw new AppError('E1003', `"${name}" must be a string`);
+  if (typeof value !== "string")
+    throw new AppError("E1003", `"${name}" must be a string`);
   return value;
 }
 
@@ -142,11 +153,14 @@ function str(obj, key, name, fallback) {
 function num(obj, key, name, fallback, min, max) {
   const value = obj[key];
   if (value === undefined) return fallback;
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new AppError('E1003', `"${name}" must be a number`);
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new AppError("E1003", `"${name}" must be a number`);
   }
   if (value < min || value > max) {
-    throw new AppError('E1004', `"${name}" must be between ${min} and ${max}, got ${value}`);
+    throw new AppError(
+      "E1004",
+      `"${name}" must be between ${min} and ${max}, got ${value}`,
+    );
   }
   return value;
 }
@@ -161,7 +175,8 @@ function num(obj, key, name, fallback, min, max) {
 function bool(obj, key, name, fallback) {
   const value = obj[key];
   if (value === undefined) return fallback;
-  if (typeof value !== 'boolean') throw new AppError('E1003', `"${name}" must be a boolean`);
+  if (typeof value !== "boolean")
+    throw new AppError("E1003", `"${name}" must be a boolean`);
   return value;
 }
 
@@ -175,10 +190,11 @@ function bool(obj, key, name, fallback) {
 function strArray(obj, key, name, fallback) {
   const value = obj[key];
   if (value === undefined) return fallback;
-  if (!Array.isArray(value)) throw new AppError('E1003', `"${name}" must be an array of strings`);
+  if (!Array.isArray(value))
+    throw new AppError("E1003", `"${name}" must be an array of strings`);
   return value.map((entry, index) => {
-    if (typeof entry !== 'string') {
-      throw new AppError('E1003', `"${name}[${index}]" must be a string`);
+    if (typeof entry !== "string") {
+      throw new AppError("E1003", `"${name}[${index}]" must be a string`);
     }
     return entry;
   });
@@ -196,18 +212,30 @@ function strArray(obj, key, name, fallback) {
 function resources(obj, key, name) {
   const value = obj[key];
   if (value === undefined) return {};
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new AppError('E1003', `"${name}" must be an object of resource names to values`);
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new AppError(
+      "E1003",
+      `"${name}" must be an object of resource names to values`,
+    );
   }
 
   /** @type {Record<string, string>} */
   const out = {};
   for (const [resource, raw] of Object.entries(value)) {
-    if (!/^\*?[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*$/.test(resource)) {
-      throw new AppError('E1005', `"${name}.${resource}"`);
+    if (
+      !/^\*?[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*$/.test(resource)
+    ) {
+      throw new AppError("E1005", `"${name}.${resource}"`);
     }
-    if (typeof raw !== 'string' && typeof raw !== 'number' && typeof raw !== 'boolean') {
-      throw new AppError('E1003', `"${name}.${resource}" must be a string, number or boolean`);
+    if (
+      typeof raw !== "string" &&
+      typeof raw !== "number" &&
+      typeof raw !== "boolean"
+    ) {
+      throw new AppError(
+        "E1003",
+        `"${name}.${resource}" must be a string, number or boolean`,
+      );
     }
     out[resource] = String(raw);
   }
@@ -219,55 +247,135 @@ function resources(obj, key, name) {
  * @returns {Config}
  */
 export function validateConfig(raw) {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-    throw new AppError('E1003', 'config root must be an object');
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new AppError("E1003", "config root must be an object");
   }
   const root = /** @type {Record<string, unknown>} */ (raw);
 
-  const serverSection = section(root, 'server');
-  const b3270Section = section(root, 'b3270');
-  const sessionsSection = section(root, 'sessions');
-  const securitySection = section(root, 'security');
+  const serverSection = section(root, "server");
+  const b3270Section = section(root, "b3270");
+  const sessionsSection = section(root, "sessions");
+  const securitySection = section(root, "security");
 
-  const model = num(b3270Section, 'model', 'b3270.model', DEFAULTS.b3270.model, 2, 5);
-  if (!Number.isInteger(model)) throw new AppError('E1004', '"b3270.model" must be a whole number');
+  const model = num(
+    b3270Section,
+    "model",
+    "b3270.model",
+    DEFAULTS.b3270.model,
+    2,
+    5,
+  );
+  if (!Number.isInteger(model))
+    throw new AppError("E1004", '"b3270.model" must be a whole number');
 
-  const rawDefaultHost = b3270Section['defaultHost'];
-  if (rawDefaultHost !== undefined && rawDefaultHost !== null && typeof rawDefaultHost !== 'string') {
-    throw new AppError('E1003', '"b3270.defaultHost" must be a string or null');
+  const rawDefaultHost = b3270Section["defaultHost"];
+  if (
+    rawDefaultHost !== undefined &&
+    rawDefaultHost !== null &&
+    typeof rawDefaultHost !== "string"
+  ) {
+    throw new AppError("E1003", '"b3270.defaultHost" must be a string or null');
   }
 
-  const logLevel = str(root, 'logLevel', 'logLevel', DEFAULTS.logLevel);
-  if (logLevel !== 'debug' && logLevel !== 'info' && logLevel !== 'warn' && logLevel !== 'error') {
-    throw new AppError('E1004', `"logLevel" must be debug, info, warn or error, got "${logLevel}"`);
+  const logLevel = str(root, "logLevel", "logLevel", DEFAULTS.logLevel);
+  if (
+    logLevel !== "debug" &&
+    logLevel !== "info" &&
+    logLevel !== "warn" &&
+    logLevel !== "error"
+  ) {
+    throw new AppError(
+      "E1004",
+      `"logLevel" must be debug, info, warn or error, got "${logLevel}"`,
+    );
   }
 
   return {
     server: {
-      host: str(serverSection, 'host', 'server.host', DEFAULTS.server.host),
-      port: num(serverSection, 'port', 'server.port', DEFAULTS.server.port, 1, 65535),
+      host: str(serverSection, "host", "server.host", DEFAULTS.server.host),
+      port: num(
+        serverSection,
+        "port",
+        "server.port",
+        DEFAULTS.server.port,
+        1,
+        65535,
+      ),
     },
     b3270: {
-      path: str(b3270Section, 'path', 'b3270.path', DEFAULTS.b3270.path),
+      path: str(b3270Section, "path", "b3270.path", DEFAULTS.b3270.path),
       model,
       defaultHost: rawDefaultHost === undefined ? null : rawDefaultHost,
-      settings: resources(b3270Section, 'settings', 'b3270.settings'),
-      extraArgs: strArray(b3270Section, 'extraArgs', 'b3270.extraArgs', DEFAULTS.b3270.extraArgs),
+      settings: resources(b3270Section, "settings", "b3270.settings"),
+      extraArgs: strArray(
+        b3270Section,
+        "extraArgs",
+        "b3270.extraArgs",
+        DEFAULTS.b3270.extraArgs,
+      ),
     },
     sessions: {
-      maxSessions: num(sessionsSection, 'maxSessions', 'sessions.maxSessions', DEFAULTS.sessions.maxSessions, 1, 1000),
-      maxViewersPerSession: num(sessionsSection, 'maxViewersPerSession', 'sessions.maxViewersPerSession', DEFAULTS.sessions.maxViewersPerSession, 1, 1000),
-      idleTimeoutMs: num(sessionsSection, 'idleTimeoutMs', 'sessions.idleTimeoutMs', DEFAULTS.sessions.idleTimeoutMs, 0, 86400000),
-      allowMultipleControllers: bool(sessionsSection, 'allowMultipleControllers', 'sessions.allowMultipleControllers', DEFAULTS.sessions.allowMultipleControllers),
-      allowAutomation: bool(sessionsSection, 'allowAutomation', 'sessions.allowAutomation', DEFAULTS.sessions.allowAutomation),
+      maxSessions: num(
+        sessionsSection,
+        "maxSessions",
+        "sessions.maxSessions",
+        DEFAULTS.sessions.maxSessions,
+        1,
+        1000,
+      ),
+      maxViewersPerSession: num(
+        sessionsSection,
+        "maxViewersPerSession",
+        "sessions.maxViewersPerSession",
+        DEFAULTS.sessions.maxViewersPerSession,
+        1,
+        1000,
+      ),
+      idleTimeoutMs: num(
+        sessionsSection,
+        "idleTimeoutMs",
+        "sessions.idleTimeoutMs",
+        DEFAULTS.sessions.idleTimeoutMs,
+        0,
+        86400000,
+      ),
+      allowMultipleControllers: bool(
+        sessionsSection,
+        "allowMultipleControllers",
+        "sessions.allowMultipleControllers",
+        DEFAULTS.sessions.allowMultipleControllers,
+      ),
+      allowAutomation: bool(
+        sessionsSection,
+        "allowAutomation",
+        "sessions.allowAutomation",
+        DEFAULTS.sessions.allowAutomation,
+      ),
     },
     security: {
-      allowedHosts: strArray(securitySection, 'allowedHosts', 'security.allowedHosts', DEFAULTS.security.allowedHosts),
-      trustProxyHeaders: bool(securitySection, 'trustProxyHeaders', 'security.trustProxyHeaders', DEFAULTS.security.trustProxyHeaders),
+      allowedHosts: strArray(
+        securitySection,
+        "allowedHosts",
+        "security.allowedHosts",
+        DEFAULTS.security.allowedHosts,
+      ),
+      trustProxyHeaders: bool(
+        securitySection,
+        "trustProxyHeaders",
+        "security.trustProxyHeaders",
+        DEFAULTS.security.trustProxyHeaders,
+      ),
     },
     logLevel,
-    logFile: str(root, 'logFile', 'logFile', DEFAULTS.logFile),
-    logMaxBytes: num(root, 'logMaxBytes', 'logMaxBytes', DEFAULTS.logMaxBytes, 4096, 1024 * 1024 * 1024),
+    logFile: str(root, "logFile", "logFile", DEFAULTS.logFile),
+    logMaxBytes: num(
+      root,
+      "logMaxBytes",
+      "logMaxBytes",
+      DEFAULTS.logMaxBytes,
+      4096,
+      1024 * 1024 * 1024,
+    ),
   };
 }
 
@@ -278,9 +386,9 @@ export function validateConfig(raw) {
 export function loadConfig(file) {
   let text;
   try {
-    text = readFileSync(file, 'utf8');
+    text = readFileSync(file, "utf8");
   } catch (cause) {
-    throw new AppError('E1001', file, cause);
+    throw new AppError("E1001", file, cause);
   }
   return validateConfig(parseJsonc(text));
 }

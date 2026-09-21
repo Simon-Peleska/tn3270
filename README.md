@@ -55,9 +55,9 @@ one.
 
 ## The rest of the documentation
 
-| File | What is in it |
-|---|---|
+| File               | What is in it                                                                                                                                |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `SPECIFICATION.md` | What it does, from the outside: sessions, roles, the screen, the keyboard, the panels, the wire protocol, the config table, every error code |
-| `ARCHITECTURE.md` | Why it is built this way: who owns the screen, why the server renders the VT bytes, why all the UI lives inside the terminal |
-| `GOTCHAS.md` | Things that cost time once and should not cost it twice |
-| `TASKS.md` | What is done and what is not |
+| `ARCHITECTURE.md`  | Why it is built this way: who owns the screen, why the server renders the VT bytes, why all the UI lives inside the terminal                 |
+| `GOTCHAS.md`       | Things that cost time once and should not cost it twice                                                                                      |
+| `TASKS.md`         | What is done and what is not                                                                                                                 |

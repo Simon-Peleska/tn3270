@@ -1,6 +1,6 @@
-import { validateConfig } from '../server/config.js';
-import { Session } from '../server/session.js';
-import { FakeHost } from './fakehost.js';
+import { validateConfig } from "../server/config.js";
+import { Session } from "../server/session.js";
+import { FakeHost } from "./fakehost.js";
 
 /**
  * @param {Record<string, unknown>} [overrides]
@@ -8,11 +8,11 @@ import { FakeHost } from './fakehost.js';
  */
 export function testConfig(overrides = {}) {
   return validateConfig({
-    server: { host: '127.0.0.1', port: 8017 },
+    server: { host: "127.0.0.1", port: 8017 },
     // The traces were recorded against a model 4 (43x80).
-    b3270: { path: 'b3270', model: 4 },
+    b3270: { path: "b3270", model: 4 },
     sessions: { idleTimeoutMs: 0 },
-    logLevel: 'error',
+    logLevel: "error",
     ...overrides,
   });
 }
@@ -32,11 +32,11 @@ export function testConfig(overrides = {}) {
 export function collectingViewer(id) {
   return {
     id,
-    role: 'observer',
+    role: "observer",
     hostColors: true,
     /** @type {string | null} */
     fieldColor: null,
-    ip: '127.0.0.1',
+    ip: "127.0.0.1",
     /** @type {string[]} */
     screen: [],
     /** @type {import('../server/protocol.js').ServerMessage[]} */
@@ -45,11 +45,11 @@ export function collectingViewer(id) {
     events: [],
     sendScreen(bytes) {
       this.screen.push(bytes);
-      this.events.push({ kind: 'screen', bytes });
+      this.events.push({ kind: "screen", bytes });
     },
     sendMessage(message) {
       this.messages.push(message);
-      this.events.push({ kind: 'message', message });
+      this.events.push({ kind: "message", message });
     },
   };
 }
@@ -63,7 +63,8 @@ export function collectingViewer(id) {
 export async function waitUntil(predicate, message, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs;
   while (!predicate()) {
-    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${message}`);
+    if (Date.now() >= deadline)
+      throw new Error(`timed out waiting for ${message}`);
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }
@@ -80,16 +81,16 @@ export function settle(session) {
   const previous = b3270.handlers.onIndication;
   return new Promise((resolve) => {
     /** @type {string} */
-    let tag = '';
+    let tag = "";
     b3270.handlers.onIndication = (indication) => {
       previous(indication);
       const body = /** @type {Record<string, unknown>} */ (indication.body);
-      if (indication.kind === 'run-result' && body['r-tag'] === tag) {
+      if (indication.kind === "run-result" && body["r-tag"] === tag) {
         b3270.handlers.onIndication = previous;
         resolve();
       }
     };
-    tag = b3270.runActions([{ action: 'Reset' }]);
+    tag = b3270.runActions([{ action: "Reset" }]);
   });
 }
 

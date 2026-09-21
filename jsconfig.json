@@ -16,7 +16,9 @@
     // server's static mounts. Point the type checker at the same files.
     "baseUrl": ".",
     "paths": {
-      "/vendor/dist/ghostty-web.js": ["node_modules/ghostty-web/dist/index.d.ts"],
+      "/vendor/dist/ghostty-web.js": [
+        "node_modules/ghostty-web/dist/index.d.ts"
+      ],
       "/keymap.js": ["public/keymap.js"],
       "/keymap-format.js": ["public/keymap-format.js"],
       "/keymap-page.js": ["public/keymap-page.js"],

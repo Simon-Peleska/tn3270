@@ -1,4 +1,4 @@
-import { AppError } from './errors.js';
+import { AppError } from "./errors.js";
 
 /**
  * @typedef {object} Cell
@@ -18,7 +18,7 @@ import { AppError } from './errors.js';
 
 /** @returns {Cell} */
 function blankCell() {
-  return { ch: ' ', fg: null, bg: null, gr: null, editable: false };
+  return { ch: " ", fg: null, bg: null, gr: null, editable: false };
 }
 
 export class ScreenModel {
@@ -76,7 +76,8 @@ export class ScreenModel {
    */
   cellAt(row, col) {
     const cell = this.cells[row * this.cols + col];
-    if (cell === undefined) throw new AppError('E3004', `row=${row} col=${col}`);
+    if (cell === undefined)
+      throw new AppError("E3004", `row=${row} col=${col}`);
     return cell;
   }
 
@@ -87,16 +88,20 @@ export class ScreenModel {
    * @returns {void}
    */
   applyErase(erase) {
-    const rows = erase['logical-rows'];
-    const cols = erase['logical-columns'];
-    if (typeof rows === 'number' && typeof cols === 'number' && (rows !== this.rows || cols !== this.cols)) {
+    const rows = erase["logical-rows"];
+    const cols = erase["logical-columns"];
+    if (
+      typeof rows === "number" &&
+      typeof cols === "number" &&
+      (rows !== this.rows || cols !== this.cols)
+    ) {
       this.resize(rows, cols);
     }
-    if (typeof erase.fg === 'string') this.defaultFg = erase.fg;
-    if (typeof erase.bg === 'string') this.defaultBg = erase.bg;
+    if (typeof erase.fg === "string") this.defaultFg = erase.fg;
+    if (typeof erase.bg === "string") this.defaultBg = erase.bg;
 
     for (const cell of this.cells) {
-      cell.ch = ' ';
+      cell.ch = " ";
       cell.fg = null;
       cell.bg = null;
       cell.gr = null;
@@ -150,17 +155,20 @@ export class ScreenModel {
         const startX = change.column - 1;
         if (startX < 0 || startX >= this.cols) continue;
 
-        const characters = typeof change.text === 'string' ? [...change.text] : null;
-        const span = characters !== null ? characters.length : (change.count ?? 0);
+        const characters =
+          typeof change.text === "string" ? [...change.text] : null;
+        const span =
+          characters !== null ? characters.length : (change.count ?? 0);
 
         for (let i = 0; i < span; i++) {
           const x = startX + i;
           if (x >= this.cols) break;
           const cell = this.cellAt(y, x);
-          if (characters !== null) cell.ch = characters[i] ?? ' ';
+          if (characters !== null) cell.ch = characters[i] ?? " ";
           if (change.fg !== undefined) cell.fg = change.fg;
           if (change.bg !== undefined) cell.bg = change.bg;
-          if (change.gr !== undefined) cell.gr = change.gr === '' ? null : change.gr;
+          if (change.gr !== undefined)
+            cell.gr = change.gr === "" ? null : change.gr;
         }
         if (span > 0) this.dirtyRows.add(y);
       }
@@ -170,9 +178,9 @@ export class ScreenModel {
       const { enabled, row, column } = screen.cursor;
       const previous = this.cursor;
       this.cursor = {
-        row: typeof row === 'number' ? row - 1 : previous.row,
-        col: typeof column === 'number' ? column - 1 : previous.col,
-        enabled: typeof enabled === 'boolean' ? enabled : previous.enabled,
+        row: typeof row === "number" ? row - 1 : previous.row,
+        col: typeof column === "number" ? column - 1 : previous.col,
+        enabled: typeof enabled === "boolean" ? enabled : previous.enabled,
       };
     }
   }
@@ -191,7 +199,7 @@ export class ScreenModel {
    * @returns {string} trailing blanks included
    */
   rowText(row) {
-    let text = '';
+    let text = "";
     for (let col = 0; col < this.cols; col++) text += this.cellAt(row, col).ch;
     return text;
   }

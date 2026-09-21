@@ -1,7 +1,7 @@
 // Ctrl-B's field hints: one letter per editable field, preferring the first
 // letter of the label in front of it.
 
-const LOWER = 'qwertzuiopasdfghjklyxcvbnm';
+const LOWER = "qwertzuiopasdfghjklyxcvbnm";
 
 /** @type {readonly string[]} lowercase first, then capitals for overflow. */
 const SEQUENCE = [...LOWER, ...LOWER.toUpperCase()];
@@ -22,7 +22,10 @@ function fieldLabel(cells, cols, pos) {
   const rowStart = Math.floor(pos / cols) * cols;
   let start = pos;
   while (start > rowStart && !cells[start - 1].editable) start--;
-  const text = cells.slice(start, pos).map((cell) => cell.ch).join('');
+  const text = cells
+    .slice(start, pos)
+    .map((cell) => cell.ch)
+    .join("");
   const match = /([a-zA-Z]+)[^a-zA-Z]*$/.exec(text);
   return match ? match[1].toLowerCase() : null;
 }
@@ -54,7 +57,8 @@ export function computeHints(cells, cols) {
   /** @type {number[]} */
   const starts = [];
   for (let pos = 0; pos < total; pos++) {
-    if (cells[pos].editable && !cells[(pos - 1 + total) % total].editable) starts.push(pos);
+    if (cells[pos].editable && !cells[(pos - 1 + total) % total].editable)
+      starts.push(pos);
   }
 
   const labels = starts.map((pos) => fieldLabel(cells, cols, pos));

@@ -27,8 +27,10 @@ export const DEFAULT_FOREGROUND_ANSI = 2;
 export const DEFAULT_BACKGROUND_ANSI = 0;
 
 /** A 3278 has no palette to theme, so its green stays a fixed RGB. */
-export const MONO_FOREGROUND = /** @type {readonly [number, number, number]} */ ([0, 255, 0]);
-export const DEFAULT_BACKGROUND = /** @type {readonly [number, number, number]} */ ([0, 0, 0]);
+export const MONO_FOREGROUND =
+  /** @type {readonly [number, number, number]} */ ([0, 255, 0]);
+export const DEFAULT_BACKGROUND =
+  /** @type {readonly [number, number, number]} */ ([0, 0, 0]);
 
 /**
  * @param {string | null} name
@@ -40,7 +42,7 @@ export function ansiColorIndex(name, fallback) {
   const exact = HOST_COLOR_ANSI[name];
   if (exact !== undefined) return exact;
   // b3270 spells it "gray"; the British spelling must not silently mis-render.
-  if (name === 'grey') return HOST_COLOR_ANSI['gray'] ?? fallback;
+  if (name === "grey") return HOST_COLOR_ANSI["gray"] ?? fallback;
   return fallback;
 }
 
@@ -62,10 +64,10 @@ const GR_SGR = Object.freeze({
  * @returns {number[]} SGR parameters, ascending, no duplicates
  */
 export function grToSgr(gr) {
-  if (gr === null || gr === '') return [];
+  if (gr === null || gr === "") return [];
   /** @type {number[]} */
   const params = [];
-  for (const part of gr.split(',')) {
+  for (const part of gr.split(",")) {
     const code = GR_SGR[part.trim()];
     if (code !== undefined && !params.includes(code)) params.push(code);
   }

@@ -1,15 +1,15 @@
-import { randomUUID } from 'node:crypto';
-import { B3270 } from './b3270.js';
-import { editableFieldText, fieldMap } from './readbuffer.js';
-import { pasteSegments } from './paste.js';
-import { computeHints } from './hints.js';
-import { ScreenModel } from './screen.js';
-import { OiaModel } from './oia.js';
-import { fullRepaint, delta } from './vt.js';
-import { AppError, describeError } from './errors.js';
-import { isHostAllowed } from './protocol.js';
-import { reserveRestEndpoint } from './restproxy.js';
-import { logger } from './log.js';
+import { randomUUID } from "node:crypto";
+import { B3270 } from "./b3270.js";
+import { editableFieldText, fieldMap } from "./readbuffer.js";
+import { pasteSegments } from "./paste.js";
+import { computeHints } from "./hints.js";
+import { ScreenModel } from "./screen.js";
+import { OiaModel } from "./oia.js";
+import { fullRepaint, delta } from "./vt.js";
+import { AppError, describeError } from "./errors.js";
+import { isHostAllowed } from "./protocol.js";
+import { reserveRestEndpoint } from "./restproxy.js";
+import { logger } from "./log.js";
 
 /**
  * @typedef {object} Viewer
@@ -35,7 +35,7 @@ export class Session {
     this.id = id;
     /** @type {import('./config.js').Config} */
     this.config = config;
-    this.log = logger('session', { session: id });
+    this.log = logger("session", { session: id });
 
     /** @type {ScreenModel} */
     this.screen = new ScreenModel();
@@ -61,17 +61,18 @@ export class Session {
     /** @type {number | null} A model waiting for the connection to go away. */
     this.pendingModel = null;
     /** @type {string} `<cols>x<rows>`, or '' for the model's own size. */
-    this.oversize = config.b3270.settings['oversize']
-      ?? config.b3270.settings['b3270.oversize']
-      ?? config.b3270.settings['*oversize']
-      ?? '';
+    this.oversize =
+      config.b3270.settings["oversize"] ??
+      config.b3270.settings["b3270.oversize"] ??
+      config.b3270.settings["*oversize"] ??
+      "";
     /** @type {string | null} An oversize waiting for the connection to go away. */
     this.pendingOversize = null;
     /** @type {string} What b3270 was told, not always what was asked for. */
     this.b3270Oversize = this.oversize;
 
     /** @type {string} */
-    this.oiaText = '';
+    this.oiaText = "";
     /** @type {boolean} */
     this.oiaDirty = true;
     /** @type {boolean} */
@@ -129,10 +130,10 @@ export class Session {
    */
   connect(host) {
     if (!isHostAllowed(host, this.config.security.allowedHosts)) {
-      this.reportError(new AppError('E3005', host));
+      this.reportError(new AppError("E3005", host));
       return;
     }
-    this.log.info('connecting', { host });
+    this.log.info("connecting", { host });
     // b3270 reports the host back without its port, so reopening from what it
     // says would silently land on telnet 23.
     this.lastHost = host;
@@ -141,8 +142,8 @@ export class Session {
 
   /** @returns {void} */
   disconnect() {
-    this.log.info('disconnecting');
-    this.b3270.runActions([{ action: 'Disconnect' }]);
+    this.log.info("disconnecting");
+    this.b3270.runActions([{ action: "Disconnect" }]);
   }
 
   /**
@@ -154,14 +155,17 @@ export class Session {
   setModel(model) {
     if (model === this.model) return;
 
-    if (this.oia.connectionState !== 'not-connected') {
-      this.log.info('restarting the connection to change the model', { model, host: this.lastHost ?? '' });
+    if (this.oia.connectionState !== "not-connected") {
+      this.log.info("restarting the connection to change the model", {
+        model,
+        host: this.lastHost ?? "",
+      });
       this.pendingModel = model;
-      this.b3270.runActions([{ action: 'Disconnect' }]);
+      this.b3270.runActions([{ action: "Disconnect" }]);
       return;
     }
 
-    this.log.info('changing model', { model, from: this.model });
+    this.log.info("changing model", { model, from: this.model });
     this.b3270.runActions(this.sizeActions(model));
   }
 
@@ -174,12 +178,15 @@ export class Session {
    */
   setOversize(value) {
     if (value === this.oversize) return;
-    this.log.info('changing oversize', { oversize: value, from: this.oversize });
+    this.log.info("changing oversize", {
+      oversize: value,
+      from: this.oversize,
+    });
     this.oversize = value;
 
-    if (this.oia.connectionState !== 'not-connected') {
+    if (this.oia.connectionState !== "not-connected") {
       this.pendingOversize = value;
-      this.b3270.runActions([{ action: 'Disconnect' }]);
+      this.b3270.runActions([{ action: "Disconnect" }]);
       return;
     }
 
@@ -197,22 +204,28 @@ export class Session {
   sizeActions(model) {
     const info = this.models.find((entry) => entry.model === model);
     const asked = /^(\d+)x(\d+)$/.exec(this.oversize);
-    const fits = asked !== null && info !== undefined
-      && Number(asked[1]) >= info.columns && Number(asked[2]) >= info.rows;
+    const fits =
+      asked !== null &&
+      info !== undefined &&
+      Number(asked[1]) >= info.columns &&
+      Number(asked[2]) >= info.rows;
 
     let oversize = this.oversize;
     if (!fits) {
-      oversize = this.b3270Oversize === '' || info === undefined ? '' : `${info.columns}x${info.rows}`;
-      this.oversize = '';
+      oversize =
+        this.b3270Oversize === "" || info === undefined
+          ? ""
+          : `${info.columns}x${info.rows}`;
+      this.oversize = "";
     }
 
     /** @type {string[]} */
     const args = [];
-    if (model !== this.model) args.push('model', String(model));
-    if (oversize !== this.b3270Oversize) args.push('oversize', oversize);
+    if (model !== this.model) args.push("model", String(model));
+    if (oversize !== this.b3270Oversize) args.push("oversize", oversize);
     this.b3270Oversize = oversize;
 
-    return args.length > 0 ? [{ action: 'Set', args }] : [];
+    return args.length > 0 ? [{ action: "Set", args }] : [];
   }
 
   /**
@@ -222,23 +235,29 @@ export class Session {
   handleIndication(indication) {
     const { kind, body } = indication;
 
-    if (kind === 'screen') {
-      this.screen.applyScreen(/** @type {import('./b3270.js').ScreenIndication} */ (body));
+    if (kind === "screen") {
+      this.screen.applyScreen(
+        /** @type {import('./b3270.js').ScreenIndication} */ (body),
+      );
       this.fieldsStale = true;
       this.scheduleFlush();
       return;
     }
-    if (kind === 'erase') {
+    if (kind === "erase") {
       // Erase carries the size for hosts that never use the alternate screen.
       const before = this.screenSize();
-      this.screen.applyErase(/** @type {import('./b3270.js').EraseIndication} */ (body));
+      this.screen.applyErase(
+        /** @type {import('./b3270.js').EraseIndication} */ (body),
+      );
       this.announceResize(before);
       this.fieldsStale = true;
       this.scheduleFlush();
       return;
     }
-    if (kind === 'screen-mode') {
-      const mode = /** @type {import('./b3270.js').ScreenModeIndication} */ (body);
+    if (kind === "screen-mode") {
+      const mode = /** @type {import('./b3270.js').ScreenModeIndication} */ (
+        body
+      );
       const before = this.screenSize();
       this.model = mode.model;
       this.screen.applyScreenMode(mode);
@@ -247,61 +266,79 @@ export class Session {
       this.scheduleFlush();
       return;
     }
-    if (kind === 'models') {
+    if (kind === "models") {
       if (Array.isArray(body)) {
         this.models = /** @type {import('./b3270.js').ModelInfo[]} */ (body);
       }
       return;
     }
-    if (kind === 'oia') {
+    if (kind === "oia") {
       const wasInsert = this.oia.insert;
-      this.oia.applyOia(/** @type {import('./b3270.js').OiaIndication} */ (body));
+      this.oia.applyOia(
+        /** @type {import('./b3270.js').OiaIndication} */ (body),
+      );
       // Insert mode shows only as a cursor shape, so it needs its own push.
       if (this.oia.insert !== wasInsert) this.broadcastStatus();
       this.scheduleFlush();
       return;
     }
-    if (kind === 'connection') {
-      const connection = /** @type {import('./b3270.js').ConnectionIndication} */ (body);
-      this.log.info('connection state', { state: connection.state, host: connection.host ?? '' });
+    if (kind === "connection") {
+      const connection =
+        /** @type {import('./b3270.js').ConnectionIndication} */ (body);
+      this.log.info("connection state", {
+        state: connection.state,
+        host: connection.host ?? "",
+      });
       this.oia.applyConnection(connection);
       this.broadcastStatus();
       this.scheduleFlush();
-      if (connection.state === 'not-connected' && (this.pendingModel !== null || this.pendingOversize !== null)) {
+      if (
+        connection.state === "not-connected" &&
+        (this.pendingModel !== null || this.pendingOversize !== null)
+      ) {
         const model = this.pendingModel ?? this.model;
-        this.log.info('applying the screen size the restart was for', {
+        this.log.info("applying the screen size the restart was for", {
           model,
           oversize: this.oversize,
-          host: this.lastHost ?? '',
+          host: this.lastHost ?? "",
         });
         this.pendingModel = null;
         this.pendingOversize = null;
         const actions = this.sizeActions(model);
-        if (this.lastHost !== null) actions.push({ action: 'Open', args: [this.lastHost] });
+        if (this.lastHost !== null)
+          actions.push({ action: "Open", args: [this.lastHost] });
         this.b3270.runActions(actions);
       }
       return;
     }
-    if (kind === 'popup') {
+    if (kind === "popup") {
       const popup = /** @type {import('./b3270.js').PopupIndication} */ (body);
-      const text = popup.text ?? popup.error ?? '';
-      this.log.warn('popup from emulator', { type: popup.type ?? '', text });
-      this.sendToAll({ type: 'error', code: 'E2004', message: text });
+      const text = popup.text ?? popup.error ?? "";
+      this.log.warn("popup from emulator", { type: popup.type ?? "", text });
+      this.sendToAll({ type: "error", code: "E2004", message: text });
       return;
     }
-    if (kind === 'ui-error') {
-      const uiError = /** @type {import('./b3270.js').UiErrorIndication} */ (body);
-      this.reportError(new AppError('E2004', uiError.text ?? 'protocol error'));
+    if (kind === "ui-error") {
+      const uiError = /** @type {import('./b3270.js').UiErrorIndication} */ (
+        body
+      );
+      this.reportError(new AppError("E2004", uiError.text ?? "protocol error"));
       return;
     }
-    if (kind === 'run-result') {
-      const result = /** @type {import('./b3270.js').RunResultIndication} */ (body);
-      const tag = result['r-tag'];
+    if (kind === "run-result") {
+      const result = /** @type {import('./b3270.js').RunResultIndication} */ (
+        body
+      );
+      const tag = result["r-tag"];
 
       if (tag !== undefined && tag === this.fieldReadTag) {
         this.fieldReadTag = null;
         if (result.success) {
-          const { editable, hidden, formatted } = fieldMap(result.text ?? [], this.screen.rows, this.screen.cols);
+          const { editable, hidden, formatted } = fieldMap(
+            result.text ?? [],
+            this.screen.rows,
+            this.screen.cols,
+          );
           this.screen.applyFields(editable, formatted);
           this.updatePasswordField(hidden);
         }
@@ -309,18 +346,26 @@ export class Session {
         return;
       }
 
-      const waitingViewer = tag !== undefined ? this.pendingFieldReads.get(tag) : undefined;
+      const waitingViewer =
+        tag !== undefined ? this.pendingFieldReads.get(tag) : undefined;
       if (waitingViewer !== undefined) {
         this.pendingFieldReads.delete(/** @type {string} */ (tag));
         // Nothing to copy is routine — every Ctrl+C outside a field lands here.
-        const text = result.success ? editableFieldText(result.text ?? []) : null;
-        if (text !== null) waitingViewer.sendMessage({ type: 'fieldContent', text });
+        const text = result.success
+          ? editableFieldText(result.text ?? [])
+          : null;
+        if (text !== null)
+          waitingViewer.sendMessage({ type: "fieldContent", text });
         return;
       }
       if (!result.success) {
-        const text = (result.text ?? []).join(' ');
-        this.log.warn('action failed', { tag: result['r-tag'] ?? '', text });
-        this.sendToAll({ type: 'error', code: 'E2005', message: text || 'action failed' });
+        const text = (result.text ?? []).join(" ");
+        this.log.warn("action failed", { tag: result["r-tag"] ?? "", text });
+        this.sendToAll({
+          type: "error",
+          code: "E2005",
+          message: text || "action failed",
+        });
       }
       return;
     }
@@ -347,7 +392,9 @@ export class Session {
     // separate ReadBuffer, one in flight at a time.
     if (this.fieldsStale && this.fieldReadTag === null) {
       this.fieldsStale = false;
-      this.fieldReadTag = this.b3270.runActions([{ action: 'ReadBuffer', args: ['Ascii'] }]);
+      this.fieldReadTag = this.b3270.runActions([
+        { action: "ReadBuffer", args: ["Ascii"] },
+      ]);
     }
 
     const nextOia = this.oia.render(this.screen.cols, this.screen.cursor);
@@ -360,13 +407,20 @@ export class Session {
     /** @type {Map<string, string>} */
     const encoded = new Map();
     for (const viewer of this.viewers) {
-      const key = `${viewer.hostColors}|${viewer.fieldColor ?? ''}`;
+      const key = `${viewer.hostColors}|${viewer.fieldColor ?? ""}`;
       let bytes = encoded.get(key);
       if (bytes === undefined) {
-        bytes = delta(this.screen, dirtyRows, this.oiaText, oiaChanged, viewer.hostColors, viewer.fieldColor);
+        bytes = delta(
+          this.screen,
+          dirtyRows,
+          this.oiaText,
+          oiaChanged,
+          viewer.hostColors,
+          viewer.fieldColor,
+        );
         encoded.set(key, bytes);
       }
-      if (bytes !== '') viewer.sendScreen(bytes);
+      if (bytes !== "") viewer.sendScreen(bytes);
     }
   }
 
@@ -378,7 +432,8 @@ export class Session {
   /** @returns {string[]} one plain-text line per row */
   screenLines() {
     const lines = [];
-    for (let row = 0; row < this.screen.rows; row++) lines.push(this.screen.rowText(row));
+    for (let row = 0; row < this.screen.rows; row++)
+      lines.push(this.screen.rowText(row));
     return lines;
   }
 
@@ -389,7 +444,7 @@ export class Session {
   pushRecorderStep(step) {
     if (this.recording === null) return;
     this.recording.steps.push(step);
-    this.sendToAll({ type: 'recorderStep', step });
+    this.sendToAll({ type: "recorderStep", step });
   }
 
   /**
@@ -418,7 +473,8 @@ export class Session {
    * @returns {void}
    */
   updatePasswordField(hidden) {
-    const at = this.screen.cursor.row * this.screen.cols + this.screen.cursor.col;
+    const at =
+      this.screen.cursor.row * this.screen.cols + this.screen.cursor.col;
     this.passwordField = hidden[at] ?? false;
   }
 
@@ -428,8 +484,18 @@ export class Session {
    */
   announceResize(before) {
     if (this.screenSize() === before) return;
-    this.log.info('screen size changed', { model: this.model, rows: this.screen.rows, cols: this.screen.cols });
-    this.sendToAll({ type: 'screen', model: this.model, rows: this.screen.rows, cols: this.screen.cols, oversize: this.oversize });
+    this.log.info("screen size changed", {
+      model: this.model,
+      rows: this.screen.rows,
+      cols: this.screen.cols,
+    });
+    this.sendToAll({
+      type: "screen",
+      model: this.model,
+      rows: this.screen.rows,
+      cols: this.screen.cols,
+      oversize: this.oversize,
+    });
     this.repaintAll();
   }
 
@@ -438,7 +504,14 @@ export class Session {
     this.oiaText = this.oia.render(this.screen.cols, this.screen.cursor);
     this.screen.takeDirtyRows();
     for (const viewer of this.viewers) {
-      viewer.sendScreen(fullRepaint(this.screen, this.oiaText, viewer.hostColors, viewer.fieldColor));
+      viewer.sendScreen(
+        fullRepaint(
+          this.screen,
+          this.oiaText,
+          viewer.hostColors,
+          viewer.fieldColor,
+        ),
+      );
     }
   }
 
@@ -448,7 +521,14 @@ export class Session {
    */
   repaint(viewer) {
     this.oiaText = this.oia.render(this.screen.cols, this.screen.cursor);
-    viewer.sendScreen(fullRepaint(this.screen, this.oiaText, viewer.hostColors, viewer.fieldColor));
+    viewer.sendScreen(
+      fullRepaint(
+        this.screen,
+        this.oiaText,
+        viewer.hostColors,
+        viewer.fieldColor,
+      ),
+    );
   }
 
   /**
@@ -457,27 +537,33 @@ export class Session {
    */
   attach(viewer) {
     if (this.viewers.size >= this.config.sessions.maxViewersPerSession) {
-      throw new AppError('E3003', `session ${this.id} already has ${this.viewers.size} viewers`);
+      throw new AppError(
+        "E3003",
+        `session ${this.id} already has ${this.viewers.size} viewers`,
+      );
     }
     if (!this.allowSharing && this.viewers.size > 0) {
-      throw new AppError('E3007', `session ${this.id} has sharing turned off`);
+      throw new AppError("E3007", `session ${this.id} has sharing turned off`);
     }
 
-    const hasController = [...this.viewers].some((other) => other.role === 'controller');
-    viewer.role = this.allowSharedEditing || !hasController ? 'controller' : 'observer';
+    const hasController = [...this.viewers].some(
+      (other) => other.role === "controller",
+    );
+    viewer.role =
+      this.allowSharedEditing || !hasController ? "controller" : "observer";
 
     this.viewers.add(viewer);
     this.stopIdleTimer();
-    this.log.info('viewer attached', {
+    this.log.info("viewer attached", {
       viewer: viewer.id,
-      ip: viewer.ip ?? '',
-      user: viewer.user ?? '',
+      ip: viewer.ip ?? "",
+      user: viewer.user ?? "",
       role: viewer.role,
       total: this.viewers.size,
     });
 
     viewer.sendMessage({
-      type: 'hello',
+      type: "hello",
       sessionId: this.id,
       rows: this.screen.rows,
       cols: this.screen.cols,
@@ -506,22 +592,22 @@ export class Session {
    */
   detach(viewer) {
     if (!this.viewers.delete(viewer)) return;
-    this.log.info('viewer detached', {
+    this.log.info("viewer detached", {
       viewer: viewer.id,
-      ip: viewer.ip ?? '',
-      user: viewer.user ?? '',
+      ip: viewer.ip ?? "",
+      user: viewer.user ?? "",
       total: this.viewers.size,
     });
 
     // Or the session would be permanently read-only.
-    if (viewer.role === 'controller' && !this.allowSharedEditing) {
+    if (viewer.role === "controller" && !this.allowSharedEditing) {
       const next = this.viewers.values().next();
       if (!next.done) {
-        next.value.role = 'controller';
-        this.log.info('promoted viewer to controller', {
+        next.value.role = "controller";
+        this.log.info("promoted viewer to controller", {
           viewer: next.value.id,
-          ip: next.value.ip ?? '',
-          user: next.value.user ?? '',
+          ip: next.value.ip ?? "",
+          user: next.value.user ?? "",
         });
       }
     }
@@ -537,18 +623,18 @@ export class Session {
    */
   handleClientMessage(viewer, message) {
     // Observers may send these three: they change only this viewer's own picture.
-    if (message.type === 'refresh') {
+    if (message.type === "refresh") {
       this.repaint(viewer);
       return;
     }
 
-    if (message.type === 'hostColors') {
+    if (message.type === "hostColors") {
       viewer.hostColors = message.enabled;
       this.repaint(viewer);
       return;
     }
 
-    if (message.type === 'fieldColor') {
+    if (message.type === "fieldColor") {
       viewer.fieldColor = message.color;
       this.fieldsStale = true;
       this.repaint(viewer);
@@ -556,106 +642,140 @@ export class Session {
       return;
     }
 
-    if (viewer.role !== 'controller') {
+    if (viewer.role !== "controller") {
       viewer.sendMessage({
-        type: 'error',
-        code: 'E3006',
-        message: 'This session is being controlled by someone else.',
+        type: "error",
+        code: "E3006",
+        message: "This session is being controlled by someone else.",
       });
       return;
     }
 
     // Browsers watch `touched` to stop resizing a session someone is using.
-    if (!this.touched && (message.type === 'action' || message.type === 'text' || message.type === 'paste')) {
+    if (
+      !this.touched &&
+      (message.type === "action" ||
+        message.type === "text" ||
+        message.type === "paste")
+    ) {
       this.touched = true;
       this.broadcastStatus();
     }
 
     switch (message.type) {
-      case 'action':
+      case "action":
         // Control keys carry no field content, so they are always safe to record.
         this.record(message.action, message.args ?? []);
         // b3270's Backspace only moves left, as real 3270 hardware does; a PC
         // keyboard expects a delete, and the field map says if there is room.
-        if (message.action === 'Backspace') {
-          if (this.canBackspace()) this.b3270.runActions([{ action: 'Left' }, { action: 'Delete' }]);
+        if (message.action === "Backspace") {
+          if (this.canBackspace())
+            this.b3270.runActions([{ action: "Left" }, { action: "Delete" }]);
           return;
         }
         // b3270 has no upward Newline; the cached field map answers it here.
-        if (message.action === 'BackNewline') {
+        if (message.action === "BackNewline") {
           const target = this.backNewlineTarget();
-          this.b3270.runActions([{ action: 'MoveCursor1', args: [String(target.row + 1), String(target.col + 1)] }]);
+          this.b3270.runActions([
+            {
+              action: "MoveCursor1",
+              args: [String(target.row + 1), String(target.col + 1)],
+            },
+          ]);
           return;
         }
-        this.b3270.runActions([{ action: message.action, args: message.args ?? [] }]);
+        this.b3270.runActions([
+          { action: message.action, args: message.args ?? [] },
+        ]);
         return;
-      case 'text':
-        if (message.value !== '') {
+      case "text":
+        if (message.value !== "") {
           if (this.passwordField) this.recordPassword();
-          else this.record('String', [message.value]);
+          else this.record("String", [message.value]);
           const nudge = this.typingNudge();
-          const actions = nudge === null
-            ? [{ action: 'String', args: [message.value] }]
-            : [
-              { action: 'MoveCursor1', args: [String(nudge.row + 1), String(nudge.col + 1)] },
-              { action: 'String', args: [message.value] },
-            ];
+          const actions =
+            nudge === null
+              ? [{ action: "String", args: [message.value] }]
+              : [
+                  {
+                    action: "MoveCursor1",
+                    args: [String(nudge.row + 1), String(nudge.col + 1)],
+                  },
+                  { action: "String", args: [message.value] },
+                ];
           this.b3270.runActions(actions);
         }
         return;
-      case 'paste': {
-        if (message.text !== '') {
+      case "paste": {
+        if (message.text !== "") {
           if (this.passwordField) this.recordPassword();
-          else this.record('PasteString', [message.text]);
+          else this.record("PasteString", [message.text]);
 
           // Batched, so nothing else can be typed between the segments.
-          const segments = pasteSegments(this.screen.cells, this.screen.fieldsFormatted, this.screen.cols, this.screen.cursor, message.text);
+          const segments = pasteSegments(
+            this.screen.cells,
+            this.screen.fieldsFormatted,
+            this.screen.cols,
+            this.screen.cursor,
+            message.text,
+          );
           const actions = segments.flatMap(({ row, col, text }) => [
-            { action: 'MoveCursor1', args: [String(row + 1), String(col + 1)] },
-            { action: 'PasteString', args: [Buffer.from(text, 'utf8').toString('hex')] },
+            { action: "MoveCursor1", args: [String(row + 1), String(col + 1)] },
+            {
+              action: "PasteString",
+              args: [Buffer.from(text, "utf8").toString("hex")],
+            },
           ]);
           if (actions.length > 0) this.b3270.runActions(actions);
         }
         return;
       }
-      case 'connect':
+      case "connect":
         // A configured host never reaches the browser, so it asks without one.
-        this.connect(message.host ?? this.lastHost ?? '');
+        this.connect(message.host ?? this.lastHost ?? "");
         return;
-      case 'disconnect':
+      case "disconnect":
         this.disconnect();
         return;
-      case 'model':
+      case "model":
         this.setModel(message.model);
         return;
-      case 'oversize':
+      case "oversize":
         this.setOversize(message.value);
         return;
-      case 'copyField': {
-        const tag = this.b3270.runActions([{ action: 'ReadBuffer', args: ['Ascii', 'Field'] }]);
+      case "copyField": {
+        const tag = this.b3270.runActions([
+          { action: "ReadBuffer", args: ["Ascii", "Field"] },
+        ]);
         this.pendingFieldReads.set(tag, viewer);
         return;
       }
-      case 'hints': {
-        const hints = this.screen.fieldsFormatted ? computeHints(this.screen.cells, this.screen.cols) : [];
-        viewer.sendMessage({ type: 'hints', hints });
+      case "hints": {
+        const hints = this.screen.fieldsFormatted
+          ? computeHints(this.screen.cells, this.screen.cols)
+          : [];
+        viewer.sendMessage({ type: "hints", hints });
         return;
       }
-      case 'sharing':
+      case "sharing":
         this.allowSharing = message.allowView;
         this.allowSharedEditing = message.allowEdit;
         for (const other of this.viewers) {
-          if (other !== viewer) other.role = this.allowSharedEditing ? 'controller' : 'observer';
+          if (other !== viewer)
+            other.role = this.allowSharedEditing ? "controller" : "observer";
         }
         this.broadcastStatus();
         return;
-      case 'automation':
-        this.log.info('automation over REST', { allowed: message.allowed, viewer: viewer.id });
+      case "automation":
+        this.log.info("automation over REST", {
+          allowed: message.allowed,
+          viewer: viewer.id,
+        });
         this.allowAutomation = message.allowed;
         this.broadcastStatus();
         return;
-      case 'recorder':
-        this.recording = message.action === 'start' ? { steps: [] } : null;
+      case "recorder":
+        this.recording = message.action === "start" ? { steps: [] } : null;
         return;
     }
   }
@@ -711,7 +831,7 @@ export class Session {
   broadcastStatus() {
     for (const viewer of this.viewers) {
       viewer.sendMessage({
-        type: 'status',
+        type: "status",
         connection: this.oia.connectionState,
         connected: this.oia.connected,
         touched: this.touched,
@@ -742,7 +862,7 @@ export class Session {
   reportError(err) {
     this.log.error(err);
     const { code, summary } = describeError(err);
-    this.sendToAll({ type: 'error', code, message: summary });
+    this.sendToAll({ type: "error", code, message: summary });
   }
 
   /** @returns {void} */
@@ -751,7 +871,7 @@ export class Session {
     const timeout = this.config.sessions.idleTimeoutMs;
     if (timeout <= 0) return;
     this.idleTimer = setTimeout(() => {
-      this.log.info('idle timeout reached, closing');
+      this.log.info("idle timeout reached, closing");
       this.close();
     }, timeout);
     this.idleTimer.unref();
@@ -772,7 +892,7 @@ export class Session {
     clearTimeout(this.readyTimer);
     this.markReady();
     this.stopIdleTimer();
-    this.log.info('closing', { viewers: this.viewers.size });
+    this.log.info("closing", { viewers: this.viewers.size });
     this.b3270.stop();
     this.viewers.clear();
     if (this.onClosed) this.onClosed();
@@ -783,7 +903,7 @@ export class SessionRegistry {
   /** @param {import('./config.js').Config} config */
   constructor(config) {
     this.config = config;
-    this.log = logger('registry');
+    this.log = logger("registry");
     /** @type {Map<string, Session>} */
     this.sessions = new Map();
   }
@@ -792,19 +912,30 @@ export class SessionRegistry {
    * @param {{ ip: string, user: string }} [client]
    * @returns {Promise<Session>}
    */
-  async create(client = { ip: '', user: '' }) {
+  async create(client = { ip: "", user: "" }) {
     if (this.sessions.size >= this.config.sessions.maxSessions) {
-      throw new AppError('E3002', `${this.sessions.size} sessions are already open`);
+      throw new AppError(
+        "E3002",
+        `${this.sessions.size} sessions are already open`,
+      );
     }
     const session = new Session(this.config, await reserveRestEndpoint());
     session.onClosed = () => {
       this.sessions.delete(session.id);
-      this.log.info('session removed', { session: session.id, remaining: this.sessions.size });
+      this.log.info("session removed", {
+        session: session.id,
+        remaining: this.sessions.size,
+      });
     };
     this.sessions.set(session.id, session);
-    this.log.info('session created', { session: session.id, ...client, total: this.sessions.size });
+    this.log.info("session created", {
+      session: session.id,
+      ...client,
+      total: this.sessions.size,
+    });
 
-    if (this.config.b3270.defaultHost !== null) session.connect(this.config.b3270.defaultHost);
+    if (this.config.b3270.defaultHost !== null)
+      session.connect(this.config.b3270.defaultHost);
     return session;
   }
 
@@ -814,7 +945,7 @@ export class SessionRegistry {
    */
   get(id) {
     const session = this.sessions.get(id);
-    if (session === undefined) throw new AppError('E3001', id);
+    if (session === undefined) throw new AppError("E3001", id);
     return session;
   }
 

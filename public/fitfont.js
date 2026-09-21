@@ -29,8 +29,14 @@ export function chooseFontSize({ measure, cols, rows, box, start }) {
   };
 
   const current = measure(start);
-  const scale = Math.min(box.width / (current.width * cols), box.height / (current.height * rows));
-  let size = Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, Math.floor(start * scale) + 1));
+  const scale = Math.min(
+    box.width / (current.width * cols),
+    box.height / (current.height * rows),
+  );
+  let size = Math.max(
+    MIN_FONT_SIZE,
+    Math.min(MAX_FONT_SIZE, Math.floor(start * scale) + 1),
+  );
 
   while (size > MIN_FONT_SIZE && !fits(size)) size -= 1;
   while (size < MAX_FONT_SIZE && fits(size + 1)) size += 1;

@@ -13,7 +13,7 @@ Out of scope for this build: file transfer (IND$FILE), printer sessions
 
 ## 2. Session lifecycle
 
-A **session** is one `b3270` process and one host connection. b3270 *is* one
+A **session** is one `b3270` process and one host connection. b3270 _is_ one
 terminal — one screen, one host connection, one keyboard — and its JSON protocol
 has no notion of a second one, so a second session is a second process. Nothing
 can be multiplexed onto a single b3270.
@@ -29,24 +29,24 @@ gaps, no frames, nothing between two screens but the theme's own background — 
 the keyboard is aimed at exactly one of them. Clicking a pane aims the keyboard
 at it; `Ctrl-B` and a digit does the same from the keyboard.
 
-| Event | Behaviour |
-|---|---|
-| Page opened with no `#fragment` | A session is created; its id goes into the URL fragment |
-| Page opened with `#<ids>` | The fragment is a comma-separated list, one slot per digit (`a,,c` is session 1 and 3). Each id is joined if it still exists; ids that are gone are reported once with `E3001`, and a session is created only if none survived |
-| A digit with no session behind it is pressed | A session is created for that slot and appended to the fragment (`E5006` if the server refuses) |
-| Browser reloads or the network drops | The session is untouched. The page retries with exponential backoff and jitter for as long as the server would hold the session — `sessions.idleTimeoutMs`, which the `hello` told it — asking `/api/sessions` before each attempt: a server that does not answer is waited for, one that answers but no longer lists the session ends the waiting at once and the slot takes a new session (`E5014` if that fails). The reconnected page reloads itself, so a server that came back with newer page code is picked up; the fragment still names the same sessions, so it reattaches to them |
-| Last viewer detaches | The session is kept alive for `sessions.idleTimeoutMs`, then closed. A viewer attaching inside that window cancels the reaping |
-| `b3270` exits | The session closes and every viewer is told (`E2002`) |
+| Event                                        | Behaviour                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Page opened with no `#fragment`              | A session is created; its id goes into the URL fragment                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Page opened with `#<ids>`                    | The fragment is a comma-separated list, one slot per digit (`a,,c` is session 1 and 3). Each id is joined if it still exists; ids that are gone are reported once with `E3001`, and a session is created only if none survived                                                                                                                                                                                                                                                                                                                                                               |
+| A digit with no session behind it is pressed | A session is created for that slot and appended to the fragment (`E5006` if the server refuses)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Browser reloads or the network drops         | The session is untouched. The page retries with exponential backoff and jitter for as long as the server would hold the session — `sessions.idleTimeoutMs`, which the `hello` told it — asking `/api/sessions` before each attempt: a server that does not answer is waited for, one that answers but no longer lists the session ends the waiting at once and the slot takes a new session (`E5014` if that fails). The reconnected page reloads itself, so a server that came back with newer page code is picked up; the fragment still names the same sessions, so it reattaches to them |
+| Last viewer detaches                         | The session is kept alive for `sessions.idleTimeoutMs`, then closed. A viewer attaching inside that window cancels the reaping                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `b3270` exits                                | The session closes and every viewer is told (`E2002`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 Sharing the URL is the whole sharing mechanism. There is no separate invite step;
 sharing a page that holds four sessions shares all four.
 
 ## 3. Roles
 
-| Role | May do |
-|---|---|
+| Role           | May do                                         |
+| -------------- | ---------------------------------------------- |
 | **controller** | Type, press function keys, connect, disconnect |
-| **observer** | Watch |
+| **observer**   | Watch                                          |
 
 The first viewer to attach is the controller; the rest observe. If the controller
 leaves, another viewer is promoted immediately, so a session never becomes
@@ -72,7 +72,7 @@ the host.
   what `b3270.oversize` starts every session at.
 - **Fit to window** asks for a bigger screen than the model has: the browser
   measures how many cells the session's pane would hold at a chosen text size and
-  asks for exactly that many columns and rows, which b3270 takes as an *oversize*
+  asks for exactly that many columns and rows, which b3270 takes as an _oversize_
   and negotiates as IBM-DYNAMIC. Turning it off puts the model's own size back.
   It is not offered on the dynamic screen, which is already a size asked for.
   The screen is never smaller than the model — b3270 refuses that and quietly
@@ -88,7 +88,7 @@ the host.
   line up, and fitting a pane that already fits changes nothing.
 - The **text size** the fit is measured at is a row of its own, shown only while
   the fit is on, 8–32 px and saved in the browser. Bigger text means fewer cells.
-  It is what the screen is measured *with*, not the font size on screen: that one
+  It is what the screen is measured _with_, not the font size on screen: that one
   goes on floating so the grid fills the window however it is resized afterwards.
 - The size is negotiated with the host once, when the connection is opened, so
   changing either the model or the fit **drops the connection and reopens the
@@ -120,6 +120,7 @@ the host.
   it is rendered faithfully: `X Not Connected`, `X SYSTEM`, `X Wait`,
   `X Protected`, `X Numeric`, `X Operator Error`, and so on. An unrecognised lock
   value is shown verbatim as `X <value>` rather than swallowed.
+
 - The right of the OIA row holds `[Reset] [Menu]`, painted by the browser
   over columns the server never writes into. Every pane carries its own, so a
   split is not a screen you have to switch away from to work on. **Menu** opens
@@ -180,27 +181,27 @@ underneath.
 
 **Option numbers** are fixed, and `=n` jumps to one from wherever you are:
 
-| Option | Panel |
-|---|---|
-| `0` | Settings |
-| `1` | Macros |
-| `2` | Recorder |
-| `3` | Keys |
-| `H` | Help |
-| `X` | Exit the panel, back to the session |
+| Option | Panel                               |
+| ------ | ----------------------------------- |
+| `0`    | Settings                            |
+| `1`    | Macros                              |
+| `2`    | Recorder                            |
+| `3`    | Keys                                |
+| `H`    | Help                                |
+| `X`    | Exit the panel, back to the session |
 
 **Keys**, all of them ISPF's:
 
-| Key | What it does |
-|---|---|
-| Enter | Runs the command line, or picks the line the cursor is on when it is empty |
-| F1 | Help |
-| F3, Esc | Exit: back where the panel was opened from |
-| F4 | Menu: the primary option menu |
-| F7 / F8, PageUp / PageDown | Backward and forward a bodyful at a time |
-| F12 | Cancel: leave without applying what was typed |
-| Tab, Up / Down | The cursor between the command line and the body lines, stepping over headings |
-| Left / Right | Change the value the cursor is on |
+| Key                        | What it does                                                                   |
+| -------------------------- | ------------------------------------------------------------------------------ |
+| Enter                      | Runs the command line, or picks the line the cursor is on when it is empty     |
+| F1                         | Help                                                                           |
+| F3, Esc                    | Exit: back where the panel was opened from                                     |
+| F4                         | Menu: the primary option menu                                                  |
+| F7 / F8, PageUp / PageDown | Backward and forward a bodyful at a time                                       |
+| F12                        | Cancel: leave without applying what was typed                                  |
+| Tab, Up / Down             | The cursor between the command line and the body lines, stepping over headings |
+| Left / Right               | Change the value the cursor is on                                              |
 
 **Command line words**: `=n` to jump, a bare number to pick a line on this
 panel, `END`/`EXIT`/`X`, `CANCEL`/`CAN`, `RETURN`/`RET`/`MENU`, `HELP`/`?`, the
@@ -222,31 +223,31 @@ Printable characters are sent as text. Everything else follows IBM Personal
 Communications' (PCOMM) default 3270 keyboard, not x3270's Ctrl-letter
 mnemonics:
 
-| Key | 3270 action |
-|---|---|
-| Enter (main) | Newline |
-| Shift-Enter (main) | BackNewline |
-| Right Ctrl | Enter |
-| Tab / Shift-Tab | Tab / BackTab |
-| Backspace, Delete | Backspace, Delete |
-| Arrows, Home | Up, Down, Left, Right, Home |
-| Insert | ToggleInsert |
-| Alt-Insert | PA1 |
-| Ctrl-C | copy the selection, or the field under the cursor |
-| Ctrl-V, Shift-Insert | paste the clipboard into the screen |
-| Shift-Home | FieldMark |
-| Alt-Home | PA2 |
-| End | EraseEOF |
-| Alt-End | EraseInput |
-| Shift-PageUp | PA3 |
-| Esc | Attn |
-| Shift-Esc | SysReq |
-| Pause | Clear |
-| Caps Lock | Reset |
-| F1–F12 | PF1–PF12 |
-| Shift-F1–F12 | PF13–PF24 |
-| Ctrl-B then 1–4 | aim the keyboard at that session |
-| Ctrl-B then Shift-1–4 | show that many sessions at once |
+| Key                   | 3270 action                                       |
+| --------------------- | ------------------------------------------------- |
+| Enter (main)          | Newline                                           |
+| Shift-Enter (main)    | BackNewline                                       |
+| Right Ctrl            | Enter                                             |
+| Tab / Shift-Tab       | Tab / BackTab                                     |
+| Backspace, Delete     | Backspace, Delete                                 |
+| Arrows, Home          | Up, Down, Left, Right, Home                       |
+| Insert                | ToggleInsert                                      |
+| Alt-Insert            | PA1                                               |
+| Ctrl-C                | copy the selection, or the field under the cursor |
+| Ctrl-V, Shift-Insert  | paste the clipboard into the screen               |
+| Shift-Home            | FieldMark                                         |
+| Alt-Home              | PA2                                               |
+| End                   | EraseEOF                                          |
+| Alt-End               | EraseInput                                        |
+| Shift-PageUp          | PA3                                               |
+| Esc                   | Attn                                              |
+| Shift-Esc             | SysReq                                            |
+| Pause                 | Clear                                             |
+| Caps Lock             | Reset                                             |
+| F1–F12                | PF1–PF12                                          |
+| Shift-F1–F12          | PF13–PF24                                         |
+| Ctrl-B then 1–4       | aim the keyboard at that session                  |
+| Ctrl-B then Shift-1–4 | show that many sessions at once                   |
 
 `BackNewline` is Newline's mirror and the one name in the table b3270 has no
 action for: the server finds the first typeable cell of the nearest row above
@@ -275,12 +276,12 @@ The digit is read from the key itself, not from what it prints, so Shift-2 is th
 **Shift** turns the same digit into the layout — how many sessions are on screen
 rather than which one is typed at:
 
-| | Panes |
-|---|---|
+|           | Panes                                                            |
+| --------- | ---------------------------------------------------------------- |
 | `Shift-1` | one session filling the page: the one the keyboard is already on |
-| `Shift-2` | sessions 1 and 2, side by side |
-| `Shift-3` | session 1 down the left half, 2 above 3 on the right |
-| `Shift-4` | quarters: 1 above 2 on the left, 3 above 4 on the right |
+| `Shift-2` | sessions 1 and 2, side by side                                   |
+| `Shift-3` | session 1 down the left half, 2 above 3 on the right             |
+| `Shift-4` | quarters: 1 above 2 on the left, 3 above 4 on the right          |
 
 A layout that names a session nobody has opened yet opens it. A session that was
 off screen takes the pane the keyboard was on.
@@ -344,13 +345,13 @@ reconnecting to it is worth trying.
 
 ### HTTP
 
-| Method | Path | Result |
-|---|---|---|
-| `POST` | `/api/sessions` | Creates a session → `201 {id, rows, cols, model}`, after b3270 has reported its real geometry |
-| `GET` | `/api/sessions` | Lists sessions → `{sessions:[{id, viewers, connection, host}], defaultHost}` |
-| `GET` | `/api/sessions/<id>/3270/…` | Forwarded to that session's emulator; see REST below |
-| `GET` | `/vendor/…` | ghostty-web, served from `node_modules` |
-| `GET` | anything else | Static files from `public/` |
+| Method | Path                        | Result                                                                                        |
+| ------ | --------------------------- | --------------------------------------------------------------------------------------------- |
+| `POST` | `/api/sessions`             | Creates a session → `201 {id, rows, cols, model}`, after b3270 has reported its real geometry |
+| `GET`  | `/api/sessions`             | Lists sessions → `{sessions:[{id, viewers, connection, host}], defaultHost}`                  |
+| `GET`  | `/api/sessions/<id>/3270/…` | Forwarded to that session's emulator; see REST below                                          |
+| `GET`  | `/vendor/…`                 | ghostty-web, served from `node_modules`                                                       |
+| `GET`  | anything else               | Static files from `public/`                                                                   |
 
 Errors are JSON: `{"code":"E6001","message":"…"}` with a matching status.
 
@@ -394,24 +395,24 @@ turn the switch on for it.
 `config.jsonc`, overridable with the `TN3270_CONFIG` environment variable. JSONC:
 `//` and `/* */` comments and trailing commas are accepted.
 
-| Setting | Default | Meaning |
-|---|---|---|
-| `server.host` | `127.0.0.1` | Listen address |
-| `server.port` | `8017` | Listen port |
-| `b3270.path` | `b3270` | Executable, resolved from `PATH` |
-| `b3270.model` | `2` | 3270 model a session starts on, 2–5; changeable from the settings panel |
-| `b3270.defaultHost` | `null` | Connect new sessions here; `null` starts disconnected |
-| `b3270.extraArgs` | `[]` | Appended verbatim, e.g. `["-cafile","/path/ca.pem"]` |
-| `sessions.maxSessions` | `16` | Refuses more with `E3002` |
-| `sessions.maxViewersPerSession` | `8` | Refuses more with `E3003` |
-| `sessions.idleTimeoutMs` | `300000` | Viewer-less session lifetime; `0` disables reaping |
-| `sessions.allowMultipleControllers` | `false` | Let every viewer type |
-| `sessions.allowAutomation` | `false` | Whether new sessions accept REST calls. Off makes the controller turn it on per session from the settings panel; on is for automation that runs with no browser to ask |
-| `security.allowedHosts` | `[]` | Empty = any host. An entry with a port matches exactly; without one, any port on that host |
-| `security.trustProxyHeaders` | `false` | Take the client's address from `X-Forwarded-For` and their name from `X-Remote-User`. Only with a reverse proxy in front that sets both |
-| `logLevel` | `info` | `debug` logs every line exchanged with b3270 |
-| `logFile` | `log/tn3270.log` | Kept as well as stderr, and rolled over to `<logFile>.1`; `""` is stderr only |
-| `logMaxBytes` | `10485760` | Size at which the log rolls over, so the pair is never more than twice this |
+| Setting                             | Default          | Meaning                                                                                                                                                                |
+| ----------------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `server.host`                       | `127.0.0.1`      | Listen address                                                                                                                                                         |
+| `server.port`                       | `8017`           | Listen port                                                                                                                                                            |
+| `b3270.path`                        | `b3270`          | Executable, resolved from `PATH`                                                                                                                                       |
+| `b3270.model`                       | `2`              | 3270 model a session starts on, 2–5; changeable from the settings panel                                                                                                |
+| `b3270.defaultHost`                 | `null`           | Connect new sessions here; `null` starts disconnected                                                                                                                  |
+| `b3270.extraArgs`                   | `[]`             | Appended verbatim, e.g. `["-cafile","/path/ca.pem"]`                                                                                                                   |
+| `sessions.maxSessions`              | `16`             | Refuses more with `E3002`                                                                                                                                              |
+| `sessions.maxViewersPerSession`     | `8`              | Refuses more with `E3003`                                                                                                                                              |
+| `sessions.idleTimeoutMs`            | `300000`         | Viewer-less session lifetime; `0` disables reaping                                                                                                                     |
+| `sessions.allowMultipleControllers` | `false`          | Let every viewer type                                                                                                                                                  |
+| `sessions.allowAutomation`          | `false`          | Whether new sessions accept REST calls. Off makes the controller turn it on per session from the settings panel; on is for automation that runs with no browser to ask |
+| `security.allowedHosts`             | `[]`             | Empty = any host. An entry with a port matches exactly; without one, any port on that host                                                                             |
+| `security.trustProxyHeaders`        | `false`          | Take the client's address from `X-Forwarded-For` and their name from `X-Remote-User`. Only with a reverse proxy in front that sets both                                |
+| `logLevel`                          | `info`           | `debug` logs every line exchanged with b3270                                                                                                                           |
+| `logFile`                           | `log/tn3270.log` | Kept as well as stderr, and rolled over to `<logFile>.1`; `""` is stderr only                                                                                          |
+| `logMaxBytes`                       | `10485760`       | Size at which the log rolls over, so the pair is never more than twice this                                                                                            |
 
 ## 8. Error codes
 
@@ -421,53 +422,53 @@ that decides it is an error rather than to the file that throws it: `E1xxx`
 config, `E2xxx` b3270, `E3xxx` session, `E4xxx` client messages, `E5xxx`
 browser, `E6xxx` server transport, `E7xxx` the REST proxy.
 
-| Code | Meaning |
-|---|---|
-| `E1001` | Config file could not be read |
-| `E1002` | Config file is not valid JSONC |
-| `E1003` | Config value has the wrong type |
-| `E1004` | Config value is out of range |
-| `E1005` | Config value is not a usable b3270 resource name |
-| `E2001` | b3270 could not be spawned |
-| `E2002` | b3270 exited unexpectedly |
-| `E2003` | b3270 emitted a line that is not valid JSON |
-| `E2004` | b3270 reported a protocol error |
-| `E2005` | b3270 action failed |
-| `E2006` | b3270 stdin is closed |
-| `E3001` | Session not found |
-| `E3002` | Session limit reached |
-| `E3003` | Session has too many viewers |
+| Code    | Meaning                                                |
+| ------- | ------------------------------------------------------ |
+| `E1001` | Config file could not be read                          |
+| `E1002` | Config file is not valid JSONC                         |
+| `E1003` | Config value has the wrong type                        |
+| `E1004` | Config value is out of range                           |
+| `E1005` | Config value is not a usable b3270 resource name       |
+| `E2001` | b3270 could not be spawned                             |
+| `E2002` | b3270 exited unexpectedly                              |
+| `E2003` | b3270 emitted a line that is not valid JSON            |
+| `E2004` | b3270 reported a protocol error                        |
+| `E2005` | b3270 action failed                                    |
+| `E2006` | b3270 stdin is closed                                  |
+| `E3001` | Session not found                                      |
+| `E3002` | Session limit reached                                  |
+| `E3003` | Session has too many viewers                           |
 | `E3004` | Screen indication referenced a cell outside the screen |
-| `E3005` | Host address is not allowed by config |
-| `E3006` | Input rejected: viewer is an observer |
-| `E3007` | Session is not accepting new viewers |
-| `E4001` | WebSocket message was not valid JSON |
-| `E4002` | WebSocket message had an unknown type |
-| `E4003` | Pasted text is too large to type into a screen |
-| `E4004` | Oversize screen has more cells than b3270 can hold |
-| `E5001` | Terminal renderer failed to initialise |
-| `E5002` | WebSocket connection to the server failed |
-| `E5003` | Settings could not be read from the browser database |
-| `E5004` | Settings could not be saved to the browser database |
-| `E5005` | Clipboard could not be read for a Shift+Insert paste |
-| `E5006` | Another terminal session could not be opened |
-| `E5008` | Macros could not be read from the browser database |
-| `E5009` | Macros could not be saved to the browser database |
-| `E5010` | A macro file could not be read |
-| `E5011` | The keymap could not be saved to the browser database |
-| `E5012` | A keymap file could not be read |
+| `E3005` | Host address is not allowed by config                  |
+| `E3006` | Input rejected: viewer is an observer                  |
+| `E3007` | Session is not accepting new viewers                   |
+| `E4001` | WebSocket message was not valid JSON                   |
+| `E4002` | WebSocket message had an unknown type                  |
+| `E4003` | Pasted text is too large to type into a screen         |
+| `E4004` | Oversize screen has more cells than b3270 can hold     |
+| `E5001` | Terminal renderer failed to initialise                 |
+| `E5002` | WebSocket connection to the server failed              |
+| `E5003` | Settings could not be read from the browser database   |
+| `E5004` | Settings could not be saved to the browser database    |
+| `E5005` | Clipboard could not be read for a Shift+Insert paste   |
+| `E5006` | Another terminal session could not be opened           |
+| `E5008` | Macros could not be read from the browser database     |
+| `E5009` | Macros could not be saved to the browser database      |
+| `E5010` | A macro file could not be read                         |
+| `E5011` | The keymap could not be saved to the browser database  |
+| `E5012` | A keymap file could not be read                        |
 | `E5013` | The keymap could not be read from the browser database |
-| `E5014` | A dropped session could not be restarted |
-| `E6001` | Static file not found |
-| `E6002` | WebSocket upgrade path is not a session |
-| `E6003` | WebSocket closed unexpectedly |
-| `E6004` | Server could not start |
-| `E6005` | Log file could not be opened |
-| `E6006` | Log file could not be written or rolled over |
-| `E7002` | REST is not available for this session |
-| `E7003` | REST request to b3270 failed |
-| `E7004` | Automation is turned off for this session |
-| `E0000` | An error with no code of its own; see the log |
+| `E5014` | A dropped session could not be restarted               |
+| `E6001` | Static file not found                                  |
+| `E6002` | WebSocket upgrade path is not a session                |
+| `E6003` | WebSocket closed unexpectedly                          |
+| `E6004` | Server could not start                                 |
+| `E6005` | Log file could not be opened                           |
+| `E6006` | Log file could not be written or rolled over           |
+| `E7002` | REST is not available for this session                 |
+| `E7003` | REST request to b3270 failed                           |
+| `E7004` | Automation is turned off for this session              |
+| `E0000` | An error with no code of its own; see the log          |
 
 Errors are shown as a dismissible bar at the top of the page. The page is never
 navigated away from.

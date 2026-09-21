@@ -5,14 +5,14 @@
 {
   "server": {
     "host": "127.0.0.1",
-    "port": 8017
+    "port": 8017,
   },
 
   "b3270": {
     "path": "b3270",
     "model": 4,
-    "defaultHost": "127.0.0.1:4001"
+    "defaultHost": "127.0.0.1:4001",
   },
 
-  "logLevel": "info"
+  "logLevel": "info",
 }

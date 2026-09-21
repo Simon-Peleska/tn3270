@@ -1,17 +1,31 @@
-import { init, Terminal } from '/vendor/dist/ghostty-web.js';
-import { mapKey } from '/keymap.js';
-import { ESC, paint, terminalColors } from '/panel.js';
-import { HelpPage, MenuPage } from '/menu.js';
-import { DYNAMIC_OVERSIZE, SettingsPage } from '/settings.js';
-import { MacrosPage } from '/macros.js';
-import { RecorderPage } from '/recorder.js';
-import { KeymapPage } from '/keymap-page.js';
-import { loadSettings, saveSettings, loadMacros, saveMacros, loadKeymap, saveKeymap } from '/store.js';
-import { MAX_SESSIONS, SessionPrefix, paneAreas, parseSessionHash, sessionHash, switcherText } from '/sessions.js';
-import { backoffDelay, reconnectStep } from '/reconnect.js';
-import { chooseFontSize } from '/fitfont.js';
-import { installBoxSelection } from '/box-select.js';
-import { installCursorGlyph } from '/cursor-glyph.js';
+import { init, Terminal } from "/vendor/dist/ghostty-web.js";
+import { mapKey } from "/keymap.js";
+import { ESC, paint, terminalColors } from "/panel.js";
+import { HelpPage, MenuPage } from "/menu.js";
+import { SettingsPage, modeOversize } from "/settings.js";
+import { MacrosPage } from "/macros.js";
+import { RecorderPage } from "/recorder.js";
+import { KeymapPage } from "/keymap-page.js";
+import {
+  loadSettings,
+  saveSettings,
+  loadMacros,
+  saveMacros,
+  loadKeymap,
+  saveKeymap,
+} from "/store.js";
+import {
+  MAX_SESSIONS,
+  SessionPrefix,
+  paneAreas,
+  parseSessionHash,
+  sessionHash,
+  switcherText,
+} from "/sessions.js";
+import { backoffDelay, reconnectStep } from "/reconnect.js";
+import { chooseFontSize } from "/fitfont.js";
+import { installBoxSelection } from "/box-select.js";
+import { installCursorGlyph } from "/cursor-glyph.js";
 
 installBoxSelection();
 installCursorGlyph();
@@ -26,10 +40,10 @@ function element(id) {
   return found;
 }
 
-const screenEl = element('screen');
+const screenEl = element("screen");
 
-const RESET_LABEL = '[Reset]';
-const MENU_LABEL = '[Menu]';
+const RESET_LABEL = "[Reset]";
+const MENU_LABEL = "[Menu]";
 // The menu is the way to every panel, so one button reaches all of them.
 // Narrower than BUTTON_COLUMNS in server/oia.js, which keeps these cells clear.
 const BUTTONS = `${RESET_LABEL} ${MENU_LABEL}`;
@@ -48,7 +62,7 @@ let errorTimer;
  * @returns {string}
  */
 function barBytes(row, cols, text, fg, bg) {
-  const line = text.slice(0, cols).padEnd(cols, ' ');
+  const line = text.slice(0, cols).padEnd(cols, " ");
   // Save and restore: a panel puts its cursor on a field, and this must not move it.
   return `${ESC}7${ESC}[${row};1H${paint(fg, bg, true)}${line}${ESC}[0m${ESC}8`;
 }
@@ -56,17 +70,32 @@ function barBytes(row, cols, text, fg, bg) {
 /** @returns {string} */
 function errorOverlayBytes() {
   const term = activeTerminal();
-  if (activeError === null || term === null) return '';
-  return barBytes(term.rows, term.cols, `[${activeError.code}] ${activeError.message}`, '#ffd9d9', '#3a1d20');
+  if (activeError === null || term === null) return "";
+  return barBytes(
+    term.rows,
+    term.cols,
+    `[${activeError.code}] ${activeError.message}`,
+    "#ffd9d9",
+    "#3a1d20",
+  );
 }
 
 /** @returns {string} */
 function prefixBarBytes() {
   const term = activeTerminal();
-  if (!prefix.armed || term === null) return '';
+  if (!prefix.armed || term === null) return "";
   const colors = settings.theme().colors;
-  const text = switcherText(sessions.map((slot) => slot?.id ?? null), active);
-  return barBytes(term.rows, term.cols, text, colors['background'] ?? '#000000', colors['foreground'] ?? '#00ff00');
+  const text = switcherText(
+    sessions.map((slot) => slot?.id ?? null),
+    active,
+  );
+  return barBytes(
+    term.rows,
+    term.cols,
+    text,
+    colors["background"] ?? "#000000",
+    colors["foreground"] ?? "#00ff00",
+  );
 }
 
 /**
@@ -77,8 +106,8 @@ function prefixBarBytes() {
  */
 function buttonBytes(term) {
   const colors = settings.theme().colors;
-  const fg = colors['background'] ?? '#000000';
-  const bg = colors['foreground'] ?? '#00ff00';
+  const fg = colors["background"] ?? "#000000";
+  const bg = colors["foreground"] ?? "#00ff00";
   const col = term.cols - BUTTONS.length + 1;
   return `${ESC}7${ESC}[${term.rows};${col}H${paint(fg, bg, true)}${BUTTONS}${ESC}[0m${ESC}8`;
 }
@@ -88,10 +117,11 @@ function buttonBytes(term) {
  */
 function hintOverlayBytes() {
   const term = activeTerminal();
-  if (!prefix.armed || !settings.hints || term === null || hints.length === 0) return '';
+  if (!prefix.armed || !settings.hints || term === null || hints.length === 0)
+    return "";
   const colors = settings.theme().colors;
-  const fg = colors['background'] ?? '#000000';
-  const bg = colors['foreground'] ?? '#00ff00';
+  const fg = colors["background"] ?? "#000000";
+  const bg = colors["foreground"] ?? "#00ff00";
   let bytes = `${ESC}7`;
   for (const hint of hints) {
     bytes += `${ESC}[${hint.row + 1};${hint.col + 1}H${paint(fg, bg, true)}${hint.letter}${ESC}[0m`;
@@ -107,7 +137,7 @@ function hintOverlayBytes() {
 function writeOverlays() {
   const slot = activeSession();
   const bytes = errorOverlayBytes() + prefixBarBytes() + hintOverlayBytes();
-  if (bytes === '' || slot === null || slot.terminal === null) return;
+  if (bytes === "" || slot === null || slot.terminal === null) return;
   slot.terminal.write(bytes);
   // By the time the overlay comes off, the keyboard may be on another pane.
   overlaySlot = slot;
@@ -145,7 +175,7 @@ function repaintStatus() {
     page.draw();
     return;
   }
-  sendQuietly(painted, { type: 'refresh' });
+  sendQuietly(painted, { type: "refresh" });
 }
 
 /** @type {number} */
@@ -153,19 +183,24 @@ const DEFAULT_IDLE_TIMEOUT_MS = 300000;
 
 /** @returns {Promise<{ id: string, rows: number, cols: number }>} */
 async function createSession() {
-  const response = await fetch('/api/sessions', { method: 'POST' });
+  const response = await fetch("/api/sessions", { method: "POST" });
   const body = await response.json();
-  if (!response.ok) throw new Error(`[${body.code ?? 'E0000'}] ${body.message ?? 'could not create a session'}`);
+  if (!response.ok)
+    throw new Error(
+      `[${body.code ?? "E0000"}] ${body.message ?? "could not create a session"}`,
+    );
   return body;
 }
 
 /** @returns {Promise<Set<string> | null>} null when the server did not answer */
 async function liveSessionIds() {
   try {
-    const response = await fetch('/api/sessions');
+    const response = await fetch("/api/sessions");
     if (!response.ok) return null;
     const body = await response.json();
-    return new Set((body.sessions ?? []).map((/** @type {{ id: string }} */ s) => s.id));
+    return new Set(
+      (body.sessions ?? []).map((/** @type {{ id: string }} */ s) => s.id),
+    );
   } catch {
     return null;
   }
@@ -236,18 +271,34 @@ function activeTerminal() {
  * @returns {SessionSlot}
  */
 function newSlot(id, started = false, cols = 0, rows = 0) {
-  const pane = document.createElement('div');
-  pane.className = 'pane';
+  const pane = document.createElement("div");
+  pane.className = "pane";
   pane.hidden = true;
   screenEl.append(pane);
   /** @type {SessionSlot} */
   const slot = {
-    id, pane, terminal: null, socket: null, started,
-    attempt: 0, reconnectUntil: null, idleTimeoutMs: DEFAULT_IDLE_TIMEOUT_MS,
-    model: 0, oversize: '', cols, rows, connection: '', connected: null, touched: false, locked: false,
-    role: 'controller', allowSharing: true, allowSharedEditing: false, allowAutomation: false,
+    id,
+    pane,
+    terminal: null,
+    socket: null,
+    started,
+    attempt: 0,
+    reconnectUntil: null,
+    idleTimeoutMs: DEFAULT_IDLE_TIMEOUT_MS,
+    model: 0,
+    oversize: "",
+    cols,
+    rows,
+    connection: "",
+    connected: null,
+    touched: false,
+    locked: false,
+    role: "controller",
+    allowSharing: true,
+    allowSharedEditing: false,
+    allowAutomation: false,
   };
-  pane.addEventListener('click', (event) => paneClicked(slot, event));
+  pane.addEventListener("click", (event) => paneClicked(slot, event));
   return slot;
 }
 
@@ -262,15 +313,15 @@ function writeHash() {
  */
 function connectHost(host) {
   if (host === null) {
-    send({ type: 'connect', host: null });
+    send({ type: "connect", host: null });
     return;
   }
-  if (host === '') {
-    showError('E5002', 'Enter a host as name:port first.');
+  if (host === "") {
+    showError("E5002", "Enter a host as name:port first.");
     return;
   }
-  localStorage.setItem('tn3270.host', host);
-  send({ type: 'connect', host });
+  localStorage.setItem("tn3270.host", host);
+  send({ type: "connect", host });
 }
 
 /**
@@ -298,12 +349,14 @@ function waitForUnlock(slot) {
  * @returns {void}
  */
 function downloadFile(filename, content) {
-  const type = filename.endsWith('.json')
-    ? 'application/json'
-    : filename.endsWith('.kmp') ? 'text/plain' : 'application/xml';
+  const type = filename.endsWith(".json")
+    ? "application/json"
+    : filename.endsWith(".kmp")
+      ? "text/plain"
+      : "application/xml";
   const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
+  const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = filename;
   anchor.click();
@@ -316,20 +369,26 @@ function downloadFile(filename, content) {
  */
 function pickFiles(accept) {
   return new Promise((resolve) => {
-    const input = document.createElement('input');
-    input.type = 'file';
+    const input = document.createElement("input");
+    input.type = "file";
     input.accept = accept;
     input.multiple = true;
-    input.style.display = 'none';
+    input.style.display = "none";
     const done = (/** @type {string[]} */ result) => {
       input.remove();
       resolve(result);
     };
-    input.addEventListener('cancel', () => done([]), { once: true });
-    input.addEventListener('change', () => {
-      const files = Array.from(input.files ?? []);
-      Promise.all(files.map((file) => file.text())).then(done, () => done([]));
-    }, { once: true });
+    input.addEventListener("cancel", () => done([]), { once: true });
+    input.addEventListener(
+      "change",
+      () => {
+        const files = Array.from(input.files ?? []);
+        Promise.all(files.map((file) => file.text())).then(done, () =>
+          done([]),
+        );
+      },
+      { once: true },
+    );
     document.body.appendChild(input);
     input.click();
   });
@@ -337,12 +396,12 @@ function pickFiles(accept) {
 
 /** @returns {Promise<string[]>} */
 function pickXmlFiles() {
-  return pickFiles('.xml,text/xml,application/xml');
+  return pickFiles(".xml,text/xml,application/xml");
 }
 
 /** @returns {Promise<string[]>} */
 function pickKeymapFiles() {
-  return pickFiles('.kmp,.txt,text/plain');
+  return pickFiles(".kmp,.txt,text/plain");
 }
 
 /**
@@ -356,7 +415,10 @@ const panelIo = {
     activeTerminal()?.write(bytes);
     writeOverlays();
   },
-  geometry: () => ({ cols: activeTerminal()?.cols ?? 80, rows: activeTerminal()?.rows ?? 25 }),
+  geometry: () => ({
+    cols: activeTerminal()?.cols ?? 80,
+    rows: activeTerminal()?.rows ?? 25,
+  }),
   theme: () => settings.theme(),
   end: () => endPanel(),
   go: (id) => goPanel(id),
@@ -366,19 +428,23 @@ const settings = new SettingsPage({
   ...panelIo,
   applyTheme,
   applyFont,
-  applyModel: (model) => send({ type: 'model', model }),
-  applyOversize: (value) => send({ type: 'oversize', value }),
+  applyModel: (model) => send({ type: "model", model }),
+  applyOversize: (value) => send({ type: "oversize", value }),
   windowFit: (fontSize) => {
     const slot = activeSession();
     return slot === null ? null : paneFit(slot, fontSize);
   },
-  applyHostColors: (enabled) => send({ type: 'hostColors', enabled }),
-  applySharing: (allowView, allowEdit) => send({ type: 'sharing', allowView, allowEdit }),
-  applyAutomation: (allowed) => send({ type: 'automation', allowed }),
+  applyHostColors: (enabled) => send({ type: "hostColors", enabled }),
+  applySharing: (allowView, allowEdit) =>
+    send({ type: "sharing", allowView, allowEdit }),
+  applyAutomation: (allowed) => send({ type: "automation", allowed }),
   connect: connectHost,
   persist: (values) => {
     saveSettings(values).catch((cause) => {
-      showError('E5004', `Settings could not be saved in this browser: ${String(cause)}`);
+      showError(
+        "E5004",
+        `Settings could not be saved in this browser: ${String(cause)}`,
+      );
     });
   },
 });
@@ -389,7 +455,10 @@ const macros = new MacrosPage({
   waitForUnlock: () => waitForUnlock(activeSession()),
   persist: (values) => {
     saveMacros(values).catch((cause) => {
-      showError('E5009', `Macros could not be saved in this browser: ${String(cause)}`);
+      showError(
+        "E5009",
+        `Macros could not be saved in this browser: ${String(cause)}`,
+      );
     });
   },
   exportFile: downloadFile,
@@ -407,7 +476,10 @@ const keymap = new KeymapPage({
   ...panelIo,
   persist: (bindings) => {
     saveKeymap(bindings).catch((cause) => {
-      showError('E5011', `The keymap could not be saved in this browser: ${String(cause)}`);
+      showError(
+        "E5011",
+        `The keymap could not be saved in this browser: ${String(cause)}`,
+      );
     });
   },
   exportFile: downloadFile,
@@ -415,8 +487,8 @@ const keymap = new KeymapPage({
   error: showError,
 });
 
-const menu = new MenuPage({ ...panelIo });
-const help = new HelpPage({ ...panelIo });
+const menu = new MenuPage(panelIo);
+const help = new HelpPage(panelIo);
 
 const panels = [menu, settings, macros, recorder, keymap, help];
 
@@ -462,9 +534,9 @@ function goPanel(id) {
 
 /** @returns {void} F3: back one level, and out to the session at the bottom. */
 function endPanel() {
-  const previous = panelById(trail.pop() ?? '');
+  const previous = panelById(trail.pop() ?? "");
   if (previous === null) {
-    send({ type: 'refresh' });
+    send({ type: "refresh" });
     return;
   }
   previous.show();
@@ -493,7 +565,7 @@ function closePanels() {
   trail.length = 0;
   if (current === null) return;
   current.hide();
-  send({ type: 'refresh' });
+  send({ type: "refresh" });
 }
 
 /**
@@ -518,7 +590,8 @@ function ensureTerminal(slot) {
   if (slot.cols < 1 || slot.rows < 1) return null;
   const existing = slot.terminal;
   if (existing !== null) {
-    if (existing.cols !== slot.cols || existing.rows !== slot.rows) existing.resize(slot.cols, slot.rows);
+    if (existing.cols !== slot.cols || existing.rows !== slot.rows)
+      existing.resize(slot.cols, slot.rows);
     fitFontSize(slot);
     if (slot === activeSession()) openPanel()?.draw();
     return existing;
@@ -542,7 +615,7 @@ function ensureTerminal(slot) {
 
 /** @returns {void} */
 function paintFrame() {
-  const background = settings.theme().colors['background'] ?? '#000000';
+  const background = settings.theme().colors["background"] ?? "#000000";
   screenEl.style.background = background;
   for (const slot of sessions) {
     if (slot === null) continue;
@@ -561,7 +634,10 @@ function applyTheme(theme) {
   paintFrame();
   for (const slot of sessions) {
     if (slot === null) continue;
-    sendQuietly(slot, { type: 'fieldColor', color: theme.colors['field'] ?? null });
+    sendQuietly(slot, {
+      type: "fieldColor",
+      color: theme.colors["field"] ?? null,
+    });
 
     const created = slot.terminal;
     const renderer = created?.renderer;
@@ -573,9 +649,10 @@ function applyTheme(theme) {
     created.reset();
     // reset() rebuilds the WASM terminal; the selection manager keeps a stale
     // pointer into the freed one.
-    const selection = created['selectionManager'];
+    const selection = created["selectionManager"];
     const wasmTerm = created.wasmTerm;
-    if (selection !== undefined && wasmTerm !== undefined) selection['wasmTerm'] = wasmTerm;
+    if (selection !== undefined && wasmTerm !== undefined)
+      selection["wasmTerm"] = wasmTerm;
     repaintCanvas(created);
   }
 }
@@ -606,8 +683,14 @@ async function applyFont(font) {
  */
 function paneBox(pane) {
   const style = getComputedStyle(pane);
-  const width = pane.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
-  const height = pane.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+  const width =
+    pane.clientWidth -
+    parseFloat(style.paddingLeft) -
+    parseFloat(style.paddingRight);
+  const height =
+    pane.clientHeight -
+    parseFloat(style.paddingTop) -
+    parseFloat(style.paddingBottom);
   if (width < 1 || height < 1) return null;
   return { width, height };
 }
@@ -682,7 +765,7 @@ function fitSession(slot, model = slot.model) {
   if (fit === null) return;
   const value = settings.fitSize(fit, model);
   if (value === slot.oversize) return;
-  sendQuietly(slot, { type: 'oversize', value });
+  sendQuietly(slot, { type: "oversize", value });
 }
 
 /**
@@ -696,16 +779,14 @@ function applySavedSize(slot) {
   if (!slot.started) return;
 
   const model = settings.savedModel ?? slot.model;
-  if (model !== slot.model) sendQuietly(slot, { type: 'model', model });
+  if (model !== slot.model) sendQuietly(slot, { type: "model", model });
 
   // Nothing saved leaves the stretch to the server's own configuration.
   if (settings.savedSize === null) return;
-  if (settings.savedSize === 'fit') {
-    fitSession(slot, model);
-    return;
-  }
-  const value = settings.savedSize === 'dynamic' ? DYNAMIC_OVERSIZE : '';
-  if (value !== slot.oversize) sendQuietly(slot, { type: 'oversize', value });
+  const value = modeOversize(settings.savedSize);
+  if (value === null) fitSession(slot, model);
+  else if (value !== slot.oversize)
+    sendQuietly(slot, { type: "oversize", value });
 }
 
 /**
@@ -763,7 +844,7 @@ function send(message) {
  */
 function sendTo(slot, message) {
   if (!sendQuietly(slot, message)) {
-    showError('E5002', 'Not connected to the server; your input was not sent.');
+    showError("E5002", "Not connected to the server; your input was not sent.");
   }
 }
 
@@ -786,17 +867,19 @@ function sendQuietly(slot, message) {
  * @returns {void}
  */
 function connectSocket(slot) {
-  const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+  const scheme = location.protocol === "https:" ? "wss" : "ws";
   // On the URL so the first repaint already has the saved colours.
   const query = new URLSearchParams();
-  if (!settings.hostColors) query.set('hostColors', '0');
-  const field = settings.theme().colors['field'];
-  if (field !== undefined) query.set('fieldColor', field);
-  const ws = new WebSocket(`${scheme}://${location.host}/ws/${slot.id}?${query}`);
-  ws.binaryType = 'arraybuffer';
+  if (!settings.hostColors) query.set("hostColors", "0");
+  const field = settings.theme().colors["field"];
+  if (field !== undefined) query.set("fieldColor", field);
+  const ws = new WebSocket(
+    `${scheme}://${location.host}/ws/${slot.id}?${query}`,
+  );
+  ws.binaryType = "arraybuffer";
   slot.socket = ws;
 
-  ws.addEventListener('message', (event) => {
+  ws.addEventListener("message", (event) => {
     if (!(event.data instanceof ArrayBuffer)) {
       handleServerMessage(slot, JSON.parse(String(event.data)));
       return;
@@ -811,15 +894,16 @@ function connectSocket(slot) {
   });
 
   // A failed connect fires error then close; close decides the retry.
-  ws.addEventListener('error', () => {
-    showError('E5002', 'The connection to the server failed.');
+  ws.addEventListener("error", () => {
+    showError("E5002", "The connection to the server failed.");
   });
 
-  ws.addEventListener('close', () => {
+  ws.addEventListener("close", () => {
     slot.socket = null;
     // Measured from the first drop: the server started reaping then.
     if (slot.reconnectUntil === null) {
-      slot.reconnectUntil = slot.idleTimeoutMs === 0 ? Infinity : Date.now() + slot.idleTimeoutMs;
+      slot.reconnectUntil =
+        slot.idleTimeoutMs === 0 ? Infinity : Date.now() + slot.idleTimeoutMs;
     }
     scheduleReconnect(slot);
   });
@@ -839,11 +923,11 @@ function scheduleReconnect(slot) {
       sessionLive: live !== null && live.has(slot.id),
       msLeft: (slot.reconnectUntil ?? 0) - Date.now(),
     });
-    if (step === 'retry') {
+    if (step === "retry") {
       scheduleReconnect(slot);
       return;
     }
-    if (step === 'fresh') {
+    if (step === "fresh") {
       startFreshSession(slot);
       return;
     }
@@ -861,7 +945,7 @@ async function startFreshSession(slot) {
   try {
     created = await createSession();
   } catch (cause) {
-    showError('E5014', `The session could not be restarted: ${String(cause)}`);
+    showError("E5014", `The session could not be restarted: ${String(cause)}`);
     scheduleReconnect(slot);
     return;
   }
@@ -882,7 +966,7 @@ function handleServerMessage(slot, message) {
   const onScreen = slot === activeSession();
 
   // A refused attach closes without a hello, so hello is the success signal.
-  if (message.type === 'hello') {
+  if (message.type === "hello") {
     slot.idleTimeoutMs = message.idleTimeoutMs;
     slot.attempt = 0;
     if (slot.reconnectUntil !== null) {
@@ -893,18 +977,18 @@ function handleServerMessage(slot, message) {
     }
   }
 
-  if (message.type === 'hello' || message.type === 'screen') {
+  if (message.type === "hello" || message.type === "screen") {
     slot.model = message.model;
     slot.oversize = message.oversize;
     slot.cols = message.cols;
     slot.rows = message.rows + 1;
-    if (message.type === 'hello') settings.models = message.models;
+    if (message.type === "hello") settings.models = message.models;
     if (!slot.pane.hidden) ensureTerminal(slot);
-    if (message.type === 'hello') applySavedSize(slot);
+    if (message.type === "hello") applySavedSize(slot);
     if (!onScreen) return;
     settings.setModel(slot.model);
     settings.setOversize(slot.oversize);
-    if (message.type === 'hello') {
+    if (message.type === "hello") {
       slot.role = message.role;
       slot.allowSharing = message.allowSharing;
       slot.allowSharedEditing = message.allowSharedEditing;
@@ -917,15 +1001,15 @@ function handleServerMessage(slot, message) {
     }
     return;
   }
-  if (message.type === 'fieldContent') {
+  if (message.type === "fieldContent") {
     if (onScreen) navigator.clipboard.writeText(message.text);
     return;
   }
-  if (message.type === 'recorderStep') {
+  if (message.type === "recorderStep") {
     recorder.record(message.step);
     return;
   }
-  if (message.type === 'hints') {
+  if (message.type === "hints") {
     // A late answer would paint stale letters over the wrong pane.
     if (onScreen && prefix.armed) {
       hints = message.hints;
@@ -933,7 +1017,7 @@ function handleServerMessage(slot, message) {
     }
     return;
   }
-  if (message.type === 'status') {
+  if (message.type === "status") {
     const changed = slot.connected !== message.connected;
     slot.connection = message.connection;
     slot.connected = message.connected;
@@ -950,23 +1034,27 @@ function handleServerMessage(slot, message) {
         for (const resolve of waiters) resolve();
       }
     }
-    slot.terminal?.renderer?.setCursorStyle(message.insert ? 'underline' : 'block');
+    slot.terminal?.renderer?.setCursorStyle(
+      message.insert ? "underline" : "block",
+    );
     // A new pane's session is only reachable once its socket has said hello,
     // which is after the layout that made the pane.
-    if (changed && !message.connected && !slot.pane.hidden && panes.length > 1) fitIdleSessions();
+    if (changed && !message.connected && !slot.pane.hidden && panes.length > 1)
+      fitIdleSessions();
     if (!onScreen) return;
     settings.connected = message.connected;
     settings.setRole(slot.role);
     settings.setSharing(slot.allowSharing, slot.allowSharedEditing);
     settings.setAutomation(slot.allowAutomation);
     // b3270 reports the host without its port, so never overwrite a typed one.
-    if (message.host !== null && settings.host === '' && !settings.hostLocked) settings.setHost(message.host);
+    if (message.host !== null && settings.host === "" && !settings.hostLocked)
+      settings.setHost(message.host);
     if (changed) {
       if (message.connected) {
         closePanels();
         clearError();
       } else {
-        startPanel('settings');
+        startPanel("settings");
       }
     }
     return;
@@ -978,7 +1066,10 @@ function handleServerMessage(slot, message) {
     showError(message.code, message.message);
     return;
   }
-  showError(message.code, `Session ${sessions.indexOf(slot) + 1}: ${message.message}`);
+  showError(
+    message.code,
+    `Session ${sessions.indexOf(slot) + 1}: ${message.message}`,
+  );
 }
 
 /**
@@ -992,7 +1083,8 @@ function repaint(slot) {
     return;
   }
   // A session still opening has nothing to repaint; its screen is already stale.
-  if (!sendQuietly(slot, { type: 'refresh' })) slot.terminal?.write(`${ESC}[2J`);
+  if (!sendQuietly(slot, { type: "refresh" }))
+    slot.terminal?.write(`${ESC}[2J`);
 }
 
 /** @returns {void} */
@@ -1046,7 +1138,7 @@ function focusSlot(index) {
   applyLayout();
   screenEl.focus();
 
-  if (slot.connection === 'not-connected') startPanel('settings');
+  if (slot.connection === "not-connected") startPanel("settings");
 }
 
 /** @type {boolean} One creation at a time; two fast keystrokes are one session. */
@@ -1078,13 +1170,19 @@ function switchTo(index) {
   }
   if (opening) return;
   opening = true;
-  ensureSlot(index).then(() => {
-    focusSlot(index);
-  }).catch((cause) => {
-    showError('E5006', `Another session could not be opened: ${String(cause)}`);
-  }).finally(() => {
-    opening = false;
-  });
+  ensureSlot(index)
+    .then(() => {
+      focusSlot(index);
+    })
+    .catch((cause) => {
+      showError(
+        "E5006",
+        `Another session could not be opened: ${String(cause)}`,
+      );
+    })
+    .finally(() => {
+      opening = false;
+    });
 }
 
 /**
@@ -1098,21 +1196,28 @@ function changeLayout(count) {
   opening = true;
   /** @type {Promise<unknown>[]} */
   const opens = [];
-  if (count > 1) for (let index = 0; index < count; index++) opens.push(ensureSlot(index));
+  if (count > 1)
+    for (let index = 0; index < count; index++) opens.push(ensureSlot(index));
 
-  Promise.all(opens).then(() => {
-    panes = [];
-    if (count === 1) panes.push(active);
-    else for (let index = 0; index < count; index++) panes.push(index);
-    if (!panes.includes(active)) active = panes[0];
-    applyLayout();
-    fitIdleSessions();
-    screenEl.focus();
-  }).catch((cause) => {
-    showError('E5006', `Another session could not be opened: ${String(cause)}`);
-  }).finally(() => {
-    opening = false;
-  });
+  Promise.all(opens)
+    .then(() => {
+      panes = [];
+      if (count === 1) panes.push(active);
+      else for (let index = 0; index < count; index++) panes.push(index);
+      if (!panes.includes(active)) active = panes[0];
+      applyLayout();
+      fitIdleSessions();
+      screenEl.focus();
+    })
+    .catch((cause) => {
+      showError(
+        "E5006",
+        `Another session could not be opened: ${String(cause)}`,
+      );
+    })
+    .finally(() => {
+      opening = false;
+    });
 }
 
 /**
@@ -1122,97 +1227,127 @@ function changeLayout(count) {
 function jumpToHint(letter) {
   const hint = hints.find((entry) => entry.letter === letter);
   if (hint === undefined) return;
-  send({ type: 'action', action: 'MoveCursor1', args: [String(hint.row + 1), String(hint.col + 1)] });
+  send({
+    type: "action",
+    action: "MoveCursor1",
+    args: [String(hint.row + 1), String(hint.col + 1)],
+  });
 }
 
 // The prefix goes first: a disconnected session has settings open over it, and
 // being unable to switch away would be a trap.
-window.addEventListener('keydown', (event) => {
-  const decision = prefix.handleKey(event, settings.hints ? hints.map((hint) => hint.letter) : []);
-  if (decision.action !== 'ignore') {
-    event.preventDefault();
-    event.stopPropagation();
-    if (decision.action === 'arm') {
-      hints = [];
-      if (settings.hints) send({ type: 'hints' });
-      writeOverlays();
-      return;
-    }
-    // Before the switch: the pane under the bar is the one to repaint.
-    clearError();
-    repaintStatus();
-    if (decision.action === 'switch') switchTo(decision.index);
-    else if (decision.action === 'layout') changeLayout(decision.panes);
-    else if (decision.action === 'hint') jumpToHint(decision.letter);
-    return;
-  }
-  if (event.altKey && !event.ctrlKey && !event.metaKey) {
-    const wanted = panels.find((page) => page.toggleKey !== '' && event.code === page.toggleKey);
-    if (wanted !== undefined) {
+window.addEventListener(
+  "keydown",
+  (event) => {
+    const decision = prefix.handleKey(
+      event,
+      settings.hints ? hints.map((hint) => hint.letter) : [],
+    );
+    if (decision.action !== "ignore") {
       event.preventDefault();
       event.stopPropagation();
-      startPanel(wanted.id);
+      if (decision.action === "arm") {
+        hints = [];
+        if (settings.hints) send({ type: "hints" });
+        writeOverlays();
+        return;
+      }
+      // Before the switch: the pane under the bar is the one to repaint.
+      clearError();
+      repaintStatus();
+      if (decision.action === "switch") switchTo(decision.index);
+      else if (decision.action === "layout") changeLayout(decision.panes);
+      else if (decision.action === "hint") jumpToHint(decision.letter);
       return;
     }
-  }
+    if (event.altKey && !event.ctrlKey && !event.metaKey) {
+      const wanted = panels.find(
+        (page) => page.toggleKey !== "" && event.code === page.toggleKey,
+      );
+      if (wanted !== undefined) {
+        event.preventDefault();
+        event.stopPropagation();
+        startPanel(wanted.id);
+        return;
+      }
+    }
 
-  // Ctrl and Meta fall through on purpose: copy, paste and reload work in a panel.
-  if (openPanel()?.handleKey(event) === true) {
+    // Ctrl and Meta fall through on purpose: copy, paste and reload work in a panel.
+    if (openPanel()?.handleKey(event) === true) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  },
+  true,
+);
+
+screenEl.addEventListener(
+  "keydown",
+  (event) => {
+    clearError();
+
+    const mapped = mapKey(event, keymap.lookup());
+    if (mapped === null) return;
     event.preventDefault();
     event.stopPropagation();
-  }
-}, true);
 
-screenEl.addEventListener('keydown', (event) => {
-  clearError();
+    // A panel is over the screen, so only the clipboard commands still mean something.
+    const panel = openPanel();
+    if (panel !== null && mapped.kind !== "client") return;
 
-  const mapped = mapKey(event, keymap.lookup());
-  if (mapped === null) return;
-  event.preventDefault();
-  event.stopPropagation();
+    if (mapped.kind === "text") {
+      send({ type: "text", value: mapped.value });
+      return;
+    }
+    if (mapped.kind === "action") {
+      send({ type: "action", action: mapped.action, args: mapped.args });
+      return;
+    }
 
-  // A panel is over the screen, so only the clipboard commands still mean something.
-  const panel = openPanel();
-  if (mapped.kind === 'text') {
-    if (panel === null) send({ type: 'text', value: mapped.value });
-    return;
-  }
-  if (mapped.kind === 'action') {
-    if (panel === null) send({ type: 'action', action: mapped.action, args: mapped.args });
-    return;
-  }
-
-  // Copy and Paste are this browser's clipboard, not 3270 actions, so keymap.js
-  // maps them but cannot dispatch them.
-  if (mapped.command === 'Copy') {
-    const term = activeTerminal();
-    if (term !== null && term.hasSelection()) navigator.clipboard.writeText(term.getSelection());
-    else if (panel !== null) navigator.clipboard.writeText(panel.copy());
-    else send({ type: 'copyField' });
-    return;
-  }
-  // Ctrl+V arrives as a paste event instead; every other binding must read the
-  // clipboard, which Chrome asks permission for once.
-  navigator.clipboard.readText().then((text) => {
-    if (text === '') return;
-    if (panel !== null) panel.paste(text);
-    else send({ type: 'paste', text });
-  }).catch((cause) => {
-    showError('E5005', `The clipboard could not be read; Ctrl+V pastes without asking: ${String(cause)}`);
-  });
-}, true);
+    // Copy and Paste are this browser's clipboard, not 3270 actions, so keymap.js
+    // maps them but cannot dispatch them.
+    if (mapped.command === "Copy") {
+      const term = activeTerminal();
+      if (term !== null && term.hasSelection())
+        navigator.clipboard.writeText(term.getSelection());
+      else if (panel !== null) navigator.clipboard.writeText(panel.copy());
+      else send({ type: "copyField" });
+      return;
+    }
+    // Ctrl+V arrives as a paste event instead; every other binding must read the
+    // clipboard, which Chrome asks permission for once.
+    navigator.clipboard
+      .readText()
+      .then((text) => {
+        if (text === "") return;
+        if (panel !== null) panel.paste(text);
+        else send({ type: "paste", text });
+      })
+      .catch((cause) => {
+        showError(
+          "E5005",
+          `The clipboard could not be read; Ctrl+V pastes without asking: ${String(cause)}`,
+        );
+      });
+  },
+  true,
+);
 
 // Capture: ghostty's own paste handler on the hidden textarea would eat this.
-screenEl.addEventListener('paste', (event) => {
-  event.preventDefault();
-  event.stopPropagation();
-  clearError();
-  const text = event.clipboardData?.getData('text/plain') ?? '';
-  if (text === '') return;
-  const panel = openPanel();
-  if (panel !== null) panel.paste(text);
-  else send({ type: 'paste', text });
-}, true);
+screenEl.addEventListener(
+  "paste",
+  (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    clearError();
+    const text = event.clipboardData?.getData("text/plain") ?? "";
+    if (text === "") return;
+    const panel = openPanel();
+    if (panel !== null) panel.paste(text);
+    else send({ type: "paste", text });
+  },
+  true,
+);
 
 /**
  * Refits a window-measured screen, which costs the host connection — hence a
@@ -1255,7 +1390,7 @@ function paneClicked(slot, event) {
   if (row === term.rows - 1) {
     // Widest first: each start is left of the last, so the first match wins.
     const buttons = [
-      { start: menuStart, action: () => startPanel('menu') },
+      { start: menuStart, action: () => startPanel("menu") },
       { start: resetStart, action: () => resetScreen(slot) },
     ];
     for (const button of buttons) {
@@ -1269,30 +1404,54 @@ function paneClicked(slot, event) {
   // The last row is ours, and a click ending a drag was aiming at the selection.
   if (row < 0 || row >= term.rows - 1 || col < 0 || col >= term.cols) return;
   if (term.hasSelection()) return;
-  sendTo(slot, { type: 'action', action: 'MoveCursor1', args: [String(row + 1), String(col + 1)] });
+  sendTo(slot, {
+    type: "action",
+    action: "MoveCursor1",
+    args: [String(row + 1), String(col + 1)],
+  });
 }
 
 // The font has to be loaded before the first terminal, or the first screen is
 // painted in the wrong face and then restyled.
-const [renderer, saved, savedMacros, savedKeymap] = await Promise.allSettled([init(), loadSettings(), loadMacros(), loadKeymap()]);
-if (renderer.status === 'rejected') {
-  showError('E5001', `The terminal renderer failed to load: ${String(renderer.reason)}`);
+const [renderer, saved, savedMacros, savedKeymap] = await Promise.allSettled([
+  init(),
+  loadSettings(),
+  loadMacros(),
+  loadKeymap(),
+]);
+if (renderer.status === "rejected") {
+  showError(
+    "E5001",
+    `The terminal renderer failed to load: ${String(renderer.reason)}`,
+  );
   throw renderer.reason;
 }
-if (saved.status === 'fulfilled') settings.restoreSaved(saved.value);
-else showError('E5003', `Saved settings could not be read; using the defaults: ${String(saved.reason)}`);
-if (savedMacros.status === 'fulfilled') macros.setMacros(savedMacros.value);
-else showError('E5008', `Saved macros could not be read: ${String(savedMacros.reason)}`);
-if (savedKeymap.status === 'fulfilled') keymap.setBindings(savedKeymap.value);
-else showError('E5013', `Saved keymap could not be read; using the defaults: ${String(savedKeymap.reason)}`);
+if (saved.status === "fulfilled") settings.restoreSaved(saved.value);
+else
+  showError(
+    "E5003",
+    `Saved settings could not be read; using the defaults: ${String(saved.reason)}`,
+  );
+if (savedMacros.status === "fulfilled") macros.setMacros(savedMacros.value);
+else
+  showError(
+    "E5008",
+    `Saved macros could not be read: ${String(savedMacros.reason)}`,
+  );
+if (savedKeymap.status === "fulfilled") keymap.setBindings(savedKeymap.value);
+else
+  showError(
+    "E5013",
+    `Saved keymap could not be read; using the defaults: ${String(savedKeymap.reason)}`,
+  );
 
 try {
   await document.fonts.load(`16px ${settings.font().family}`);
 } catch (cause) {
-  console.warn('could not preload the saved font', cause);
+  console.warn("could not preload the saved font", cause);
 }
 
-const storedHost = localStorage.getItem('tn3270.host');
+const storedHost = localStorage.getItem("tn3270.host");
 if (storedHost !== null) settings.setHost(storedHost);
 
 const wanted = parseSessionHash(location.hash);
@@ -1306,7 +1465,11 @@ if (wanted.some((id) => id !== null)) {
     if (live === null || live.has(id)) sessions[index] = newSlot(id);
     else gone.push(index + 1);
   }
-  if (gone.length > 0) showError('E3001', `Session ${gone.join(', ')} is gone; starting a new one.`);
+  if (gone.length > 0)
+    showError(
+      "E3001",
+      `Session ${gone.join(", ")} is gone; starting a new one.`,
+    );
 }
 
 if (!sessions.some((slot) => slot !== null)) {
@@ -1315,7 +1478,10 @@ if (!sessions.some((slot) => slot !== null)) {
 }
 writeHash();
 
-active = Math.max(0, sessions.findIndex((slot) => slot !== null));
+active = Math.max(
+  0,
+  sessions.findIndex((slot) => slot !== null),
+);
 panes = [active];
 applyLayout();
 for (const slot of sessions) {

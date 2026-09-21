@@ -10,6 +10,8 @@
     "start:fake": "node test/fakehost.js test/traces/fields.trc 4001 & FAKE=$!; trap 'kill $FAKE' EXIT; TN3270_CONFIG=config.fake.jsonc node server/main.js",
     "test": "node --test \"test/*.test.js\"",
     "typecheck": "tsc -p jsconfig.json",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "postinstall": "patch-package"
   },
   "dependencies": {
@@ -19,6 +21,7 @@
   "devDependencies": {
     "@types/node": "^26.5.0",
     "@types/ws": "^8.18.1",
-    "patch-package": "^8.0.1"
+    "patch-package": "^8.0.1",
+    "prettier": "3.9.8"
   }
 }

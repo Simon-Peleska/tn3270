@@ -1,7 +1,7 @@
-import { createServer } from 'node:net';
-import { request } from 'node:http';
-import { randomBytes } from 'node:crypto';
-import { AppError } from './errors.js';
+import { createServer } from "node:net";
+import { request } from "node:http";
+import { randomBytes } from "node:crypto";
+import { AppError } from "./errors.js";
 
 /**
  * b3270 carries s3270's own httpd, so each session's emulator serves REST
@@ -22,10 +22,14 @@ import { AppError } from './errors.js';
 export function reserveRestEndpoint() {
   return new Promise((resolve, reject) => {
     const probe = createServer();
-    probe.on('error', reject);
-    probe.listen(0, '127.0.0.1', () => {
-      const { port } = /** @type {import('node:net').AddressInfo} */ (probe.address());
-      probe.close(() => resolve({ port, cookie: randomBytes(32).toString('hex') }));
+    probe.on("error", reject);
+    probe.listen(0, "127.0.0.1", () => {
+      const { port } = /** @type {import('node:net').AddressInfo} */ (
+        probe.address()
+      );
+      probe.close(() =>
+        resolve({ port, cookie: randomBytes(32).toString("hex") }),
+      );
     });
   });
 }
@@ -41,23 +45,32 @@ export function reserveRestEndpoint() {
  * @param {{ ip: string, user: string }} [client]
  * @returns {Promise<unknown>}
  */
-export async function proxyRestRequest(req, res, session, target, client = { ip: '', user: '' }) {
+export async function proxyRestRequest(
+  req,
+  res,
+  session,
+  target,
+  client = { ip: "", user: "" },
+) {
   const log = session.log.with(client);
-  const method = req.method ?? 'GET';
+  const method = req.method ?? "GET";
 
   const endpoint = session.b3270.rest;
-  if (endpoint === null) throw new AppError('E7002', session.id);
+  if (endpoint === null) throw new AppError("E7002", session.id);
   if (!session.allowAutomation) {
-    log.warn('REST refused: automation is off for this session', { method, target });
-    throw new AppError('E7004', session.id);
+    log.warn("REST refused: automation is off for this session", {
+      method,
+      target,
+    });
+    throw new AppError("E7004", session.id);
   }
 
-  log.info('REST proxying', { method, target });
+  log.info("REST proxying", { method, target });
 
   return new Promise((resolve, reject) => {
     const upstream = request(
       {
-        host: '127.0.0.1',
+        host: "127.0.0.1",
         port: endpoint.port,
         method,
         path: target,
@@ -68,16 +81,22 @@ export async function proxyRestRequest(req, res, session, target, client = { ip:
         },
       },
       (answer) => {
-        log.info('REST proxied', { target, status: answer.statusCode ?? 0 });
+        log.info("REST proxied", { target, status: answer.statusCode ?? 0 });
         res.writeHead(answer.statusCode ?? 502, answer.headers);
         answer.pipe(res);
-        answer.on('end', resolve);
-        answer.on('error', reject);
+        answer.on("end", resolve);
+        answer.on("error", reject);
       },
     );
 
-    upstream.on('error', (cause) => {
-      reject(new AppError('E7003', `${session.id} to 127.0.0.1:${endpoint.port}${target}`, cause));
+    upstream.on("error", (cause) => {
+      reject(
+        new AppError(
+          "E7003",
+          `${session.id} to 127.0.0.1:${endpoint.port}${target}`,
+          cause,
+        ),
+      );
     });
     req.pipe(upstream);
   });

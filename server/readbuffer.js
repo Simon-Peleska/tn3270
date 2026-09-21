@@ -10,16 +10,18 @@ const FIELD_ATTRIBUTE = /^SF\(c0=([0-9a-f]{2})/;
  *   or there is none under the cursor
  */
 export function editableFieldText(lines) {
-  const contents = lines.find((line) => line.startsWith('Contents: '));
+  const contents = lines.find((line) => line.startsWith("Contents: "));
   if (contents === undefined) return null;
 
-  const [attributeToken, ...byteTokens] = contents.slice('Contents: '.length).split(' ');
-  const attribute = FIELD_ATTRIBUTE.exec(attributeToken ?? '');
+  const [attributeToken, ...byteTokens] = contents
+    .slice("Contents: ".length)
+    .split(" ");
+  const attribute = FIELD_ATTRIBUTE.exec(attributeToken ?? "");
   if (attribute === null) return null;
   if ((Number.parseInt(attribute[1], 16) & 0x20) !== 0) return null;
 
   const bytes = byteTokens.map((token) => Number.parseInt(token, 16) || 0x20);
-  return Buffer.from(bytes).toString('utf8').trim();
+  return Buffer.from(bytes).toString("utf8").trim();
 }
 
 /**
@@ -44,8 +46,8 @@ export function fieldMap(lines, rows, cols) {
 
   for (let row = 0; row < rows; row++) {
     let at = row * cols;
-    for (const token of (lines[row] ?? '').split(' ')) {
-      if (token === '' || token.startsWith('SA(')) continue;
+    for (const token of (lines[row] ?? "").split(" ")) {
+      if (token === "" || token.startsWith("SA(")) continue;
       if (at >= (row + 1) * cols) break;
       const attribute = FIELD_ATTRIBUTE.exec(token);
       if (attribute !== null) {

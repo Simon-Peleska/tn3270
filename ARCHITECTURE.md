@@ -21,15 +21,26 @@ browser                          node server                        host
 JSON such as
 
 ```json
-{"screen":{"cursor":{"enabled":true,"row":2,"column":9},
-           "rows":[{"row":1,"changes":[{"column":3,"text":"____","fg":"neutralBlack","bg":"red"}]}]}}
+{
+  "screen": {
+    "cursor": { "enabled": true, "row": 2, "column": 9 },
+    "rows": [
+      {
+        "row": 1,
+        "changes": [
+          { "column": 3, "text": "____", "fg": "neutralBlack", "bg": "red" }
+        ]
+      }
+    ]
+  }
+}
 ```
 
 Two properties of that format decide everything else:
 
-- *"a screen indication does not specify the entire contents of the screen; it is
-  an incremental update to what is already displayed"*
-- *"if a particular screen attribute is not specified, then it stays the same"*
+- _"a screen indication does not specify the entire contents of the screen; it is
+  an incremental update to what is already displayed"_
+- _"if a particular screen attribute is not specified, then it stays the same"_
 
 `ghostty-web`, meanwhile, consumes an **ANSI/VT byte stream** (`term.write()`).
 
@@ -48,7 +59,7 @@ be impossible.
 
 The cost, accepted deliberately: **there is no local echo.** A keystroke travels
 browser → server → b3270 → screen indication → VT → browser. On localhost or a
-LAN this is a few milliseconds. It is also *required* for a coherent shared
+LAN this is a few milliseconds. It is also _required_ for a coherent shared
 session — one authoritative screen, one ordered input stream.
 
 ## Transport: why WebSocket, not SSE
@@ -73,12 +84,12 @@ mandatory TLS and certificates, weaker support, no benefit at this scale.
 
 A useful side effect of binary framing:
 
-| Frame type | Carries |
-|---|---|
-| **binary** | VT bytes for the terminal |
-| **text** | JSON control messages (`hello`, `screen`, `status`, `error`; `action`, `text`, `connect`, `disconnect`, `model`) |
+| Frame type | Carries                                                                                                          |
+| ---------- | ---------------------------------------------------------------------------------------------------------------- |
+| **binary** | VT bytes for the terminal                                                                                        |
+| **text**   | JSON control messages (`hello`, `screen`, `status`, `error`; `action`, `text`, `connect`, `disconnect`, `model`) |
 
-The frame type *is* the discriminator, so neither direction needs an envelope.
+The frame type _is_ the discriminator, so neither direction needs an envelope.
 
 ## Sessions and viewers
 
@@ -158,7 +169,7 @@ controller there to ask.
 Two different things are called "size", and keeping them apart is what makes the
 picker and the auto-fit simple.
 
-**The grid** — rows × columns — belongs to the 3270 model, and the *server* owns
+**The grid** — rows × columns — belongs to the 3270 model, and the _server_ owns
 it. The browser never picks a size: it asks with `{"type":"model"}`, b3270
 answers with a `screen-mode` indication, and only then does the session tell
 every viewer the new geometry. So the emulator's opinion is the only one, and a
@@ -197,7 +208,7 @@ since dragging a window edge fires it continuously.
   the easiest way to get this feature subtly and confusingly wrong.
 - The terminal is `rows + 1` tall. The extra bottom line is the **OIA**, the
   status line a real 3270 draws: connection state, the `X SYSTEM` keyboard lock,
-  and the cursor position. Without it a user cannot tell *why* typing does
+  and the cursor position. Without it a user cannot tell _why_ typing does
   nothing.
 - Each row is painted by grouping contiguous cells with identical attributes into
   runs: one `ESC[{row};{col}H`, one SGR, then the text.
@@ -271,18 +282,18 @@ no runtime import from `settings.js` — only an erased JSDoc `import()` for the
 
 ## Errors
 
-Per `CLAUDE.md`, every error site carries a stable code, shown in the logs *and*
+Per `CLAUDE.md`, every error site carries a stable code, shown in the logs _and_
 in the UI, surfaced **in place** — the page is never navigated away from, because
 a redirect would throw away the session the user is looking at.
 
-| Block | Area |
-|---|---|
-| `E1xxx` | config |
-| `E2xxx` | b3270 |
-| `E3xxx` | session |
+| Block   | Area      |
+| ------- | --------- |
+| `E1xxx` | config    |
+| `E2xxx` | b3270     |
+| `E3xxx` | session   |
 | `E4xxx` | websocket |
-| `E5xxx` | frontend |
-| `E6xxx` | http |
+| `E5xxx` | frontend  |
+| `E6xxx` | http      |
 
 Codes are an identity, not a label: once assigned to a site, a code never
 changes. See `server/errors.js`.
@@ -320,7 +331,7 @@ No browser driver and no mainframe are needed.
 2. A **real** `b3270` connects to it, and a **real** `Session` consumes the
    indications.
 3. `test/ghostty.js` loads ghostty-web's WASM parser headlessly in Node, so our
-   VT bytes are checked against *the exact parser the browser runs*.
+   VT bytes are checked against _the exact parser the browser runs_.
 4. `test/server.test.js` spawns the real HTTP server and drives it over real
    WebSockets, including the two-browsers-one-session case.
 

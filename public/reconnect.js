@@ -32,8 +32,8 @@ export function backoffDelay(attempt, random = Math.random()) {
  * @returns {'reconnect' | 'retry' | 'fresh'}
  */
 export function reconnectStep({ answered, sessionLive, msLeft }) {
-  if (answered && sessionLive) return 'reconnect';
+  if (answered && sessionLive) return "reconnect";
   // Server is up and has forgotten the session; waiting cannot bring it back.
-  if (answered) return 'fresh';
-  return msLeft > 0 ? 'retry' : 'fresh';
+  if (answered) return "fresh";
+  return msLeft > 0 ? "retry" : "fresh";
 }

@@ -1,9 +1,9 @@
-import { spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { AppError } from './errors.js';
-import { logger } from './log.js';
+import { spawn } from "node:child_process";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { AppError } from "./errors.js";
+import { logger } from "./log.js";
 
 /**
  * @typedef {object} ScreenChange
@@ -109,8 +109,9 @@ import { logger } from './log.js';
  */
 function resourceArgs(settings) {
   return Object.entries(settings).flatMap(([name, value]) => {
-    const qualified = name.includes('.') || name.startsWith('*') ? name : `b3270.${name}`;
-    return ['-xrm', `${qualified}: ${value}`];
+    const qualified =
+      name.includes(".") || name.startsWith("*") ? name : `b3270.${name}`;
+    return ["-xrm", `${qualified}: ${value}`];
   });
 }
 
@@ -118,10 +119,10 @@ function resourceArgs(settings) {
 export class B3270 {
   /** @param {B3270Options} options */
   constructor(options) {
-    this.log = logger('b3270', { session: options.sessionId });
+    this.log = logger("b3270", { session: options.sessionId });
     this.handlers = options.handlers;
     /** @type {string} */
-    this.stdoutBuffer = '';
+    this.stdoutBuffer = "";
     /** @type {number} */
     this.nextTag = 1;
     /** @type {boolean} */
@@ -134,42 +135,57 @@ export class B3270 {
     /** @type {string[]} */
     const restArgs = [];
     if (options.rest !== null) {
-      this.cookieDir = mkdtempSync(join(tmpdir(), 'tn3270-'));
-      const cookieFile = join(this.cookieDir, 'cookie');
+      this.cookieDir = mkdtempSync(join(tmpdir(), "tn3270-"));
+      const cookieFile = join(this.cookieDir, "cookie");
       writeFileSync(cookieFile, options.rest.cookie, { mode: 0o600 });
-      restArgs.push('-httpd', `127.0.0.1:${options.rest.port}`, '-cookiefile', cookieFile);
+      restArgs.push(
+        "-httpd",
+        `127.0.0.1:${options.rest.port}`,
+        "-cookiefile",
+        cookieFile,
+      );
     }
 
-    const args = ['-json', '-model', String(options.model), ...restArgs, ...resourceArgs(options.settings), ...options.extraArgs];
-    this.log.info('spawning', { path: options.path, args: args.join(' ') });
+    const args = [
+      "-json",
+      "-model",
+      String(options.model),
+      ...restArgs,
+      ...resourceArgs(options.settings),
+      ...options.extraArgs,
+    ];
+    this.log.info("spawning", { path: options.path, args: args.join(" ") });
 
     try {
       this.child = spawn(options.path, args, {
-        stdio: ['pipe', 'pipe', 'pipe'],
+        stdio: ["pipe", "pipe", "pipe"],
         // Locale decides run-result's `time` format: de_DE emits `"time":0,011`, not JSON.
-        env: { ...process.env, LC_ALL: 'C', LC_NUMERIC: 'C' },
+        env: { ...process.env, LC_ALL: "C", LC_NUMERIC: "C" },
       });
     } catch (cause) {
-      throw new AppError('E2001', options.path, cause);
+      throw new AppError("E2001", options.path, cause);
     }
 
-    this.child.on('error', (cause) => {
-      this.handlers.onError(new AppError('E2001', options.path, cause));
+    this.child.on("error", (cause) => {
+      this.handlers.onError(new AppError("E2001", options.path, cause));
     });
 
-    this.child.stdout.setEncoding('utf8');
-    this.child.stdout.on('data', (chunk) => this.consume(String(chunk)));
+    this.child.stdout.setEncoding("utf8");
+    this.child.stdout.on("data", (chunk) => this.consume(String(chunk)));
 
-    this.child.stderr.setEncoding('utf8');
-    this.child.stderr.on('data', (chunk) => {
-      this.log.warn('stderr', { text: String(chunk).trimEnd() });
+    this.child.stderr.setEncoding("utf8");
+    this.child.stderr.on("data", (chunk) => {
+      this.log.warn("stderr", { text: String(chunk).trimEnd() });
     });
 
-    this.child.on('exit', (code, signal) => {
-      this.log.info('exited', { code, signal });
-      if (this.cookieDir !== null) rmSync(this.cookieDir, { recursive: true, force: true });
+    this.child.on("exit", (code, signal) => {
+      this.log.info("exited", { code, signal });
+      if (this.cookieDir !== null)
+        rmSync(this.cookieDir, { recursive: true, force: true });
       if (!this.stopped) {
-        this.handlers.onError(new AppError('E2002', `code=${code} signal=${signal}`));
+        this.handlers.onError(
+          new AppError("E2002", `code=${code} signal=${signal}`),
+        );
       }
       this.handlers.onExit(code, signal);
     });
@@ -182,12 +198,12 @@ export class B3270 {
   consume(chunk) {
     this.stdoutBuffer += chunk;
     let start = 0;
-    let newline = this.stdoutBuffer.indexOf('\n');
+    let newline = this.stdoutBuffer.indexOf("\n");
     while (newline !== -1) {
       const line = this.stdoutBuffer.slice(start, newline).trim();
       if (line.length > 0) this.handleLine(line);
       start = newline + 1;
-      newline = this.stdoutBuffer.indexOf('\n', start);
+      newline = this.stdoutBuffer.indexOf("\n", start);
     }
     this.stdoutBuffer = this.stdoutBuffer.slice(start);
   }
@@ -197,24 +213,32 @@ export class B3270 {
    * @returns {void}
    */
   handleLine(line) {
-    this.log.debug('<<', { line: line.length > 400 ? `${line.slice(0, 400)}...` : line });
+    this.log.debug("<<", {
+      line: line.length > 400 ? `${line.slice(0, 400)}...` : line,
+    });
 
     /** @type {unknown} */
     let parsed;
     try {
       parsed = JSON.parse(line);
     } catch (cause) {
-      this.handlers.onError(new AppError('E2003', line.slice(0, 200), cause));
+      this.handlers.onError(new AppError("E2003", line.slice(0, 200), cause));
       return;
     }
 
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      this.handlers.onError(new AppError('E2003', `expected an object, got ${typeof parsed}`));
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      this.handlers.onError(
+        new AppError("E2003", `expected an object, got ${typeof parsed}`),
+      );
       return;
     }
 
     for (const [kind, body] of Object.entries(parsed)) {
-      if (kind === 'initialize' && Array.isArray(body)) {
+      if (kind === "initialize" && Array.isArray(body)) {
         for (const nested of body) this.dispatchObject(nested);
         continue;
       }
@@ -227,7 +251,8 @@ export class B3270 {
    * @returns {void}
    */
   dispatchObject(nested) {
-    if (typeof nested !== 'object' || nested === null || Array.isArray(nested)) return;
+    if (typeof nested !== "object" || nested === null || Array.isArray(nested))
+      return;
     for (const [kind, body] of Object.entries(nested)) {
       this.handlers.onIndication({ kind, body });
     }
@@ -241,14 +266,14 @@ export class B3270 {
    */
   runActions(actions) {
     const tag = `t${this.nextTag++}`;
-    const line = JSON.stringify({ run: { 'r-tag': tag, actions } });
-    this.log.debug('>>', { line });
+    const line = JSON.stringify({ run: { "r-tag": tag, actions } });
+    this.log.debug(">>", { line });
 
     if (this.stopped || !this.child.stdin.writable) {
-      this.handlers.onError(new AppError('E2006', tag));
+      this.handlers.onError(new AppError("E2006", tag));
       return tag;
     }
-    this.child.stdin.write(line + '\n');
+    this.child.stdin.write(line + "\n");
     return tag;
   }
 
@@ -257,21 +282,23 @@ export class B3270 {
    * @returns {string}
    */
   open(host) {
-    return this.runActions([{ action: 'Open', args: [host] }]);
+    return this.runActions([{ action: "Open", args: [host] }]);
   }
 
   /** @returns {void} */
   stop() {
     if (this.stopped) return;
     this.stopped = true;
-    this.log.info('stopping');
+    this.log.info("stopping");
     // b3270 exits on stdin EOF, which lets it close the host connection first.
     if (this.child.stdin.writable) {
-      this.child.stdin.write(JSON.stringify({ run: { actions: [{ action: 'Quit' }] } }) + '\n');
+      this.child.stdin.write(
+        JSON.stringify({ run: { actions: [{ action: "Quit" }] } }) + "\n",
+      );
       this.child.stdin.end();
     }
-    this.killTimer = setTimeout(() => this.child.kill('SIGKILL'), 2000);
+    this.killTimer = setTimeout(() => this.child.kill("SIGKILL"), 2000);
     this.killTimer.unref();
-    this.child.once('exit', () => clearTimeout(this.killTimer));
+    this.child.once("exit", () => clearTimeout(this.killTimer));
   }
 }

@@ -27,8 +27,8 @@ match; `config.jsonc` defaults to model 2 because that is what most hosts expect
 
 b3270 answers `Model` with "Unknown action: Model". The working call is
 `{"action":"Set","args":["model","2"]}`, which emits `screen-mode` and `erase`.
-It is refused while a host connection is open — *"Cannot change model or oversize
-while connected"* — because the model is negotiated during connection setup, so
+It is refused while a host connection is open — _"Cannot change model or oversize
+while connected"_ — because the model is negotiated during connection setup, so
 `Session#setModel` checks the connection state itself and answers `E3006`.
 
 ## b3270 announces its geometry a few milliseconds after it starts
@@ -57,7 +57,7 @@ wrong. `session.ready` resolves on that first indication — wait on it, never o
 
 Disconnected, `b3270 -model 4` reports `43 80` in the REST status line and
 `s3270 -model 4` reports `24 80`; they agree once a host has set the size, and
-they agree from the start on model 2, whose alternate size *is* 24×80. The
+they agree from the start on model 2, whose alternate size _is_ 24×80. The
 proxy's comparison test therefore runs both sides at model 2, so that a
 difference in the answer is a difference we caused.
 
@@ -66,7 +66,7 @@ difference in the answer is a difference we caused.
 `ESC[?7l`, once, before anything is painted (`INIT_SEQUENCE` in `server/vt.js`).
 With autowrap on, writing a character into the last column of the last row wraps
 and scrolls the whole screen, so every absolute cursor address after it is off by
-a row. The failure looks like a rendering bug anywhere *except* where it is.
+a row. The failure looks like a rendering bug anywhere _except_ where it is.
 
 ## Building b3270 without X11
 
@@ -103,7 +103,7 @@ every glyph goes soft. `fitFontSize()` in `public/app.js` calls
 
 An unfocused, automation-driven tab throttles `requestAnimationFrame`, so a
 `ResizeObserver` callback coalesced into a frame has not run yet when the next
-`javascript_exec` reads the DOM — while taking a screenshot *forces* a frame.
+`javascript_exec` reads the DOM — while taking a screenshot _forces_ a frame.
 That is how a screenshot showing a correctly refitted terminal sits next to a
 measurement claiming it never resized. Screenshot first, then measure.
 
@@ -117,7 +117,7 @@ hang forever. `server/main.js` terminates the `wss.clients` and calls
 
 The field map is a `ReadBuffer` the session asks for from `flush()`, which is
 coalesced — so a `settle()` right after a screen change can submit its Reset
-*before* that read is even sent, and come back with `screen.fieldsFormatted`
+_before_ that read is even sent, and come back with `screen.fieldsFormatted`
 still false. Anything to do with fields (Backspace's guard, paste, hints) then
 falls back to its unformatted behaviour and the test quietly checks nothing.
 Wait for `screen.fieldsFormatted` as well.
