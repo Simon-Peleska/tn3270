@@ -17,22 +17,7 @@ import { SettingsPage, THEMES } from "../public/settings.js";
 import { MacrosPage } from "../public/macros.js";
 import { RecorderPage } from "../public/recorder.js";
 import { KeymapPage } from "../public/keymap-page.js";
-
-/**
- * @param {{ key?: string, code?: string, altKey?: boolean, ctrlKey?: boolean, metaKey?: boolean }} init
- * @returns {KeyboardEvent}
- */
-function key(init) {
-  return /** @type {KeyboardEvent} */ ({
-    key: init.key ?? "",
-    code: init.code ?? "",
-    altKey: init.altKey ?? false,
-    ctrlKey: init.ctrlKey ?? false,
-    metaKey: init.metaKey ?? false,
-    shiftKey: false,
-    repeat: false,
-  });
-}
+import { key } from "./keyevent.js";
 
 /** @extends {Panel<import('../public/panel.js').PanelDeps>} */
 class ListPanel extends Panel {
