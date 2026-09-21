@@ -1,6 +1,8 @@
 import { init, Terminal } from '/vendor/dist/ghostty-web.js';
 import { mapKey } from '/keymap.js';
-import { DYNAMIC_OVERSIZE, ESC, SettingsPage, paint, terminalColors } from '/settings.js';
+import { ESC, paint, terminalColors } from '/panel.js';
+import { HelpPage, MenuPage } from '/menu.js';
+import { DYNAMIC_OVERSIZE, SettingsPage } from '/settings.js';
 import { MacrosPage } from '/macros.js';
 import { RecorderPage } from '/recorder.js';
 import { KeymapPage } from '/keymap-page.js';
@@ -27,10 +29,10 @@ function element(id) {
 const screenEl = element('screen');
 
 const RESET_LABEL = '[Reset]';
-const SETTINGS_LABEL = '[Settings]';
-// Macros, Record and Keymap have pages and shortcuts, just no button here.
-// One narrower than BUTTON_COLUMNS in server/oia.js, which keeps these cells clear.
-const BUTTONS = `${RESET_LABEL} ${SETTINGS_LABEL}`;
+const MENU_LABEL = '[Menu]';
+// The menu is the way to every panel, so one button reaches all of them.
+// Narrower than BUTTON_COLUMNS in server/oia.js, which keeps these cells clear.
+const BUTTONS = `${RESET_LABEL} ${MENU_LABEL}`;
 
 /** @type {{ code: string, message: string } | null} */
 let activeError = null;
@@ -47,7 +49,8 @@ let errorTimer;
  */
 function barBytes(row, cols, text, fg, bg) {
   const line = text.slice(0, cols).padEnd(cols, ' ');
-  return `${ESC}[?25l${ESC}[${row};1H${paint(fg, bg, true)}${line}${ESC}[0m`;
+  // Save and restore: a panel puts its cursor on a field, and this must not move it.
+  return `${ESC}7${ESC}[${row};1H${paint(fg, bg, true)}${line}${ESC}[0m${ESC}8`;
 }
 
 /** @returns {string} */
@@ -120,7 +123,7 @@ function showError(code, message) {
   activeError = { code, message };
   if (errorTimer !== undefined) clearTimeout(errorTimer);
   errorTimer = setTimeout(clearError, 6000);
-  const page = openOverlayPage();
+  const page = openPanel();
   if (page) page.draw();
   else writeOverlays();
 }
@@ -137,7 +140,7 @@ function clearError() {
 function repaintStatus() {
   const painted = overlaySlot;
   overlaySlot = null;
-  const page = openOverlayPage();
+  const page = openPanel();
   if (page) {
     page.draw();
     return;
@@ -342,12 +345,25 @@ function pickKeymapFiles() {
   return pickFiles('.kmp,.txt,text/plain');
 }
 
-const settings = new SettingsPage({
+/**
+ * What every panel needs to draw itself and to hand the screen on: the rest of
+ * each page's deps are its own.
+ *
+ * @type {import('/panel.js').PanelDeps}
+ */
+const panelIo = {
   write: (bytes) => {
     activeTerminal()?.write(bytes);
     writeOverlays();
   },
   geometry: () => ({ cols: activeTerminal()?.cols ?? 80, rows: activeTerminal()?.rows ?? 25 }),
+  theme: () => settings.theme(),
+  end: () => endPanel(),
+  go: (id) => goPanel(id),
+};
+
+const settings = new SettingsPage({
+  ...panelIo,
   applyTheme,
   applyFont,
   applyModel: (model) => send({ type: 'model', model }),
@@ -360,7 +376,6 @@ const settings = new SettingsPage({
   applySharing: (allowView, allowEdit) => send({ type: 'sharing', allowView, allowEdit }),
   applyAutomation: (allowed) => send({ type: 'automation', allowed }),
   connect: connectHost,
-  restore: () => send({ type: 'refresh' }),
   persist: (values) => {
     saveSettings(values).catch((cause) => {
       showError('E5004', `Settings could not be saved in this browser: ${String(cause)}`);
@@ -369,15 +384,9 @@ const settings = new SettingsPage({
 });
 
 const macros = new MacrosPage({
-  write: (bytes) => {
-    activeTerminal()?.write(bytes);
-    writeOverlays();
-  },
-  geometry: () => ({ cols: activeTerminal()?.cols ?? 80, rows: activeTerminal()?.rows ?? 25 }),
-  theme: () => settings.theme(),
+  ...panelIo,
   dispatch: (message) => sendTo(activeSession(), message),
   waitForUnlock: () => waitForUnlock(activeSession()),
-  restore: () => send({ type: 'refresh' }),
   persist: (values) => {
     saveMacros(values).catch((cause) => {
       showError('E5009', `Macros could not be saved in this browser: ${String(cause)}`);
@@ -389,25 +398,13 @@ const macros = new MacrosPage({
 });
 
 const recorder = new RecorderPage({
-  write: (bytes) => {
-    activeTerminal()?.write(bytes);
-    writeOverlays();
-  },
-  geometry: () => ({ cols: activeTerminal()?.cols ?? 80, rows: activeTerminal()?.rows ?? 25 }),
-  theme: () => settings.theme(),
+  ...panelIo,
   dispatch: (message) => sendTo(activeSession(), message),
-  restore: () => send({ type: 'refresh' }),
   exportFile: downloadFile,
 });
 
 const keymap = new KeymapPage({
-  write: (bytes) => {
-    activeTerminal()?.write(bytes);
-    writeOverlays();
-  },
-  geometry: () => ({ cols: activeTerminal()?.cols ?? 80, rows: activeTerminal()?.rows ?? 25 }),
-  theme: () => settings.theme(),
-  restore: () => send({ type: 'refresh' }),
+  ...panelIo,
   persist: (bindings) => {
     saveKeymap(bindings).catch((cause) => {
       showError('E5011', `The keymap could not be saved in this browser: ${String(cause)}`);
@@ -418,21 +415,85 @@ const keymap = new KeymapPage({
   error: showError,
 });
 
-const overlayPages = [settings, macros, recorder, keymap];
+const menu = new MenuPage({ ...panelIo });
+const help = new HelpPage({ ...panelIo });
 
-/** @returns {typeof overlayPages[number] | null} */
-function openOverlayPage() {
-  return overlayPages.find((page) => page.open) ?? null;
+const panels = [menu, settings, macros, recorder, keymap, help];
+
+/** @type {string[]} the panels walked through to get here, oldest first */
+const trail = [];
+
+/**
+ * @param {string} id
+ * @returns {typeof panels[number] | null}
+ */
+function panelById(id) {
+  return panels.find((page) => page.id === id) ?? null;
+}
+
+/** @returns {typeof panels[number] | null} */
+function openPanel() {
+  return panels.find((page) => page.open) ?? null;
 }
 
 /** @returns {boolean} */
-function anyOverlayOpen() {
-  return overlayPages.some((page) => page.open);
+function anyPanelOpen() {
+  return panels.some((page) => page.open);
 }
 
-/** @returns {void} */
-function closeOverlayPages() {
-  for (const page of overlayPages) page.close();
+/**
+ * Navigation inside the panels: an option number, F4, or a name on the action
+ * bar. Going back to a panel already behind us unwinds to it instead of piling
+ * the same two panels up.
+ *
+ * @param {string} id
+ * @returns {void}
+ */
+function goPanel(id) {
+  const next = panelById(id);
+  const current = openPanel();
+  if (next === null || next === current) return;
+  const seen = trail.indexOf(id);
+  if (seen !== -1) trail.length = seen;
+  else if (current !== null) trail.push(current.id);
+  current?.hide();
+  next.show();
+}
+
+/** @returns {void} F3: back one level, and out to the session at the bottom. */
+function endPanel() {
+  const previous = panelById(trail.pop() ?? '');
+  if (previous === null) {
+    send({ type: 'refresh' });
+    return;
+  }
+  previous.show();
+}
+
+/**
+ * @param {string} id
+ * @returns {void} An Alt shortcut starts a fresh trail: it came from the session.
+ */
+function startPanel(id) {
+  const wanted = panelById(id);
+  if (wanted === null) return;
+  const current = openPanel();
+  trail.length = 0;
+  if (current === wanted) {
+    wanted.close();
+    return;
+  }
+  current?.hide();
+  wanted.show();
+}
+
+/** @returns {void} Give the screen back without walking the trail out. */
+function closePanels() {
+  const current = openPanel();
+  trail.length = 0;
+  if (current === null) return;
+  current.hide();
+  send({ type: 'refresh' });
 }
 
 /**
@@ -459,7 +520,7 @@ function ensureTerminal(slot) {
   if (existing !== null) {
     if (existing.cols !== slot.cols || existing.rows !== slot.rows) existing.resize(slot.cols, slot.rows);
     fitFontSize(slot);
-    if (slot === activeSession()) openOverlayPage()?.draw();
+    if (slot === activeSession()) openPanel()?.draw();
     return existing;
   }
   const created = new Terminal({
@@ -742,7 +803,7 @@ function connectSocket(slot) {
     }
     // Dropping bytes is safe: a pane coming back into view asks for a repaint.
     const term = slot.terminal;
-    const covered = anyOverlayOpen() && slot === activeSession();
+    const covered = anyPanelOpen() && slot === activeSession();
     if (term === null || slot.pane.hidden || covered) return;
     term.write(new Uint8Array(event.data));
     term.write(buttonBytes(term));
@@ -902,10 +963,10 @@ function handleServerMessage(slot, message) {
     if (message.host !== null && settings.host === '' && !settings.hostLocked) settings.setHost(message.host);
     if (changed) {
       if (message.connected) {
-        closeOverlayPages();
+        closePanels();
         clearError();
       } else {
-        settings.show();
+        startPanel('settings');
       }
     }
     return;
@@ -925,7 +986,7 @@ function handleServerMessage(slot, message) {
  * @returns {void}
  */
 function repaint(slot) {
-  const page = slot === activeSession() ? openOverlayPage() : null;
+  const page = slot === activeSession() ? openPanel() : null;
   if (page) {
     page.draw();
     return;
@@ -969,7 +1030,7 @@ function focusSlot(index) {
   if (slot === null || index === active) return;
 
   // Close before the switch, or the wrong pane is asked for its screen back.
-  closeOverlayPages();
+  closePanels();
 
   if (!panes.includes(index)) {
     const here = Math.max(0, panes.indexOf(active));
@@ -985,7 +1046,7 @@ function focusSlot(index) {
   applyLayout();
   screenEl.focus();
 
-  if (slot.connection === 'not-connected') settings.show();
+  if (slot.connection === 'not-connected') startPanel('settings');
 }
 
 /** @type {boolean} One creation at a time; two fast keystrokes are one session. */
@@ -1085,23 +1146,24 @@ window.addEventListener('keydown', (event) => {
     else if (decision.action === 'hint') jumpToHint(decision.letter);
     return;
   }
-  for (const page of overlayPages) {
-    if (event.altKey && event.code === page.toggleKey) {
-      for (const other of overlayPages) if (other !== page) other.close();
+  if (event.altKey && !event.ctrlKey && !event.metaKey) {
+    const wanted = panels.find((page) => page.toggleKey !== '' && event.code === page.toggleKey);
+    if (wanted !== undefined) {
+      event.preventDefault();
+      event.stopPropagation();
+      startPanel(wanted.id);
+      return;
     }
   }
 
-  for (const page of overlayPages) {
-    if (page.handleKey(event)) {
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
+  // Ctrl and Meta fall through on purpose: copy, paste and reload work in a panel.
+  if (openPanel()?.handleKey(event) === true) {
+    event.preventDefault();
+    event.stopPropagation();
   }
 }, true);
 
 screenEl.addEventListener('keydown', (event) => {
-  if (anyOverlayOpen()) return;
   clearError();
 
   const mapped = mapKey(event, keymap.lookup());
@@ -1109,12 +1171,14 @@ screenEl.addEventListener('keydown', (event) => {
   event.preventDefault();
   event.stopPropagation();
 
+  // A panel is over the screen, so only the clipboard commands still mean something.
+  const panel = openPanel();
   if (mapped.kind === 'text') {
-    send({ type: 'text', value: mapped.value });
+    if (panel === null) send({ type: 'text', value: mapped.value });
     return;
   }
   if (mapped.kind === 'action') {
-    send({ type: 'action', action: mapped.action, args: mapped.args });
+    if (panel === null) send({ type: 'action', action: mapped.action, args: mapped.args });
     return;
   }
 
@@ -1123,13 +1187,16 @@ screenEl.addEventListener('keydown', (event) => {
   if (mapped.command === 'Copy') {
     const term = activeTerminal();
     if (term !== null && term.hasSelection()) navigator.clipboard.writeText(term.getSelection());
+    else if (panel !== null) navigator.clipboard.writeText(panel.copy());
     else send({ type: 'copyField' });
     return;
   }
   // Ctrl+V arrives as a paste event instead; every other binding must read the
   // clipboard, which Chrome asks permission for once.
   navigator.clipboard.readText().then((text) => {
-    if (text !== '') send({ type: 'paste', text });
+    if (text === '') return;
+    if (panel !== null) panel.paste(text);
+    else send({ type: 'paste', text });
   }).catch((cause) => {
     showError('E5005', `The clipboard could not be read; Ctrl+V pastes without asking: ${String(cause)}`);
   });
@@ -1139,10 +1206,12 @@ screenEl.addEventListener('keydown', (event) => {
 screenEl.addEventListener('paste', (event) => {
   event.preventDefault();
   event.stopPropagation();
-  if (anyOverlayOpen()) return;
   clearError();
   const text = event.clipboardData?.getData('text/plain') ?? '';
-  if (text !== '') send({ type: 'paste', text });
+  if (text === '') return;
+  const panel = openPanel();
+  if (panel !== null) panel.paste(text);
+  else send({ type: 'paste', text });
 }, true);
 
 /**
@@ -1168,19 +1237,25 @@ function paneClicked(slot, event) {
   focusSlot(sessions.indexOf(slot));
   const term = slot.terminal;
   const renderer = term?.renderer;
-  if (anyOverlayOpen() || term === null || renderer === undefined) return;
+  if (term === null || renderer === undefined) return;
 
   const rect = renderer.getCanvas().getBoundingClientRect();
   const row = Math.floor((event.clientY - rect.top) / renderer.charHeight);
   const col = Math.floor((event.clientX - rect.left) / renderer.charWidth);
 
-  const settingsStart = term.cols - SETTINGS_LABEL.length;
+  const panel = openPanel();
+  if (panel !== null) {
+    if (slot === activeSession()) panel.clicked(row + 1, col + 1);
+    return;
+  }
+
+  const menuStart = term.cols - MENU_LABEL.length;
   const resetStart = term.cols - BUTTONS.length;
 
   if (row === term.rows - 1) {
     // Widest first: each start is left of the last, so the first match wins.
     const buttons = [
-      { start: settingsStart, action: () => settings.toggle() },
+      { start: menuStart, action: () => startPanel('menu') },
       { start: resetStart, action: () => resetScreen(slot) },
     ];
     for (const button of buttons) {

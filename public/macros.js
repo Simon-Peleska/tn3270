@@ -1,16 +1,16 @@
 /**
- * The macros page: record, play back and trade keystroke sequences as Host
- * On-Demand XML. Drawn as VT bytes into the terminal like settings.js.
+ * The macros panel: record, play back and trade keystroke sequences as Host
+ * On-Demand XML. An ISPF list panel, so the lines are numbered and the work is
+ * done with line commands typed on the command line.
  */
 
-import { cycle, drawListPanel } from './settings.js';
+import { Panel } from './panel.js';
 import { macrosToXml, parseMacrosXml } from './macro-xml.js';
 
 /** @typedef {import('./macro-xml.js').Macro} Macro */
 /** @typedef {import('./macro-xml.js').MacroStep} MacroStep */
 
-const LABEL_WIDTH = 22;
-const FIELD_WIDTH = 32;
+const NAME_WIDTH = 24;
 
 /**
  * @param {string} name
@@ -21,30 +21,25 @@ function sanitizeFilename(name) {
 }
 
 /**
- * @typedef {object} MacrosDeps
- * @property {(bytes: string) => void} write
- * @property {() => { cols: number, rows: number }} geometry
- * @property {() => import('./settings.js').Theme} theme
- * @property {(message: import('../server/protocol.js').ClientMessage) => void} dispatch
- *   bypasses app.js's recording tap, so playback is never recorded into itself
- * @property {() => Promise<void>} waitForUnlock paces playback by the host, not a timer
- * @property {() => void} restore
- * @property {(macros: Macro[]) => void} persist
- * @property {(filename: string, content: string) => void} exportFile
- * @property {() => Promise<string[]>} importFiles empty when the picker was cancelled
- * @property {(code: string, message: string) => void} error
+ * @typedef {import('./panel.js').PanelDeps & {
+ *   dispatch: (message: import('../server/protocol.js').ClientMessage) => void,
+ *   waitForUnlock: () => Promise<void>,
+ *   persist: (macros: Macro[]) => void,
+ *   exportFile: (filename: string, content: string) => void,
+ *   importFiles: () => Promise<string[]>,
+ *   error: (code: string, message: string) => void,
+ * }} MacrosDeps
+ *
+ * `dispatch` bypasses app.js's recording tap, so playback is never recorded
+ * into itself, and `waitForUnlock` paces playback by the host, not a timer.
  */
 
-export class MacrosPage {
+/** @extends {Panel<MacrosDeps>} */
+export class MacrosPage extends Panel {
   /** @param {MacrosDeps} deps */
   constructor(deps) {
-    this.deps = deps;
-    /** @type {string} the Alt+key code that toggles this page */
+    super('macros', deps);
     this.toggleKey = 'KeyM';
-    /** @type {boolean} */
-    this.open = false;
-    /** @type {number} Index into rows(). */
-    this.selected = 0;
     /** @type {Macro[]} */
     this.macros = [];
     /** @type {{ steps: MacroStep[], pendingText: string } | null} */
@@ -155,7 +150,7 @@ export class MacrosPage {
     this.macros.splice(index, 1);
     this.marked = new Set([...this.marked].filter((i) => i !== index).map((i) => (i > index ? i - 1 : i)));
     this.persist();
-    this.selected = Math.min(this.selected, this.rows().length - 1);
+    this.selected = Math.min(this.selected, this.lines().length - 1);
     this.draw();
   }
 
@@ -212,33 +207,73 @@ export class MacrosPage {
   }
 
   /**
-   * Row 0 is the transport control; one row follows per saved macro.
+   * Line 0 is the transport control; one numbered line follows per saved macro.
    *
-   * @returns {{ key: string, label: string, value: string }[]}
+   * @override
+   * @returns {import('./panel.js').PanelLine[]}
    */
-  rows() {
-    /** @type {{ key: string, label: string, value: string }[]} */
-    const rows = [];
+  lines() {
+    /** @type {import('./panel.js').PanelLine[]} */
+    const lines = [];
     if (this.recording !== null) {
       const count = this.recording.steps.length;
-      rows.push({ key: 'control', label: 'Recording...', value: `${count} step${count === 1 ? '' : 's'} - Enter stops` });
+      lines.push({ text: 'Recording', value: `${count} step${count === 1 ? '' : 's'} - Enter stops` });
     } else if (this.naming?.kind === 'save') {
-      rows.push({ key: 'name', label: 'Save as', value: `${this.nameBuffer}_` });
+      lines.push({ text: 'Save as', value: this.nameBuffer.padEnd(NAME_WIDTH), field: true, cursor: this.nameBuffer.length });
     } else if (this.playing !== null) {
-      rows.push({ key: 'control', label: `Playing "${this.playing.macro.name}"`, value: 'Enter stops' });
+      lines.push({ text: `Playing "${this.playing.macro.name}"`, value: 'Enter stops' });
     } else {
-      rows.push({ key: 'new', label: 'Record new macro', value: 'Enter starts' });
+      lines.push({ text: 'Record a new macro', value: 'Enter starts' });
     }
     this.macros.forEach((macro, index) => {
       if (this.naming?.kind === 'rename' && this.naming.index === index) {
-        rows.push({ key: 'name', label: 'Rename', value: `${this.nameBuffer}_` });
+        lines.push({ option: String(index + 1), text: 'Rename', value: this.nameBuffer.padEnd(NAME_WIDTH), field: true, cursor: this.nameBuffer.length });
         return;
       }
-      const mark = this.marked.has(index) ? '[x] ' : '[ ] ';
       const count = macro.steps.length;
-      rows.push({ key: 'macro', label: mark + macro.name, value: `${count} step${count === 1 ? '' : 's'}` });
+      lines.push({
+        option: String(index + 1),
+        text: `${this.marked.has(index) ? '/' : ' '} ${macro.name}`,
+        value: `${count} step${count === 1 ? '' : 's'}`,
+      });
     });
-    return rows;
+    return lines;
+  }
+
+  /**
+   * @override
+   * @returns {number}
+   */
+  labelWidth() {
+    return 30;
+  }
+
+  /**
+   * @override
+   * @returns {string}
+   */
+  title() {
+    return 'TN3270 Macros';
+  }
+
+  /**
+   * @override
+   * @returns {string[]}
+   */
+  notes() {
+    if (this.naming !== null) return ['Type a name and press Enter. F12 leaves it unsaved.'];
+    return [
+      'Enter records, stops or plays the line the cursor is on. / marks a macro.',
+      'Commands: RENAME, DELETE, EXPORT, IMPORT, MARK.',
+    ];
+  }
+
+  /**
+   * @override
+   * @returns {string[]}
+   */
+  keys() {
+    return ['F1=Help', 'F3=Exit', 'F4=Menu', 'F7=Bkwd', 'F8=Fwd', 'Enter=Play'];
   }
 
   /**
@@ -251,27 +286,24 @@ export class MacrosPage {
     return index < this.macros.length ? index : null;
   }
 
-  /** @returns {void} */
-  toggle() {
-    if (this.open) this.close();
-    else this.show();
-  }
-
-  /** @returns {void} */
+  /**
+   * @override
+   * @returns {void}
+   */
   show() {
-    this.open = true;
+    super.show();
     this.selected = 0;
+    if (this.naming !== null) {
+      this.selected = this.lines().findIndex((line) => line.field === true);
+      this.onCommand = false;
+    }
     this.draw();
   }
 
-  /** @returns {void} */
-  close() {
-    if (!this.open) return;
-    this.open = false;
-    this.deps.restore();
-  }
-
-  /** @returns {void} */
+  /**
+   * @override
+   * @returns {void}
+   */
   activate() {
     if (this.selected === 0) {
       if (this.recording !== null) {
@@ -293,110 +325,136 @@ export class MacrosPage {
   }
 
   /**
-   * @param {KeyboardEvent} event
-   * @returns {boolean} true when the page consumed the key
+   * @override
+   * @param {string} word
+   * @returns {boolean}
    */
-  handleKey(event) {
-    if (event.altKey && event.code === this.toggleKey) {
-      this.toggle();
+  word(word) {
+    const index = this.macroIndexAt(this.selected);
+    if (word === 'EXPORT' || word === 'EXP') {
+      this.exportSelection();
       return true;
     }
-    if (!this.open) return false;
-    // Reload, devtools and the rest belong to the browser even here.
+    if (word === 'IMPORT' || word === 'IMP') {
+      this.importMacros();
+      return true;
+    }
+    if (word === 'RECORD' || word === 'REC') {
+      if (this.recording === null && this.playing === null) this.startRecording();
+      return true;
+    }
+    if (word === 'STOP') {
+      if (this.recording !== null) this.stopRecording();
+      else this.stopPlayback();
+      this.draw();
+      return true;
+    }
+    if (index === null) {
+      if (word === 'RENAME' || word === 'REN' || word === 'DELETE' || word === 'DEL' || word === 'MARK') {
+        this.say('Put the cursor on a macro first');
+        return true;
+      }
+      return false;
+    }
+    if (word === 'RENAME' || word === 'REN') {
+      this.rename(index);
+      return true;
+    }
+    if (word === 'DELETE' || word === 'DEL') {
+      this.removeMacro(index);
+      return true;
+    }
+    if (word === 'MARK') {
+      this.mark(index);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * @param {number} index
+   * @returns {void}
+   */
+  rename(index) {
+    this.naming = { kind: 'rename', index };
+    this.nameBuffer = this.macros[index]?.name ?? '';
+    this.onCommand = false;
+    this.selected = index + 1;
+    this.draw();
+  }
+
+  /**
+   * @param {number} index
+   * @returns {void}
+   */
+  mark(index) {
+    if (this.marked.has(index)) this.marked.delete(index);
+    else this.marked.add(index);
+    this.draw();
+  }
+
+  /**
+   * Naming takes the whole panel, the way ISPF's own pop-ups do: until the name
+   * is in, every key belongs to the field.
+   *
+   * @override
+   * @param {KeyboardEvent} event
+   * @returns {boolean}
+   */
+  override(event) {
+    if (!this.open || this.naming === null) return false;
     if (event.ctrlKey || event.metaKey) return false;
-
-    if (event.key === 'Escape') {
-      if (this.naming !== null) {
-        this.naming = null;
-        this.nameBuffer = '';
-        this.draw();
-        return true;
-      }
-      this.close();
-      return true;
-    }
-
-    // A name field, not a value to cycle, so it takes its own keys first.
-    if (this.naming !== null) {
-      if (event.key === 'Backspace') {
-        this.nameBuffer = this.nameBuffer.slice(0, -1);
-        this.draw();
-        return true;
-      }
-      if (event.key === 'Enter') {
-        this.confirmName();
-        this.draw();
-        return true;
-      }
-      if (event.key.length === 1 && !event.altKey) {
-        this.nameBuffer += event.key;
-        this.draw();
-        return true;
-      }
-      return true;
-    }
-
-    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-      const step = event.key === 'ArrowUp' ? -1 : 1;
-      this.selected = cycle(this.selected, step, this.rows().length);
+    if (event.key === 'Escape' || event.key === 'F12') {
+      this.naming = null;
+      this.nameBuffer = '';
       this.draw();
       return true;
     }
     if (event.key === 'Enter') {
-      this.activate();
+      this.confirmName();
+      this.draw();
       return true;
     }
-    if (event.key === ' ') {
-      const index = this.macroIndexAt(this.selected);
-      if (index !== null) {
-        if (this.marked.has(index)) this.marked.delete(index);
-        else this.marked.add(index);
-        this.draw();
-      }
+    if (event.key === 'Backspace') {
+      this.nameBuffer = this.nameBuffer.slice(0, -1);
+      this.draw();
       return true;
     }
-    if (event.key === 'r' || event.key === 'R') {
-      const index = this.macroIndexAt(this.selected);
-      if (index !== null) {
-        this.naming = { kind: 'rename', index };
-        this.nameBuffer = this.macros[index]?.name ?? '';
-        this.draw();
-      }
+    if (event.key.length === 1 && !event.altKey) {
+      this.nameBuffer += event.key;
+      this.draw();
       return true;
     }
-    if (event.key === 'Delete') {
-      const index = this.macroIndexAt(this.selected);
-      if (index !== null) this.removeMacro(index);
-      return true;
-    }
-    if (event.key === 'e' || event.key === 'E') {
-      this.exportSelection();
-      return true;
-    }
-    if (event.key === 'i' || event.key === 'I') {
-      this.importMacros();
-      return true;
-    }
-    // Swallow the rest: the host must not see keys aimed at this page.
     return true;
   }
 
-  /** @returns {void} */
-  draw() {
-    drawListPanel({
-      write: this.deps.write,
-      geometry: this.deps.geometry,
-      theme: this.deps.theme(),
-      title: 'TN3270 MACROS',
-      fields: this.rows(),
-      selected: this.selected,
-      labelWidth: LABEL_WIDTH,
-      fieldWidth: FIELD_WIDTH,
-      heightBase: 16,
-      helpLines: [
-        'Up/Down select   Enter start/stop/play   Space mark',
-        'R rename   Del remove   E export   I import   Esc close',
-      ],
-    });
+  /**
+   * @override
+   * @param {string} text
+   * @returns {boolean}
+   */
+  insert(text) {
+    if (this.naming === null) return false;
+    this.nameBuffer += text;
+    return true;
+  }
+
+  /**
+   * @override
+   * @param {KeyboardEvent} event
+   * @returns {boolean}
+   */
+  typed(event) {
+    const index = this.macroIndexAt(this.selected);
+    if (index === null) return false;
+    if (event.key === '/') {
+      this.mark(index);
+      return true;
+    }
+    if (event.key === 'Delete') {
+      this.removeMacro(index);
+      return true;
+    }
+    return false;
   }
 }

@@ -63,7 +63,7 @@ the host.
 ## 4. The screen
 
 - Geometry follows the model: 2 = 24×80, 3 = 32×80, 4 = 43×80, 5 = 27×132.
-  `b3270.model` sets the starting model; the settings page changes it afterwards.
+  `b3270.model` sets the starting model; the settings panel changes it afterwards.
   The list it offers is the one b3270 itself reports at startup, not a second
   copy of the table above. After model 5 the list offers **Dynamic - 62x160**:
   the model underneath it with a 160×62 oversize on top, which is the biggest
@@ -92,7 +92,7 @@ the host.
   goes on floating so the grid fills the window however it is resized afterwards.
 - The size is negotiated with the host once, when the connection is opened, so
   changing either the model or the fit **drops the connection and reopens the
-  same host**. The settings page says so before it does it. Observers cannot
+  same host**. The settings panel says so before it does it. Observers cannot
   change the size (`E3006`).
 - A pane that changes size — a split, or the window being dragged — refits the
   sessions that have nothing to lose by it: one with no host on it, and one
@@ -120,9 +120,11 @@ the host.
   it is rendered faithfully: `X Not Connected`, `X SYSTEM`, `X Wait`,
   `X Protected`, `X Numeric`, `X Operator Error`, and so on. An unrecognised lock
   value is shown verbatim as `X <value>` rather than swallowed.
-- The right of the OIA row holds `[Reset] [Settings]`, painted by the browser
+- The right of the OIA row holds `[Reset] [Menu]`, painted by the browser
   over columns the server never writes into. Every pane carries its own, so a
-  split is not a screen you have to switch away from to work on. **Reset** puts
+  split is not a screen you have to switch away from to work on. **Menu** opens
+  the primary option menu (§4.1), which is the way to every other panel.
+  **Reset** puts
   this session's screen back the way it should look in the pane it now sits in,
   whatever it has been through — the way out of a pane resized under a
   connection the page would not touch on its own. A screen measured from the
@@ -136,6 +138,83 @@ the host.
   monochrome green rather than being given invented colours.
 - Graphic rendition maps `highlight`, `underline`, `blink` and `reverse` onto the
   corresponding SGR attributes.
+
+### 4.1 Panels
+
+Everything the browser itself offers — settings, macros, the recorder, the key
+bindings — is a **panel**, drawn into the terminal in the shape TSO/ISPF puts on
+a 3270, so that someone who knows ISPF already knows this. One panel is open at
+a time, over the session it belongs to, and leaving it repaints the screen
+underneath.
+
+```
+ Menu  Settings  Macros  Recorder  Keys  Help
+────────────────────────────────────────────────────────────────────────────────
+                           TN3270 Primary Option Menu    No panel is numbered 7
+ Option ===> ________________________________________________________
+ Type an option number here, or =0 to =3 from any panel to jump straight to it.
+
+    0  Settings     Colours, font, screen size and sharing
+    1  Macros       Record, play back and trade keystroke macros
+    2  Recorder     Capture screens and keys as a script
+    3  Keys         What each key and key combination does
+    H  Help         The keys and commands panels answer to
+    X  Exit         Back to the session
+
+ F1=Help  F3=Exit  F12=Cancel
+```
+
+- The **action bar** on row 1 names every panel and is on every panel, with the
+  one you are on highlighted. Clicking a name opens it.
+- The **command line** is `Option ===>` on the menu and `Command ===>` on the
+  rest. `More: - +` sits at its right end when the body scrolls that way.
+- A short **message** — a refused command, a bad option — appears against the
+  title in place, and clears on the next keystroke. A panel never navigates the
+  page away to say something.
+- Body lines that can be picked carry a number in the left margin. A form panel
+  — settings, keys — runs an ISPF dot leader from the label out to the value:
+  `Screen model . . . . . Model 4 - 43x80`.
+- A panel opened from another one is stacked on it, so F3 comes back one level
+  at a time and lands on the session at the bottom. F4 goes straight to the
+  menu; an `Alt` shortcut starts again from the session.
+
+**Option numbers** are fixed, and `=n` jumps to one from wherever you are:
+
+| Option | Panel |
+|---|---|
+| `0` | Settings |
+| `1` | Macros |
+| `2` | Recorder |
+| `3` | Keys |
+| `H` | Help |
+| `X` | Exit the panel, back to the session |
+
+**Keys**, all of them ISPF's:
+
+| Key | What it does |
+|---|---|
+| Enter | Runs the command line, or picks the line the cursor is on when it is empty |
+| F1 | Help |
+| F3, Esc | Exit: back where the panel was opened from |
+| F4 | Menu: the primary option menu |
+| F7 / F8, PageUp / PageDown | Backward and forward a bodyful at a time |
+| F12 | Cancel: leave without applying what was typed |
+| Tab, Up / Down | The cursor between the command line and the body lines, stepping over headings |
+| Left / Right | Change the value the cursor is on |
+
+**Command line words**: `=n` to jump, a bare number to pick a line on this
+panel, `END`/`EXIT`/`X`, `CANCEL`/`CAN`, `RETURN`/`RET`/`MENU`, `HELP`/`?`, the
+name of any panel on the action bar, and the words a panel adds of its own —
+`APPLY`, `RENAME`, `DELETE`, `EXPORT`, `IMPORT`, `MARK`, `RECORD`, `STOP`,
+`RESET`, `DEFAULTS`. A word that is none of these is answered on the panel.
+
+A panel is opened from the session with `Alt-Space` (menu), `Alt-,` (settings),
+`Alt-M` (macros), `Alt-R` (recorder) or `Alt-K` (keys); the same combination
+closes it again. Ctrl and Meta are left to the browser while a panel is open, so
+**Ctrl-C and Ctrl-V work in a panel as they do on the screen**: a copy with
+nothing selected takes the command line or the field the cursor is on, and a
+paste puts the clipboard's first line into whichever of the two the cursor is
+on. Clicks land the same way — the action bar, the command line, or a body line.
 
 ## 5. Keyboard
 
@@ -179,8 +258,11 @@ Plain Ctrl and Meta combinations are left to the browser, except Ctrl-B (the
 session prefix, below) and Ctrl-C/Ctrl-V, which copy and paste the system
 clipboard rather than reaching the host as 3270 actions. Alt is otherwise left
 to the browser too, except the PA-key and Dup/FieldMark/EraseInput bindings
-above. There is no local echo: what appears on screen is what the host put
-there.
+above, the session digits below, and the panel shortcuts of §4.1 —
+`Alt-Space`, `Alt-,`, `Alt-M`, `Alt-R`, `Alt-K` — which open a panel over the
+session and, pressed again, close it. While a panel is open the keys in this
+table are its own (§4.1) and nothing reaches the host. There is no local echo:
+what appears on screen is what the host put there.
 
 `Ctrl-B` is a prefix in the tmux sense, and it is the browser's alone — neither
 it nor the key after it ever reaches the host. While it is armed the status row
@@ -206,7 +288,7 @@ off screen takes the pane the keyboard was on.
 Splitting the page does **not** resize a session that has a host on it: the screen
 size is negotiated when the connection is opened (§4), so resizing would drop and
 reopen it. A connected pane keeps its screen and shrinks the text instead. A
-session between hosts is refitted to its new pane, and the settings page — which
+session between hosts is refitted to its new pane, and the settings panel — which
 measures the pane, not the window — refits a connected one on purpose.
 
 A paste is typed into the screen with b3270's `PasteString`, not `String`: a
@@ -297,7 +379,7 @@ automation client acts whoever else is watching, and watchers see the result.
 
 Because that is a door into a session someone is sitting at, the door starts
 shut: every REST call for a session is refused with `403` and `E7004` until
-**Allow automation** on the settings page is turned on. Only the controller is
+**Allow automation** on the settings panel is turned on. Only the controller is
 offered the switch, it works in both directions, and it is live — nothing
 restarts, the emulator's httpd keeps listening either way, and a call already in
 flight is unaffected.
@@ -317,14 +399,14 @@ turn the switch on for it.
 | `server.host` | `127.0.0.1` | Listen address |
 | `server.port` | `8017` | Listen port |
 | `b3270.path` | `b3270` | Executable, resolved from `PATH` |
-| `b3270.model` | `2` | 3270 model a session starts on, 2–5; changeable from the settings page |
+| `b3270.model` | `2` | 3270 model a session starts on, 2–5; changeable from the settings panel |
 | `b3270.defaultHost` | `null` | Connect new sessions here; `null` starts disconnected |
 | `b3270.extraArgs` | `[]` | Appended verbatim, e.g. `["-cafile","/path/ca.pem"]` |
 | `sessions.maxSessions` | `16` | Refuses more with `E3002` |
 | `sessions.maxViewersPerSession` | `8` | Refuses more with `E3003` |
 | `sessions.idleTimeoutMs` | `300000` | Viewer-less session lifetime; `0` disables reaping |
 | `sessions.allowMultipleControllers` | `false` | Let every viewer type |
-| `sessions.allowAutomation` | `false` | Whether new sessions accept REST calls. Off makes the controller turn it on per session from the settings page; on is for automation that runs with no browser to ask |
+| `sessions.allowAutomation` | `false` | Whether new sessions accept REST calls. Off makes the controller turn it on per session from the settings panel; on is for automation that runs with no browser to ask |
 | `security.allowedHosts` | `[]` | Empty = any host. An entry with a port matches exactly; without one, any port on that host |
 | `security.trustProxyHeaders` | `false` | Take the client's address from `X-Forwarded-For` and their name from `X-Remote-User`. Only with a reverse proxy in front that sets both |
 | `logLevel` | `info` | `debug` logs every line exchanged with b3270 |

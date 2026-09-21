@@ -32,6 +32,14 @@ function windowOf(width, height) {
   });
 }
 
+/**
+ * @param {SettingsPage} page
+ * @returns {string[]} the keys of the fields, leaving out the headings
+ */
+function fieldKeys(page) {
+  return page.rows().filter((row) => row.gap !== true).map((row) => row.key);
+}
+
 /** @param {(fontSize: number) => { cols: number, rows: number } | null} [fit] */
 function fixture(fit = () => ({ cols: 158, rows: 60 })) {
   const calls = {
@@ -42,7 +50,8 @@ function fixture(fit = () => ({ cols: 158, rows: 60 })) {
     /** @type {string[]} */ oversizes: [],
     /** @type {boolean[]} */ hostColors: [],
     /** @type {(string | null)[]} */ hosts: [],
-    /** @type {number} */ restores: 0,
+    /** @type {number} */ ends: 0,
+    /** @type {string[]} */ went: [],
     /** @type {import('../public/store.js').StoredSettings[]} */ saved: [],
     /** @type {{ allowView: boolean, allowEdit: boolean }[]} */ sharing: [],
     /** @type {boolean[]} */ automation: [],
@@ -59,7 +68,8 @@ function fixture(fit = () => ({ cols: 158, rows: 60 })) {
     applySharing: (allowView, allowEdit) => calls.sharing.push({ allowView, allowEdit }),
     applyAutomation: (allowed) => calls.automation.push(allowed),
     connect: (host) => calls.hosts.push(host),
-    restore: () => { calls.restores += 1; },
+    end: () => { calls.ends += 1; },
+    go: (id) => calls.went.push(id),
     persist: (values) => calls.saved.push(values),
   });
   page.models = [
@@ -71,16 +81,76 @@ function fixture(fit = () => ({ cols: 158, rows: 60 })) {
   return { page, calls };
 }
 
-test('alt+space opens and closes the page, and closing asks for the screen back', () => {
+/**
+ * Put the cursor on a field, the way Tab and the arrows do. The panel opens on
+ * its command line, as an ISPF panel does.
+ *
+ * @param {SettingsPage} page
+ * @param {string} key
+ * @returns {void}
+ */
+function focus(page, key) {
+  const index = page.rows().findIndex((row) => row.key === key);
+  assert.notEqual(index, -1, `the panel has no ${key} field`);
+  page.onCommand = false;
+  page.selected = index;
+}
+
+test('opening draws the panel, and F3 closes it and asks for the screen back', () => {
   const { page, calls } = fixture();
 
-  assert.equal(page.handleKey(key({ code: 'Space', altKey: true })), true);
+  page.show();
   assert.equal(page.open, true);
-  assert.ok(calls.written.length > 0, 'the page must have been drawn');
+  assert.ok(calls.written.length > 0, 'the panel must have been drawn');
 
-  assert.equal(page.handleKey(key({ code: 'Space', altKey: true })), true);
+  assert.equal(page.handleKey(key({ key: 'F3' })), true);
   assert.equal(page.open, false);
-  assert.equal(calls.restores, 1);
+  assert.equal(calls.ends, 1);
+});
+
+test('the command line takes the ISPF verbs: a jump, the menu and help', () => {
+  const { page, calls } = fixture();
+  page.connected = true;
+  page.show();
+
+  for (const char of '=1') page.handleKey(key({ key: char }));
+  page.handleKey(key({ key: 'Enter' }));
+  assert.deepEqual(calls.went, ['macros']);
+
+  page.handleKey(key({ key: 'F4' }));
+  assert.deepEqual(calls.went, ['macros', 'menu']);
+
+  page.handleKey(key({ key: 'F1' }));
+  assert.deepEqual(calls.went, ['macros', 'menu', 'help']);
+});
+
+test('a command the panel does not know is answered on the panel, not swallowed', () => {
+  const { page, calls } = fixture();
+  page.connected = true;
+  page.show();
+
+  for (const char of 'zork') page.handleKey(key({ key: char }));
+  page.handleKey(key({ key: 'Enter' }));
+
+  assert.match(page.message, /zork/);
+  assert.equal(page.open, true);
+  assert.deepEqual(calls.went, []);
+});
+
+test('APPLY on the command line does what Enter on the panel does', () => {
+  const { page, calls } = fixture();
+  page.setModel(2);
+  page.connected = true;
+  page.show();
+
+  focus(page, 'model');
+  page.handleKey(key({ key: 'ArrowRight' }));
+  page.onCommand = true;
+  for (const char of 'apply') page.handleKey(key({ key: char }));
+  page.handleKey(key({ key: 'Enter' }));
+
+  assert.deepEqual(calls.models, [3]);
+  assert.equal(page.open, false);
 });
 
 test('a closed page consumes nothing', () => {
@@ -101,6 +171,7 @@ test('theme and font apply as you scroll through them and are saved by name', ()
   page.connected = true;
   page.show();
 
+  page.handleKey(key({ key: 'Tab' }));
   page.handleKey(key({ key: 'ArrowRight' }));
   assert.deepEqual(calls.themes, [THEMES[1]?.name]);
 
@@ -136,7 +207,7 @@ test('host colours default on, and either arrow key flips the saved toggle', () 
 
   page.connected = true;
   page.show();
-  page.selected = 4;
+  focus(page, 'hostColors');
   page.handleKey(key({ key: 'ArrowRight' }));
 
   assert.equal(page.hostColors, false);
@@ -161,7 +232,7 @@ test('field hints default off, and either arrow key flips the saved toggle', () 
 
   page.connected = true;
   page.show();
-  page.selected = page.rows().findIndex((row) => row.key === 'hints');
+  focus(page, 'hints');
   page.handleKey(key({ key: 'ArrowRight' }));
 
   assert.equal(page.hints, true);
@@ -182,18 +253,18 @@ test('the controller can toggle sharing and shared editing, and turning sharing 
     'a controller is offered both, sharing on by default and editing off',
   );
 
-  page.selected = page.rows().findIndex((row) => row.key === 'allowSharedEditing');
+  focus(page, 'allowSharedEditing');
   page.handleKey(key({ key: 'ArrowRight' }));
   assert.equal(page.allowSharedEditing, true);
   assert.deepEqual(calls.sharing.at(-1), { allowView: true, allowEdit: true });
 
-  page.selected = page.rows().findIndex((row) => row.key === 'allowSharing');
+  focus(page, 'allowSharing');
   page.handleKey(key({ key: 'ArrowLeft' }));
   assert.equal(page.allowSharing, false);
   assert.equal(page.allowSharedEditing, false, 'nothing left to share with, nothing left to type into it');
   assert.deepEqual(calls.sharing.at(-1), { allowView: false, allowEdit: false });
   assert.deepEqual(
-    page.rows().map((row) => row.key),
+    fieldKeys(page),
     ['theme', 'font', 'model', 'fit', 'hostColors', 'hints', 'allowAutomation', 'allowSharing'],
     'shared editing is only offered while sharing is on',
   );
@@ -204,13 +275,13 @@ test('the controller can allow automation over the REST proxy, and the server is
   page.connected = true;
   page.show();
 
-  page.selected = page.rows().findIndex((row) => row.key === 'allowAutomation');
-  assert.equal(page.rows()[page.selected]?.value, 'Off', 'automation starts off');
+  focus(page, 'allowAutomation');
+  assert.equal(page.rows()[page.selected]?.value, ' ', 'automation starts off');
 
   page.handleKey(key({ key: 'ArrowRight' }));
   assert.equal(page.allowAutomation, true);
   assert.deepEqual(calls.automation, [true], 'no Enter needed: it opens a door that is shut now');
-  assert.equal(page.rows()[page.selected]?.value, 'On');
+  assert.equal(page.rows()[page.selected]?.value, '/');
 
   page.handleKey(key({ key: 'ArrowLeft' }));
   assert.equal(page.allowAutomation, false);
@@ -218,7 +289,7 @@ test('the controller can allow automation over the REST proxy, and the server is
 
   // The server owns the answer: the session may have been started open to it.
   page.setAutomation(true);
-  assert.equal(page.rows()[page.selected]?.value, 'On');
+  assert.equal(page.rows()[page.selected]?.value, '/');
   assert.deepEqual(calls.automation, [true, false], 'being told is not asking');
 });
 
@@ -228,10 +299,7 @@ test('an observer is not offered the automation or sharing rows at all — it is
   page.setRole('observer');
   page.show();
 
-  assert.deepEqual(
-    page.rows().map((row) => row.key),
-    ['theme', 'font', 'model', 'fit', 'hostColors', 'hints'],
-  );
+  assert.deepEqual(fieldKeys(page), ['theme', 'font', 'model', 'fit', 'hostColors', 'hints']);
 });
 
 test('a screen size change waits for Enter and warns what it costs', () => {
@@ -240,8 +308,7 @@ test('a screen size change waits for Enter and warns what it costs', () => {
   page.connected = true;
   page.show();
 
-  page.handleKey(key({ key: 'ArrowDown' }));
-  page.handleKey(key({ key: 'ArrowDown' }));
+  focus(page, 'model');
   page.handleKey(key({ key: 'ArrowRight' }));
 
   assert.equal(page.pendingModel, 5);
@@ -253,7 +320,7 @@ test('a screen size change waits for Enter and warns what it costs', () => {
   page.handleKey(key({ key: 'Enter' }));
   assert.deepEqual(calls.models, [5]);
   assert.equal(page.open, false);
-  assert.equal(calls.restores, 1);
+  assert.equal(calls.ends, 1);
 });
 
 test('the dynamic screen is one more choice after the models, asked for as an oversize', () => {
@@ -262,13 +329,13 @@ test('the dynamic screen is one more choice after the models, asked for as an ov
   page.connected = true;
   page.show();
 
-  page.selected = 2;
+  focus(page, 'model');
   page.handleKey(key({ key: 'ArrowRight' }));
 
-  assert.equal(page.rows()[2]?.value, 'Dynamic - 62x160');
+  assert.equal(page.rows()[page.selected]?.value, 'Dynamic - 62x160');
   assert.equal(page.pendingOversize, '160x62');
   assert.deepEqual(
-    page.rows().map((row) => row.key),
+    fieldKeys(page),
     ['theme', 'font', 'model', 'hostColors', 'hints', 'allowAutomation', 'allowSharing', 'allowSharedEditing'],
     'a size asked for by name has nothing to fit to the window',
   );
@@ -286,9 +353,9 @@ test('leaving the dynamic screen goes back to a model on its own', () => {
 
   assert.equal(page.fitsWindow(), false, 'no window was measured for it, so nothing refits to one');
 
-  page.selected = 2;
+  focus(page, 'model');
   page.handleKey(key({ key: 'ArrowLeft' }));
-  assert.equal(page.rows()[2]?.value, 'Model 5 - 27x132');
+  assert.equal(page.rows()[page.selected]?.value, 'Model 5 - 27x132');
   assert.equal(page.pendingOversize, '');
 
   page.setOversize('158x60');
@@ -300,7 +367,7 @@ test('fit to window asks for the screen the browser measured, on Enter', () => {
   page.connected = true;
   page.show();
 
-  page.selected = 3;
+  focus(page, 'fit');
   page.handleKey(key({ key: 'ArrowRight' }));
 
   assert.equal(page.pendingOversize, '158x60');
@@ -322,7 +389,7 @@ test('fitting again turns it off, and the model is the floor', () => {
   page.connected = true;
   page.show();
 
-  page.selected = 3;
+  focus(page, 'fit');
   page.handleKey(key({ key: 'ArrowRight' }));
   assert.equal(page.pendingOversize, '132x42');
 
@@ -335,14 +402,14 @@ test('the text size appears with the fit and drives what it measures', () => {
   page.connected = true;
   page.show();
 
-  page.selected = 3;
-  assert.equal(page.rows().length, 9, 'the text size is not offered while the fit is off');
+  focus(page, 'fit');
+  assert.equal(fieldKeys(page).length, 9, 'the text size is not offered while the fit is off');
 
   page.handleKey(key({ key: 'ArrowRight' }));
   assert.equal(page.pendingOversize, '166x40');
-  assert.equal(page.rows().length, 10);
-  assert.equal(page.rows()[4]?.key, 'fitSize');
-  assert.equal(page.rows()[4]?.value, '16 px');
+  assert.equal(fieldKeys(page).length, 10);
+  assert.equal(page.rows()[page.selected + 1]?.key, 'fitSize');
+  assert.equal(page.rows()[page.selected + 1]?.value, '16 px');
 
   page.handleKey(key({ key: 'ArrowDown' }));
   page.handleKey(key({ key: 'ArrowRight' }));
@@ -359,9 +426,9 @@ test('the text size stops at both ends instead of wrapping round', () => {
   page.connected = true;
   page.show();
 
-  page.selected = 3;
+  focus(page, 'fit');
   page.handleKey(key({ key: 'ArrowRight' }));
-  page.selected = 4;
+  focus(page, 'fitSize');
 
   for (let step = 0; step < 30; step++) page.handleKey(key({ key: 'ArrowLeft' }));
   assert.equal(page.fitFontSize, 8);
@@ -375,7 +442,7 @@ test('a screen bigger than b3270 can hold is trimmed to fit its buffer', () => {
   page.connected = true;
   page.show();
 
-  page.selected = 3;
+  focus(page, 'fit');
   page.handleKey(key({ key: 'ArrowRight' }));
 
   const [cols, rows] = (page.pendingOversize.split('x')).map(Number);
@@ -403,9 +470,9 @@ test('applying a screen size saves it as a choice, so another tab can ask for it
   page.connected = true;
   page.show();
 
-  page.selected = 2;
+  focus(page, 'model');
   page.handleKey(key({ key: 'ArrowRight' }));
-  page.selected = 3;
+  focus(page, 'fit');
   page.handleKey(key({ key: 'ArrowRight' }));
   page.handleKey(key({ key: 'Enter' }));
 
@@ -425,7 +492,7 @@ test('the dynamic screen and a plain model are saved as themselves', () => {
   page.connected = true;
   page.show();
 
-  page.selected = 2;
+  focus(page, 'model');
   page.handleKey(key({ key: 'ArrowLeft' }));
   assert.equal(page.pendingOversize, '160x62', 'one step back from model 2 is the dynamic screen');
   page.handleKey(key({ key: 'Enter' }));
@@ -433,7 +500,7 @@ test('the dynamic screen and a plain model are saved as themselves', () => {
 
   page.setOversize('160x62');
   page.show();
-  page.selected = 2;
+  focus(page, 'model');
   page.handleKey(key({ key: 'ArrowRight' }));
   page.handleKey(key({ key: 'Enter' }));
   assert.equal(calls.saved.at(-1)?.screenSize, 'model');
@@ -455,7 +522,7 @@ test('nothing the page draws runs off the right edge', () => {
   page.setModel(2);
   page.connected = true;
   page.show();
-  page.selected = 2;
+  focus(page, 'model');
   page.pendingModel = 5;
   page.pendingOversize = '166x40';
   page.draw();
@@ -471,16 +538,15 @@ test('nothing the page draws runs off the right edge', () => {
   }
 });
 
-test('escape leaves the screen size exactly as it was', () => {
+test('cancel leaves the screen size exactly as it was', () => {
   const { page, calls } = fixture();
   page.setModel(2);
   page.connected = true;
   page.show();
 
-  page.handleKey(key({ key: 'ArrowDown' }));
-  page.handleKey(key({ key: 'ArrowDown' }));
+  focus(page, 'model');
   page.handleKey(key({ key: 'ArrowRight' }));
-  page.handleKey(key({ key: 'Escape' }));
+  page.handleKey(key({ key: 'F12' }));
 
   assert.deepEqual(calls.models, []);
   assert.equal(page.open, false);
@@ -543,6 +609,7 @@ test('the host field is gone once connected, and the usual fields start at the t
   page.show();
 
   assert.equal(page.selected, 0);
+  page.handleKey(key({ key: 'Tab' }));
   page.handleKey(key({ key: 'ArrowRight' }));
   assert.deepEqual(calls.themes, [THEMES[1]?.name], 'field 0 is the theme, not the host, while connected');
 });

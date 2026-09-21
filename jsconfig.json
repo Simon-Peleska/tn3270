@@ -22,6 +22,8 @@
       "/keymap-page.js": ["public/keymap-page.js"],
       "/box-select.js": ["public/box-select.js"],
       "/cursor-glyph.js": ["public/cursor-glyph.js"],
+      "/panel.js": ["public/panel.js"],
+      "/menu.js": ["public/menu.js"],
       "/settings.js": ["public/settings.js"],
       "/macros.js": ["public/macros.js"],
       "/recorder.js": ["public/recorder.js"],

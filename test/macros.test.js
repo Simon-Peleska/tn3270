@@ -24,7 +24,8 @@ function fixture(files = []) {
   const calls = {
     /** @type {string[]} */ written: [],
     /** @type {import('../server/protocol.js').ClientMessage[]} */ dispatched: [],
-    /** @type {number} */ restores: 0,
+    /** @type {number} */ ends: 0,
+    /** @type {string[]} */ went: [],
     /** @type {import('../public/macro-xml.js').Macro[][]} */ saved: [],
     /** @type {{ filename: string, content: string }[]} */ exported: [],
     /** @type {{ code: string, message: string }[]} */ errors: [],
@@ -41,7 +42,8 @@ function fixture(files = []) {
       calls.unlockWaits += 1;
       return new Promise((resolve) => pendingUnlocks.push(resolve));
     },
-    restore: () => { calls.restores += 1; },
+    end: () => { calls.ends += 1; },
+    go: (id) => calls.went.push(id),
     persist: (values) => calls.saved.push(values),
     exportFile: (filename, content) => calls.exported.push({ filename, content }),
     importFiles: () => Promise.resolve(files),
@@ -50,16 +52,29 @@ function fixture(files = []) {
   return { page, calls, pendingUnlocks };
 }
 
-test('alt+m opens and closes the page, and closing asks for the screen back', () => {
+test('opening draws the panel, and F3 closes it and asks for the screen back', () => {
   const { page, calls } = fixture();
 
-  assert.equal(page.handleKey(key({ code: 'KeyM', altKey: true })), true);
+  page.show();
   assert.equal(page.open, true);
-  assert.ok(calls.written.length > 0, 'the page must have been drawn');
+  assert.ok(calls.written.length > 0, 'the panel must have been drawn');
 
-  assert.equal(page.handleKey(key({ code: 'KeyM', altKey: true })), true);
+  assert.equal(page.handleKey(key({ key: 'F3' })), true);
   assert.equal(page.open, false);
-  assert.equal(calls.restores, 1);
+  assert.equal(calls.ends, 1);
+});
+
+test('a macro is numbered, and typing its number on the command line plays it', () => {
+  const { page } = fixture();
+  const macro = { name: 'Second', steps: [{ text: 'go', action: 'Enter', args: [] }] };
+  page.macros.push({ name: 'First', steps: [] }, macro);
+  page.show();
+
+  assert.deepEqual(page.lines().map((line) => line.option), [undefined, '1', '2']);
+
+  for (const char of '2') page.handleKey(key({ key: char }));
+  page.handleKey(key({ key: 'Enter' }));
+  assert.equal(page.playing?.macro, macro);
 });
 
 test('a closed page consumes nothing', () => {
@@ -122,7 +137,7 @@ test('stopping a recording asks for a name, and enter saves it', () => {
   assert.deepEqual(calls.saved.at(-1), page.macros);
 });
 
-test('escape while naming a fresh recording discards it, not the whole page', () => {
+test('escape while naming a fresh recording discards it, not the whole panel', () => {
   const { page } = fixture();
   page.startRecording();
   page.stopRecording();
@@ -157,7 +172,8 @@ test('renaming an existing macro updates it in place', () => {
   page.macros.push({ name: 'Old', steps: [] });
   page.show();
   page.selected = 1;
-  page.handleKey(key({ key: 'r' }));
+  for (const char of 'ren') page.handleKey(key({ key: char }));
+  page.handleKey(key({ key: 'Enter' }));
   assert.deepEqual(page.naming, { kind: 'rename', index: 0 });
 
   page.handleKey(key({ key: 'Backspace' }));
@@ -185,6 +201,7 @@ test('deleting a macro removes it and persists, adjusting marks past it', () => 
   page.macros.push({ name: 'A', steps: [] }, { name: 'B', steps: [] }, { name: 'C', steps: [] });
   page.marked.add(2);
   page.show();
+  page.onCommand = false;
   page.selected = 1; // "A"
   page.handleKey(key({ key: 'Delete' }));
 
@@ -193,14 +210,16 @@ test('deleting a macro removes it and persists, adjusting marks past it', () => 
   assert.deepEqual(calls.saved.at(-1), page.macros);
 });
 
-test('space marks a macro for export without disturbing others', () => {
+test('a slash marks a macro for export without disturbing others', () => {
   const { page } = fixture();
   page.macros.push({ name: 'A', steps: [] }, { name: 'B', steps: [] });
   page.show();
+  page.onCommand = false;
   page.selected = 1;
-  page.handleKey(key({ key: ' ' }));
+  page.handleKey(key({ key: '/' }));
   assert.deepEqual([...page.marked], [0]);
-  page.handleKey(key({ key: ' ' }));
+  assert.match(page.lines()[1]?.text ?? '', /^\/ A/, 'the mark is shown against the line');
+  page.handleKey(key({ key: '/' }));
   assert.deepEqual([...page.marked], []);
 });
 
@@ -209,7 +228,8 @@ test('exporting with nothing marked exports the macro under the cursor', () => {
   page.macros.push({ name: 'Solo', steps: [{ text: 'x', action: 'Enter', args: [] }] });
   page.show();
   page.selected = 1;
-  page.handleKey(key({ key: 'e' }));
+  for (const char of 'export') page.handleKey(key({ key: char }));
+  page.handleKey(key({ key: 'Enter' }));
 
   assert.equal(calls.exported.length, 1);
   assert.equal(calls.exported[0]?.filename, 'Solo.xml');
@@ -222,7 +242,8 @@ test('exporting several marked macros produces one file with all of them', () =>
   page.marked.add(0);
   page.marked.add(1);
   page.show();
-  page.handleKey(key({ key: 'e' }));
+  for (const char of 'export') page.handleKey(key({ key: char }));
+  page.handleKey(key({ key: 'Enter' }));
 
   assert.equal(calls.exported.length, 1);
   assert.equal(calls.exported[0]?.filename, 'macros.xml');

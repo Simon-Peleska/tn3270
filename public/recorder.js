@@ -1,35 +1,25 @@
 /**
- * The recorder page: capture screens and keystrokes (password fields redacted)
+ * The recorder panel: capture screens and keystrokes (password fields redacted)
  * and export them as JSON for an s3270 script to replay.
  */
 
-import { cycle, drawListPanel } from './settings.js';
+import { Panel } from './panel.js';
 
 /** @typedef {import('../server/protocol.js').RecorderStep} RecorderStep */
 
-const LABEL_WIDTH = 26;
-const FIELD_WIDTH = 28;
-
 /**
- * @typedef {object} RecorderDeps
- * @property {(bytes: string) => void} write
- * @property {() => { cols: number, rows: number }} geometry
- * @property {() => import('./settings.js').Theme} theme
- * @property {(message: import('../server/protocol.js').ClientMessage) => void} dispatch
- * @property {() => void} restore
- * @property {(filename: string, content: string) => void} exportFile
+ * @typedef {import('./panel.js').PanelDeps & {
+ *   dispatch: (message: import('../server/protocol.js').ClientMessage) => void,
+ *   exportFile: (filename: string, content: string) => void,
+ * }} RecorderDeps
  */
 
-export class RecorderPage {
+/** @extends {Panel<RecorderDeps>} */
+export class RecorderPage extends Panel {
   /** @param {RecorderDeps} deps */
   constructor(deps) {
-    this.deps = deps;
-    /** @type {string} the Alt+key code that toggles this page */
+    super('recorder', deps);
     this.toggleKey = 'KeyR';
-    /** @type {boolean} */
-    this.open = false;
-    /** @type {number} Index into rows(). */
-    this.selected = 0;
     /** @type {boolean} */
     this.active = false;
     /** @type {{ recordedAt: string, steps: RecorderStep[] } | null} */
@@ -75,45 +65,73 @@ export class RecorderPage {
   }
 
   /**
-   * @returns {{ label: string, value: string }[]}
+   * @override
+   * @returns {import('./panel.js').PanelLine[]}
    */
-  rows() {
-    /** @type {{ label: string, value: string }[]} */
-    const rows = [];
+  lines() {
+    /** @type {import('./panel.js').PanelLine[]} */
+    const lines = [];
     if (this.active) {
       const count = this.current?.steps.length ?? 0;
-      rows.push({ label: 'Recording...', value: `${count} step${count === 1 ? '' : 's'} - Enter stops` });
+      lines.push({ option: '1', text: 'Recording', value: `${count} step${count === 1 ? '' : 's'} - Enter stops` });
     } else {
-      rows.push({ label: 'Record screen and keystrokes', value: 'Enter starts' });
+      lines.push({ option: '1', text: 'Record screen and keys', value: 'Enter starts' });
     }
     if (this.current !== null && !this.active) {
       const count = this.current.steps.length;
-      rows.push({ label: 'Export as JSON', value: `${count} step${count === 1 ? '' : 's'} - Enter exports` });
+      lines.push({ option: '2', text: 'Export as JSON', value: `${count} step${count === 1 ? '' : 's'} - Enter exports` });
     }
-    return rows;
+    return lines;
   }
 
-  /** @returns {void} */
-  toggle() {
-    if (this.open) this.close();
-    else this.show();
+  /**
+   * @override
+   * @returns {string}
+   */
+  title() {
+    return 'TN3270 Recorder';
   }
 
-  /** @returns {void} */
+  /**
+   * @override
+   * @returns {number}
+   */
+  labelWidth() {
+    return 26;
+  }
+
+  /**
+   * @override
+   * @returns {string[]}
+   */
+  notes() {
+    return [
+      'A password field is never recorded, only noted.',
+      'Commands: RECORD, STOP, EXPORT.',
+    ];
+  }
+
+  /**
+   * @override
+   * @returns {string[]}
+   */
+  keys() {
+    return ['F1=Help', 'F3=Exit', 'F4=Menu', 'F12=Cancel', 'Enter=Start/Stop'];
+  }
+
+  /**
+   * @override
+   * @returns {void}
+   */
   show() {
-    this.open = true;
+    super.show();
     this.selected = 0;
-    this.draw();
   }
 
-  /** @returns {void} */
-  close() {
-    if (!this.open) return;
-    this.open = false;
-    this.deps.restore();
-  }
-
-  /** @returns {void} */
+  /**
+   * @override
+   * @returns {void}
+   */
   activate() {
     if (this.selected === 0) {
       if (this.active) this.stop();
@@ -125,52 +143,24 @@ export class RecorderPage {
   }
 
   /**
-   * @param {KeyboardEvent} event
-   * @returns {boolean} true when the page consumed the key
+   * @override
+   * @param {string} word
+   * @returns {boolean}
    */
-  handleKey(event) {
-    if (event.altKey && event.code === this.toggleKey) {
-      this.toggle();
+  word(word) {
+    if (word === 'RECORD' || word === 'REC') {
+      if (!this.active) this.start();
       return true;
     }
-    if (!this.open) return false;
-    // Reload, devtools and the rest belong to the browser even here.
-    if (event.ctrlKey || event.metaKey) return false;
-
-    if (event.key === 'Escape') {
-      this.close();
-      return true;
-    }
-    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-      const step = event.key === 'ArrowUp' ? -1 : 1;
-      this.selected = cycle(this.selected, step, this.rows().length);
+    if (word === 'STOP') {
+      this.stop();
       this.draw();
       return true;
     }
-    if (event.key === 'Enter') {
-      this.activate();
+    if (word === 'EXPORT' || word === 'EXP') {
+      this.exportRecording();
       return true;
     }
-    // Swallow the rest: the host must not see keys aimed at this page.
-    return true;
-  }
-
-  /** @returns {void} */
-  draw() {
-    drawListPanel({
-      write: this.deps.write,
-      geometry: this.deps.geometry,
-      theme: this.deps.theme(),
-      title: 'TN3270 RECORDER',
-      fields: this.rows(),
-      selected: this.selected,
-      labelWidth: LABEL_WIDTH,
-      fieldWidth: FIELD_WIDTH,
-      heightBase: 10,
-      helpLines: [
-        'Up/Down select   Enter start/stop/export   Esc close',
-        'A password field is never recorded, only noted.',
-      ],
-    });
+    return false;
   }
 }

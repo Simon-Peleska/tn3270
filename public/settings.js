@@ -1,6 +1,6 @@
-// The settings page, drawn as VT bytes into the terminal itself rather than HTML.
+// The settings panel, drawn as VT bytes into the terminal itself rather than HTML.
 
-export const ESC = '\x1b';
+import { Panel, cycle } from './panel.js';
 
 /**
  * @typedef {object} Theme
@@ -113,132 +113,6 @@ export const FONTS = Object.freeze([
   { name: 'JetBrains Mono', family: '"JetBrains Mono", monospace' },
 ]);
 
-/**
- * @param {string} hex `#rrggbb`
- * @returns {[number, number, number]}
- */
-export function rgb(hex) {
-  return [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
-}
-
-/**
- * @param {string} from
- * @param {string} to
- * @param {number} amount 0 = from, 1 = to
- * @returns {string} `#rrggbb`
- */
-export function mix(from, to, amount) {
-  const a = rgb(from);
-  const b = rgb(to);
-  const channel = (/** @type {number} */ index) =>
-    Math.round(a[index] + (b[index] - a[index]) * amount).toString(16).padStart(2, '0');
-  return `#${channel(0)}${channel(1)}${channel(2)}`;
-}
-
-/**
- * @param {number} row 1-based
- * @param {number} col 1-based
- * @returns {string}
- */
-export function at(row, col) {
-  return `${ESC}[${row};${col}H`;
-}
-
-/**
- * ghostty-web reads 0x000000 as "not set" and falls back to grey.
- *
- * @param {Theme} theme
- * @returns {Record<string, string>}
- */
-export function terminalColors(theme) {
-  /** @type {Record<string, string>} */
-  const colors = {};
-  for (const [key, value] of Object.entries(theme.colors)) {
-    colors[key] = value.toLowerCase() === '#000000' ? '#010101' : value;
-  }
-  return colors;
-}
-
-/**
- * @param {string} fg `#rrggbb`
- * @param {string} bg `#rrggbb`
- * @param {boolean} [bold]
- * @returns {string}
- */
-export function paint(fg, bg, bold = false) {
-  const [fr, fg2, fb] = rgb(fg);
-  let [br, bg2, bb] = rgb(bg);
-  // The renderer skips a (0, 0, 0) fill, taking it for the cleared canvas.
-  if (br === 0 && bg2 === 0 && bb === 0) [br, bg2, bb] = [1, 1, 1];
-  return `${ESC}[0${bold ? ';1' : ''};38;2;${fr};${fg2};${fb};48;2;${br};${bg2};${bb}m`;
-}
-
-/**
- * @param {number} index
- * @param {number} step
- * @param {number} length
- * @returns {number}
- */
-export function cycle(index, step, length) {
-  return (index + step + length) % length;
-}
-
-const FIELD_WIDTH = 26;
-const PANEL_WIDTH = 62;
-
-/**
- * The panel macros.js and recorder.js draw; settings.js draws its own.
- *
- * @param {object} args
- * @param {(bytes: string) => void} args.write
- * @param {() => { cols: number, rows: number }} args.geometry
- * @param {Theme} args.theme
- * @param {string} args.title
- * @param {{ label: string, value: string }[]} args.fields
- * @param {number} args.selected
- * @param {number} args.labelWidth
- * @param {number} args.fieldWidth
- * @param {number} args.heightBase rows the panel needs beyond its fields
- * @param {string[]} args.helpLines
- * @returns {void}
- */
-export function drawListPanel({ write, geometry, theme, title, fields, selected, labelWidth, fieldWidth, heightBase, helpLines }) {
-  const { cols, rows } = geometry();
-  const colors = theme.colors;
-  const background = colors['background'] ?? '#000000';
-  const foreground = colors['foreground'] ?? '#00ff00';
-  const dim = mix(background, foreground, 0.55);
-  const field = colors['field'] ?? mix(background, foreground, 0.12);
-  const chosen = mix(field, foreground, 0.3);
-
-  const left = Math.max(1, Math.floor((cols - PANEL_WIDTH) / 2) + 1);
-  const top = Math.max(1, Math.floor((rows - (heightBase + fields.length * 2)) / 2) + 1);
-
-  /** @type {string[]} */
-  const out = [`${ESC}[?25l`, paint(foreground, background), `${ESC}[2J`];
-
-  out.push(at(top, left), paint(foreground, background, true), title);
-  out.push(at(top + 1, left), paint(dim, background), '='.repeat(PANEL_WIDTH));
-
-  for (let index = 0; index < fields.length; index++) {
-    const entry = fields[index];
-    const row = top + 3 + index * 2;
-    const active = index === selected;
-    out.push(at(row, left), paint(active ? foreground : dim, background, active));
-    out.push(`${active ? '>' : ' '} ${(entry?.label ?? '').slice(0, labelWidth).padEnd(labelWidth)}`);
-    out.push(paint(foreground, active ? chosen : field));
-    out.push(` ${(entry?.value ?? '').slice(0, fieldWidth - 2).padEnd(fieldWidth - 2)} `);
-  }
-
-  let helpRow = top + 3 + fields.length * 2 + 1;
-  for (const line of helpLines) {
-    out.push(at(helpRow, left), paint(dim, background), line);
-    helpRow += 1;
-  }
-
-  write(out.join(''));
-}
-
 // The size "fit to window" measures at, not the font size on screen.
 const DEFAULT_FIT_FONT_SIZE = 16;
 const MIN_FIT_FONT_SIZE = 8;
@@ -262,33 +136,38 @@ export function sizeMode(oversize) {
   return oversize === '' ? 'model' : 'fit';
 }
 
+const VALUE_WIDTH = 24;
+
 /**
- * @typedef {object} SettingsDeps
- * @property {(bytes: string) => void} write
- * @property {() => { cols: number, rows: number }} geometry
- * @property {(theme: Theme) => void} applyTheme
- * @property {(font: { name: string, family: string }) => void} applyFont
- * @property {(model: number) => void} applyModel
- * @property {(value: string) => void} applyOversize `<cols>x<rows>`, or '' for the model's own size
- * @property {(fontSize: number) => { cols: number, rows: number } | null} windowFit
- * @property {(enabled: boolean) => void} applyHostColors
- * @property {(allowView: boolean, allowEdit: boolean) => void} applySharing
- * @property {(allowed: boolean) => void} applyAutomation
- * @property {(host: string | null) => void} connect
- * @property {() => void} restore
- * @property {(settings: import('./store.js').StoredSettings) => void} persist
+ * @typedef {import('./panel.js').PanelDeps & {
+ *   applyTheme: (theme: Theme) => void,
+ *   applyFont: (font: { name: string, family: string }) => void,
+ *   applyModel: (model: number) => void,
+ *   applyOversize: (value: string) => void,
+ *   windowFit: (fontSize: number) => { cols: number, rows: number } | null,
+ *   applyHostColors: (enabled: boolean) => void,
+ *   applySharing: (allowView: boolean, allowEdit: boolean) => void,
+ *   applyAutomation: (allowed: boolean) => void,
+ *   connect: (host: string | null) => void,
+ *   persist: (settings: import('./store.js').StoredSettings) => void,
+ * }} SettingsDeps
  */
 
-export class SettingsPage {
+/**
+ * @typedef {object} SettingsRow
+ * @property {string} key
+ * @property {string} label
+ * @property {string} value
+ * @property {boolean} [toggle] a `/` field, which is how ISPF writes a yes or no
+ * @property {boolean} [gap] a heading or a spacer
+ */
+
+/** @extends {Panel<SettingsDeps>} */
+export class SettingsPage extends Panel {
   /** @param {SettingsDeps} deps */
   constructor(deps) {
-    this.deps = deps;
-    /** @type {string} the Alt+key KeyboardEvent.code that toggles this page */
-    this.toggleKey = 'Space';
-    /** @type {boolean} */
-    this.open = false;
-    /** @type {number} Index into rows(). */
-    this.selected = 0;
+    super('settings', deps);
+    this.toggleKey = 'Comma';
     /** @type {number} */
     this.themeIndex = 0;
     /** @type {number} */
@@ -345,20 +224,18 @@ export class SettingsPage {
   }
 
   /**
-   * Built fresh each time: two rows come and go, so indexes are not fixed.
+   * Built fresh each time: rows come and go, so indexes are not fixed.
    *
-   * @returns {{ key: string, label: string, value: string }[]}
+   * @returns {SettingsRow[]}
    */
   rows() {
-    /** @type {{ key: string, label: string, value: string }[]} */
+    /** @type {SettingsRow[]} */
     const rows = [];
     if (this.showsConnect()) {
       rows.push({
         key: 'host',
         label: 'Host',
-        value: this.hostLocked
-          ? '(set by the server)'
-          : this.host + (this.selected === 0 ? '_' : ''),
+        value: this.hostLocked ? '(set by the server)' : this.host,
       });
     }
     rows.push({ key: 'theme', label: 'Theme', value: this.theme().name });
@@ -380,30 +257,29 @@ export class SettingsPage {
         rows.push({ key: 'fitSize', label: 'Text size', value: `${this.fitFontSize} px` });
       }
     }
-    rows.push({ key: 'hostColors', label: 'Host colors', value: this.hostColors ? 'On' : 'Off' });
-    rows.push({ key: 'hints', label: 'Field hints (Ctrl-B)', value: this.hints ? 'On' : 'Off' });
+    rows.push({ key: '', label: '', value: '', gap: true });
+    rows.push({ key: '', label: 'Enter / to turn one on', value: '', gap: true });
+    rows.push(this.toggleRow('hostColors', 'Host colors', this.hostColors));
+    rows.push(this.toggleRow('hints', 'Field hints (Ctrl-B)', this.hints));
     // Only the controller's call: it is their screen being shared and driven.
     if (this.role === 'controller') {
-      rows.push({
-        key: 'allowAutomation',
-        label: 'Allow automation',
-        value: this.allowAutomation ? 'On' : 'Off',
-      });
-      rows.push({ key: 'allowSharing', label: 'Allow sharing', value: this.allowSharing ? 'On' : 'Off' });
+      rows.push(this.toggleRow('allowAutomation', 'Allow automation', this.allowAutomation));
+      rows.push(this.toggleRow('allowSharing', 'Allow sharing', this.allowSharing));
       if (this.allowSharing) {
-        rows.push({
-          key: 'allowSharedEditing',
-          label: 'Shared editing',
-          value: this.allowSharedEditing ? 'On' : 'Off',
-        });
+        rows.push(this.toggleRow('allowSharedEditing', 'Shared editing', this.allowSharedEditing));
       }
     }
     return rows;
   }
 
-  /** @returns {number} */
-  fieldCount() {
-    return this.rows().length;
+  /**
+   * @param {string} key
+   * @param {string} label
+   * @param {boolean} on
+   * @returns {SettingsRow}
+   */
+  toggleRow(key, label, on) {
+    return { key, label, value: on ? '/' : ' ', toggle: true };
   }
 
   /**
@@ -548,92 +424,113 @@ export class SettingsPage {
     return this.fitSize(fit, this.pendingModel);
   }
 
-  /** @returns {void} */
-  toggle() {
-    if (this.open) this.close();
-    else this.show();
-  }
-
-  /** @returns {void} */
+  /**
+   * @override
+   * @returns {void}
+   */
   show() {
-    this.open = true;
-    this.selected = 0;
     this.pendingModel = this.model;
     this.pendingOversize = this.oversize;
-    this.draw();
-  }
-
-  /** @returns {void} */
-  close() {
-    if (!this.open) return;
-    this.open = false;
-    this.deps.restore();
+    this.selected = 0;
+    super.show();
+    // A session with nowhere to connect is why this panel opened itself.
+    if (this.showsConnect()) {
+      this.onCommand = false;
+      this.draw();
+    }
   }
 
   /**
-   * @param {KeyboardEvent} event
-   * @returns {boolean} true when the page consumed the key
+   * F12 throws away what was dialled up, as it does on any ISPF panel.
+   *
+   * @override
+   * @returns {void}
    */
-  handleKey(event) {
-    if (event.altKey && event.code === this.toggleKey) {
-      this.toggle();
-      return true;
-    }
-    if (!this.open) return false;
-    // Reload, devtools and the rest belong to the browser even here.
-    if (event.ctrlKey || event.metaKey) return false;
+  cancel() {
+    this.pendingModel = this.model;
+    this.pendingOversize = this.oversize;
+    this.close();
+  }
 
-    if (event.key === 'Escape') {
-      this.close();
-      return true;
-    }
+  /**
+   * @override
+   * @param {string} text
+   * @returns {boolean}
+   */
+  insert(text) {
+    if (this.rows()[this.selected]?.key !== 'host' || this.hostLocked) return false;
+    this.host += text;
+    return true;
+  }
 
-    // A text field, not a value to cycle, so it takes its own keys first.
-    const onConnectRow = this.rows()[this.selected]?.key === 'host';
-    if (onConnectRow && !this.hostLocked) {
-      if (event.key === 'Backspace') {
-        this.host = this.host.slice(0, -1);
-        this.draw();
-        return true;
-      }
-      if (event.key.length === 1 && !event.altKey) {
-        this.host += event.key;
-        this.draw();
-        return true;
-      }
+  /**
+   * The host is a text field and the switches are `/` fields; both take their
+   * own keys before the command line gets them.
+   *
+   * @override
+   * @param {KeyboardEvent} event
+   * @returns {boolean}
+   */
+  typed(event) {
+    const row = this.rows()[this.selected];
+    if (row === undefined) return false;
+    if (row.key === 'host' && this.hostLocked) {
+      // Swallowed, not passed on: a locked host must not become a command.
+      return event.key.length === 1 || event.key === 'Backspace';
     }
-
-    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-      const step = event.key === 'ArrowUp' ? -1 : 1;
-      this.selected = cycle(this.selected, step, this.fieldCount());
+    if (row.key === 'host' && event.key === 'Backspace') {
+      this.host = this.host.slice(0, -1);
       this.draw();
       return true;
     }
-    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-      if (!onConnectRow) this.change(event.key === 'ArrowLeft' ? -1 : 1);
+    if (row.toggle === true && (event.key === '/' || event.key === ' ')) {
+      this.change(1);
+      this.draw();
       return true;
     }
-    if (event.key === 'Enter') {
-      if (onConnectRow) {
-        this.deps.connect(this.hostLocked ? null : this.host.trim());
-        return true;
-      }
-      if (this.pendingModel !== this.model) this.deps.applyModel(this.pendingModel);
-      if (this.pendingOversize !== this.oversize) this.deps.applyOversize(this.pendingOversize);
-      this.savedModel = this.pendingModel;
-      this.savedSize = sizeMode(this.pendingOversize);
-      this.save();
-      this.close();
-      return true;
-    }
-    // Swallow the rest: the host must not see keys aimed at this page.
+    if (event.key.length !== 1 || event.altKey || !this.insert(event.key)) return false;
+    this.draw();
     return true;
+  }
+
+  /**
+   * @override
+   * @returns {void}
+   */
+  activate() {
+    if (!this.onCommand && this.rows()[this.selected]?.key === 'host') {
+      this.deps.connect(this.hostLocked ? null : this.host.trim());
+      return;
+    }
+    this.apply();
+  }
+
+  /**
+   * @override
+   * @param {string} word
+   * @returns {boolean}
+   */
+  word(word) {
+    if (word !== 'APPLY' && word !== 'SAVE') return false;
+    this.apply();
+    return true;
+  }
+
+  /** @returns {void} Enter applies the panel, which is what costs the reconnection. */
+  apply() {
+    if (this.pendingModel !== this.model) this.deps.applyModel(this.pendingModel);
+    if (this.pendingOversize !== this.oversize) this.deps.applyOversize(this.pendingOversize);
+    this.savedModel = this.pendingModel;
+    this.savedSize = sizeMode(this.pendingOversize);
+    this.save();
+    this.close();
   }
 
   /**
    * Theme and font preview live; the screen size costs a reconnection, so it
    * waits for Enter.
    *
+   * @override
    * @param {number} step
    * @returns {void}
    */
@@ -685,7 +582,6 @@ export class SettingsPage {
       this.allowAutomation = !this.allowAutomation;
       this.deps.applyAutomation(this.allowAutomation);
     }
-    this.draw();
   }
 
   /**
@@ -697,59 +593,60 @@ export class SettingsPage {
     return info ? `Model ${model} - ${info.rows}x${info.columns}` : `Model ${model}`;
   }
 
-  /** @returns {void} */
-  draw() {
-    const { cols, rows } = this.deps.geometry();
-    const colors = this.theme().colors;
-    const background = colors['background'] ?? '#000000';
-    const foreground = colors['foreground'] ?? '#00ff00';
-    const dim = mix(background, foreground, 0.55);
-    const field = colors['field'] ?? mix(background, foreground, 0.12);
-    const chosen = mix(field, foreground, 0.3);
-    const warn = rgb(background)[0] > 128 ? '#a02c00' : '#ffcc00';
+  /**
+   * @override
+   * @returns {string}
+   */
+  title() {
+    return 'TN3270 Settings';
+  }
 
-    const fields = this.rows();
+  /**
+   * @override
+   * @returns {Theme}
+   */
+  panelTheme() {
+    return this.theme();
+  }
 
-    const left = Math.max(1, Math.floor((cols - PANEL_WIDTH) / 2) + 1);
-    const top = Math.max(1, Math.floor((rows - (18 + (fields.length - 4) * 2)) / 2) + 1);
+  /**
+   * @override
+   * @returns {import('./panel.js').PanelLine[]}
+   */
+  lines() {
+    return this.rows().map((row) => {
+      if (row.gap === true) return { text: row.label, gap: true };
+      return {
+        text: row.label,
+        value: row.toggle === true ? row.value : row.value.padEnd(VALUE_WIDTH),
+        cursor: row.key === 'host' ? this.host.length : 0,
+        dots: true,
+        field: true,
+      };
+    });
+  }
 
-    /** @type {string[]} */
-    const out = [`${ESC}[?25l`, paint(foreground, background), `${ESC}[2J`];
-
-    out.push(at(top, left), paint(foreground, background, true), 'TN3270 SETTINGS');
-    out.push(at(top + 1, left), paint(dim, background), '='.repeat(PANEL_WIDTH));
-
-    for (let index = 0; index < fields.length; index++) {
-      const entry = fields[index];
-      const row = top + 3 + index * 2;
-      const active = index === this.selected;
-      out.push(at(row, left), paint(active ? foreground : dim, background, active));
-      out.push(`${active ? '>' : ' '} ${(entry?.label ?? '').padEnd(14)}`);
-      out.push(paint(foreground, active ? chosen : field));
-      out.push(` ${(entry?.value ?? '').padEnd(FIELD_WIDTH - 2)} `);
-      out.push(paint(dim, background), active ? (entry?.key === 'host' ? '  Enter' : '  < >') : '');
+  /**
+   * @override
+   * @returns {string[]}
+   */
+  notes() {
+    if (this.pendingModel === this.model && this.pendingOversize === this.oversize) {
+      return ['Saved in this browser. The host names a colour; the theme decides its look.'];
     }
-
-    let row = top + 3 + fields.length * 2 + 1;
-    if (this.pendingModel !== this.model || this.pendingOversize !== this.oversize) {
-      // Two lines: autowrap is off, so a longer sentence is cut at the edge.
-      out.push(at(row, left), paint(warn, background, true));
-      out.push('! Enter applies the new screen size.');
-      out.push(at(row + 1, left), paint(warn, background));
-      out.push(this.connected
+    return [
+      'Enter applies the new screen size.',
+      this.connected
         ? '  The host connection is dropped and reopened.'
-        : '  The screen is erased.');
-      row += 2;
-    }
+        : '  The screen is erased.',
+    ];
+  }
 
-    out.push(at(row + 1, left), paint(dim, background));
-    out.push("Saved in this browser. The host names a field's colour; this");
-    out.push(at(row + 2, left));
-    out.push('theme decides what that colour actually looks like.');
-
-    out.push(at(rows, left), paint(dim, background));
-    out.push('Up/Down field   Left/Right change   Enter apply   Esc close');
-
-    this.deps.write(out.join(''));
+  /**
+   * @override
+   * @returns {string[]}
+   */
+  keys() {
+    return ['F1=Help', 'F3=Exit', 'F4=Menu', 'F12=Cancel', 'Enter=Apply', '←→=Change'];
   }
 }

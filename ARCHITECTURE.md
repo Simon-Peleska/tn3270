@@ -224,12 +224,12 @@ made configurable later without touching the transport.
 ## All UI lives inside the terminal
 
 `public/index.html` is just a `<div id="screen">` around the ghostty-web
-canvas. **Every piece of chrome — the settings page, the error banner, the
-settings button on the OIA line — is drawn as VT bytes into that same
-`Terminal`, never as native HTML/DOM/CSS.** `settings.js` explains why at its
-own top: a second focus model, a second keybinding set, and a second
-fit-to-window problem are exactly the complexity this rule avoids. One
-renderer, one input path, one thing to keep sized and focused.
+canvas. **Every piece of chrome — the panels, the error banner, the buttons on
+the OIA line — is drawn as VT bytes into that same `Terminal`, never as native
+HTML/DOM/CSS.** `settings.js` explains why at its own top: a second focus model,
+a second keybinding set, and a second fit-to-window problem are exactly the
+complexity this rule avoids. One renderer, one input path, one thing to keep
+sized and focused.
 
 The pattern (see `errorOverlayBytes()` and `settingsButtonBytes()` in
 `public/app.js`): build a string of VT escapes, wrap the cursor move in
@@ -239,6 +239,35 @@ repaint or delta. Mouse hit-testing works the same way in reverse:
 `terminal.renderer`'s public `getCanvas()` / `charWidth` / `charHeight` turn a
 click's pixel coordinates back into a `{row, col}` cell to compare against
 where the chrome was drawn.
+
+## Panels
+
+Since everything is drawn into a 3270 screen anyway, the dialogs are shaped like
+the ones a 3270 user already knows: ISPF panels. That is not decoration — it is
+where the whole interaction model comes from, and copying it is cheaper than
+inventing one. An action bar, a title, `Option ===>` / `Command ===>`, dot
+leaders, `More: - +`, F1/F3/F4/F7/F8/F12 and `=n` jumps are a design nobody has
+to be taught.
+
+`public/panel.js` owns the shape and `Panel` owns the behaviour: the command
+line, the cursor and its stops, scrolling, the PF keys, click routing, copy and
+paste. A page — `settings.js`, `macros.js`, `recorder.js`, `keymap-page.js`,
+`menu.js` — says what its `lines()` are and what picking one does, and gets all
+of that for free. Two hooks exist for the awkward 10%: `typed()` for a page's
+own editable field, and `override()` for a modal state (naming a macro, waiting
+for a key to bind) that has to take every keystroke before the generic handling.
+
+`public/app.js` is the registry: it holds the pages, the `trail` of how the
+current one was reached, the Alt-key table that opens one from the session, and
+the clipboard and click wiring that hands `Ctrl-C` / `Ctrl-V` / a mouse click to
+whichever panel is open instead of to the host. `F3` pops one level of the
+trail, `F4` unwinds to the menu, an Alt shortcut starts a fresh one. Nothing
+about navigation lives in a page.
+
+Ctrl and Meta deliberately fall through `Panel.handleKey`, which is what keeps
+reload, devtools, copy and paste working while a panel is open. `panel.js` has
+no runtime import from `settings.js` — only an erased JSDoc `import()` for the
+`Theme` type — because the pages import it, and a cycle would be a real one.
 
 ## Errors
 
@@ -321,7 +350,14 @@ server/
   protocol.js   wire typedefs and the action allow-list
   restproxy.js  forwards /3270/ to the session's own b3270 httpd
 
-public/         index.html, app.js, keymap.js, reconnect.js, fitfont.js, style.css
+public/
+  index.html    a div around the canvas, and nothing else
+  app.js        sessions, panes, the panel registry, clipboard and clicks
+  keymap.js     KeyboardEvent → 3270 action
+  panel.js      the ISPF panel frame and the Panel base class
+  menu.js       the primary option menu and the help panel
+  settings.js   macros.js  recorder.js  keymap-page.js   the panels
+  reconnect.js  fitfont.js  store.js  style.css
 test/           fakehost.js, ghostty.js, helpers.js, traces/, *.test.js
 ```
 
