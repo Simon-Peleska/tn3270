@@ -1,4 +1,5 @@
 node_modules/
+.eslintcache
 test/.tmp-config-*.jsonc
 .direnv
 log/

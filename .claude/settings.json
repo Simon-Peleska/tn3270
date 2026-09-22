@@ -1,0 +1,21 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx prettier --write .",
+            "statusMessage": "Formatting"
+          },
+          {
+            "type": "command",
+            "command": "npx eslint . --cache >&2 || exit 2",
+            "statusMessage": "Linting"
+          }
+        ]
+      }
+    ]
+  }
+}
