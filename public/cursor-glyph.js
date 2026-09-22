@@ -11,24 +11,33 @@ export function installCursorGlyph() {
     /** @type {number} */ row,
   ) {
     const { width, height, baseline } = this["metrics"];
-    const x = col * width;
-    const y = row * height;
+    // A cell edge falls between two device pixels at a fractional
+    // devicePixelRatio, and the antialiased edge lets the field under the
+    // cursor show through as a hairline. The renderer snaps its own fills the
+    // same way; see patches/ghostty-web+0.4.0.patch.
+    const ratio = this["devicePixelRatio"];
+    const snap = (/** @type {number} */ value) =>
+      Math.round(value * ratio) / ratio;
+    const x = snap(col * width);
+    const y = snap(row * height);
+    const right = snap((col + 1) * width);
+    const bottom = snap((row + 1) * height);
     const ctx = this["ctx"];
     const theme = this["theme"];
     ctx.fillStyle = theme.cursor;
 
     if (this["cursorStyle"] === "underline") {
       const thickness = Math.max(2, Math.floor(height * 0.15));
-      ctx.fillRect(x, y + height - thickness, width, thickness);
+      ctx.fillRect(x, bottom - thickness, right - x, thickness);
       return;
     }
     if (this["cursorStyle"] === "bar") {
       const thickness = Math.max(2, Math.floor(width * 0.15));
-      ctx.fillRect(x, y, thickness, height);
+      ctx.fillRect(x, y, thickness, bottom - y);
       return;
     }
 
-    ctx.fillRect(x, y, width, height);
+    ctx.fillRect(x, y, right - x, bottom - y);
 
     const buffer = this["currentBuffer"];
     const cell = buffer?.getLine(row)?.[col];

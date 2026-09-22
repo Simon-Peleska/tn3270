@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  ACTION_BAR,
   BODY_TOP,
+  ESC,
+  OPTION_LEFT,
   PANELS,
   Panel,
   ROW_COMMAND,
@@ -134,13 +135,23 @@ test("every numbered panel is reachable by its number, and nothing else is", () 
   assert.equal(panelIdForOption(""), null);
 });
 
-test("the action bar lists every panel, and its columns match what it drew", () => {
-  const bar = ACTION_BAR;
+test("every panel can be reached by typing its name, whichever one you are on", () => {
   for (const panel of PANELS) {
-    const span = bar.spans.find((entry) => entry.id === panel.id);
-    assert.ok(span !== undefined, `${panel.name} is not on the action bar`);
-    assert.equal(bar.text.slice(span.start - 1, span.end), panel.name);
+    const { page, calls } = fixture();
+    page.show();
+    for (const char of panel.name) page.handleKey(key({ key: char }));
+    page.handleKey(enterKey());
+    assert.deepEqual(calls.went, [panel.id], `${panel.name} was not reached`);
   }
+});
+
+test("a panel starts at the top with its own title: nothing is drawn above it", () => {
+  const { page, calls } = fixture();
+  page.show();
+  const title = "A Test Panel";
+  const left = Math.floor((80 - title.length) / 2) + 1;
+  const first = /\x1b\[(\d+);(\d+)H/.exec(calls.written.at(-1) ?? "");
+  assert.deepEqual(first?.slice(1), ["1", String(left)]);
 });
 
 test("a dot leader fills the label out to the width, and a long label is cut to it", () => {
@@ -293,7 +304,7 @@ test("a jump command reaches any panel, and a bad one says so", () => {
   assert.match(page.message, /7/);
 });
 
-test("a panel named on the action bar can be typed instead of its number", () => {
+test("a panel called by name can be typed instead of its number", () => {
   const { page, calls } = fixture();
   page.show();
   for (const char of "macros") page.handleKey(key({ key: char }));
@@ -336,13 +347,9 @@ test("a list longer than the body scrolls, and says which way there is more", ()
   assert.match(calls.written.at(-1) ?? "", /More: {2}\+/);
 });
 
-test("a click lands where it was aimed: the action bar, the command line, or a line", () => {
-  const { page, calls } = fixture();
+test("a click lands where it was aimed: the command line, or a line", () => {
+  const { page } = fixture();
   page.show();
-
-  const macros = ACTION_BAR.spans.find((span) => span.id === "macros");
-  page.clicked(1, macros?.start ?? 1);
-  assert.deepEqual(calls.went, ["macros"]);
 
   page.clicked(BODY_TOP + 2, 10);
   assert.equal(page.onCommand, false);
@@ -471,6 +478,35 @@ test("the primary option menu opens the panel behind each number", () => {
   menu.handleKey(enterKey());
   assert.equal(menu.open, false);
   assert.equal(calls.ends, 1);
+});
+
+test("the menu is point-and-shoot: the cursor rests on the option and lights nothing up", () => {
+  const { deps, calls } = fixture();
+  const menu = new MenuPage(deps);
+  menu.show();
+  /** @param {string} bytes */
+  const painted = (bytes) => bytes.replace(/\x1b\[\d+;\d+H\x1b\[\?25h$/, "");
+
+  menu.handleKey(key({ key: "Tab" }));
+  const onSettings = calls.written.at(-1) ?? "";
+  assert.ok(
+    onSettings.endsWith(`${ESC}[${BODY_TOP};${OPTION_LEFT + 1}H${ESC}[?25h`),
+    "the cursor sits on the option itself, as it does on a 3270 panel",
+  );
+
+  menu.handleKey(key({ key: "Tab" }));
+  const onMacros = calls.written.at(-1) ?? "";
+  assert.ok(
+    onMacros.endsWith(`${ESC}[${BODY_TOP + 1};${OPTION_LEFT + 1}H${ESC}[?25h`),
+  );
+  assert.equal(
+    painted(onMacros),
+    painted(onSettings),
+    "moving down the list changes nothing on the panel but the cursor",
+  );
+
+  menu.handleKey(enterKey());
+  assert.deepEqual(calls.went, ["macros"], "and Enter takes the one under it");
 });
 
 test("the help panel lists the keys, the commands and the shortcuts", () => {

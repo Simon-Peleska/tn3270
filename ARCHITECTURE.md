@@ -258,9 +258,9 @@ where the chrome was drawn.
 Since everything is drawn into a 3270 screen anyway, the dialogs are shaped like
 the ones a 3270 user already knows: ISPF panels. That is not decoration — it is
 where the whole interaction model comes from, and copying it is cheaper than
-inventing one. An action bar, a title, `Option ===>` / `Command ===>`, dot
-leaders, `More: - +`, F1/F3/F4/F7/F8/F12 and `=n` jumps are a design nobody has
-to be taught.
+inventing one. A title, `Option ===>` / `Command ===>`, dot leaders,
+`More: - +`, F1/F3/F4/F7/F8/F12, point-and-shoot options and `=n` jumps are a
+design nobody has to be taught.
 
 `public/panel.js` owns the shape and `Panel` owns the behaviour: the command
 line, the cursor and its stops, scrolling, the PF keys, click routing, copy and

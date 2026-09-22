@@ -43,17 +43,14 @@ export class MenuPage extends Panel {
         option: panel.option,
         text: panel.name,
         value: panel.blurb,
+        point: true,
       })),
-      { option: "X", text: "Exit", value: "Back to the session" },
-    ];
-  }
-
-  /**
-   * @override
-   * @returns {string[]} */
-  notes() {
-    return [
-      "Type an option number here, or =0 to =3 from any panel to jump straight to it.",
+      { option: "X", text: "Exit", value: "Back to the session", point: true },
+      { gap: true },
+      {
+        gap: true,
+        text: "Type an option above, or =0 to =3 from any panel to jump straight to it.",
+      },
     ];
   }
 

@@ -1,8 +1,8 @@
 /**
  * The frame every dialog is drawn in, copied from the panels TSO/ISPF puts on a
- * 3270: an action bar across the top, a title, a command line you type an option
- * into, the body, and the PF keys along the bottom. The pages own their own
- * contents; everything about the shape of a panel lives here.
+ * 3270: a title, a command line you type an option into, the body, and the PF
+ * keys along the bottom. The pages own their own contents; everything about the
+ * shape of a panel lives here.
  */
 
 /** @typedef {import('./settings.js').Theme} Theme */
@@ -10,10 +10,9 @@
 export const ESC = "\x1b";
 
 /**
- * The panels the action bar lists, in the order their numbers run. The menu has
- * no number of its own: you get back to it with F4, or by naming it. The
- * shortcut is the key Alt opens the panel with — the character it prints, as
- * `keyIdentity` reads it.
+ * Every panel, in the order their numbers run. The menu has no number of its
+ * own: you get back to it with F4, or by naming it. The shortcut is the key Alt
+ * opens the panel with — the character it prints, as `keyIdentity` reads it.
  *
  * @type {readonly { id: string, option: string, name: string, blurb: string, shortcut: string }[]}
  */
@@ -170,30 +169,12 @@ function panelColors(theme) {
 }
 
 // Column 1 is left clear the way a 3270 panel leaves room for its attribute byte.
-const OPTION_LEFT = 4;
+export const OPTION_LEFT = 4;
 export const TEXT_LEFT = 8;
-const ROW_TITLE = 3;
-export const ROW_COMMAND = 4;
-const ROW_MESSAGE = 5;
-export const BODY_TOP = 7;
-
-/**
- * The same for every panel and every paint, so it is built once.
- *
- * @type {{ text: string, spans: { id: string, name: string, start: number, end: number }[] }} 1-based columns
- */
-export const ACTION_BAR = (() => {
-  let text = " ";
-  /** @type {{ id: string, name: string, start: number, end: number }[]} */
-  const spans = [];
-  for (const panel of PANELS) {
-    const start = text.length + 1;
-    text += panel.name;
-    spans.push({ id: panel.id, name: panel.name, start, end: text.length });
-    text += "  ";
-  }
-  return { text, spans };
-})();
+const ROW_TITLE = 1;
+export const ROW_COMMAND = 2;
+const ROW_MESSAGE = 3;
+export const BODY_TOP = 5;
 
 /**
  * How many body lines a panel of this height holds.
@@ -226,6 +207,9 @@ export function dotted(label, width) {
  * @property {boolean} [dots] dot leaders between text and value, as a form panel has
  * @property {boolean} [field] draw the value as a typeable field rather than plain text
  * @property {boolean} [gap] a heading or a spacer: the cursor steps over it
+ * @property {boolean} [point] point-and-shoot, as ISPF has it: the line is plain
+ *   text the cursor can be put on, so the cursor sits on its option and the line
+ *   itself is never lit
  * @property {number} [cursor] where in the value field the cursor belongs
  * @property {boolean} [selected] the line the cursor sits on
  */
@@ -235,7 +219,6 @@ export function dotted(label, width) {
  * @property {(bytes: string) => void} write
  * @property {() => { cols: number, rows: number }} geometry
  * @property {Theme} theme
- * @property {string} panel the id of the panel being drawn
  * @property {string} title
  * @property {string} [prompt] `Option ===> ` on a menu, `Command ===> ` elsewhere
  * @property {string} command what has been typed on the command line
@@ -277,13 +260,6 @@ function drawPanel(view) {
     out.push(at(row, col), style, text.slice(0, cols - col + 1));
   };
 
-  place(1, 1, paint(dim, background), ACTION_BAR.text);
-  for (const span of ACTION_BAR.spans) {
-    if (span.id === view.panel)
-      place(1, span.start, paint(background, foreground, true), span.name);
-  }
-  place(2, 1, paint(dim, background), "─".repeat(cols));
-
   const title = view.title.slice(0, cols - 4);
   place(
     ROW_TITLE,
@@ -323,11 +299,8 @@ function drawPanel(view) {
   view.body.forEach((line, index) => {
     const bodyRow = BODY_TOP + index;
     if (bodyRow >= rows) return;
-    const style = paint(
-      line.selected === true ? foreground : dim,
-      background,
-      line.selected === true,
-    );
+    const lit = line.selected === true && line.point !== true;
+    const style = paint(lit ? foreground : dim, background, lit);
     if (line.option !== undefined)
       place(
         bodyRow,
@@ -350,14 +323,14 @@ function drawPanel(view) {
       place(
         bodyRow,
         valueLeft,
-        paint(foreground, line.selected === true ? chosen : field),
+        paint(foreground, lit ? chosen : field),
         ` ${value} `,
       );
     } else {
       place(
         bodyRow,
         valueLeft,
-        paint(line.selected === true ? foreground : dim, background),
+        paint(lit ? foreground : dim, background),
         value,
       );
     }
@@ -368,13 +341,16 @@ function drawPanel(view) {
   // The cursor is the panel's, and it has to be put back after the paint or it
   // sits wherever the last write left it.
   const onIndex = view.body.findIndex((line) => line.selected === true);
+  const onLine = view.body[onIndex];
   const cursorRow = view.onCommand ? ROW_COMMAND : BODY_TOP + onIndex;
   const cursorCol = view.onCommand
     ? Math.min(
         cols,
         commandLeft + Math.min(view.command.length, commandWidth - 1),
       )
-    : TEXT_LEFT + labelWidth + 2 + (view.body[onIndex]?.cursor ?? 0);
+    : onLine?.point === true
+      ? OPTION_LEFT + 1
+      : TEXT_LEFT + labelWidth + 2 + (onLine?.cursor ?? 0);
   out.push(
     at(
       Math.max(1, Math.min(rows, cursorRow)),
@@ -745,7 +721,7 @@ export class Panel {
         this.say(`No line is numbered ${parsed.option}`);
       return;
     }
-    // A word this panel knows, a panel named in the action bar, or nothing.
+    // A word this panel knows, a panel called by name, or nothing.
     if (this.word(parsed.word)) return;
     const named = PANELS.find(
       (panel) => panel.name.toUpperCase() === parsed.word,
@@ -840,17 +816,10 @@ export class Panel {
 
   /**
    * @param {number} row 1-based terminal row
-   * @param {number} col 1-based terminal column
+   * @param {number} _col 1-based terminal column
    * @returns {void} where a click in the panel puts the cursor
    */
-  clicked(row, col) {
-    if (row === 1) {
-      const hit = ACTION_BAR.spans.find(
-        (span) => col >= span.start && col <= span.end,
-      );
-      if (hit !== undefined) this.deps.go(hit.id);
-      return;
-    }
+  clicked(row, _col) {
     if (row === ROW_COMMAND) {
       this.onCommand = true;
       this.draw();
@@ -888,7 +857,6 @@ export class Panel {
       write: this.deps.write,
       geometry: this.deps.geometry,
       theme: this.panelTheme(),
-      panel: this.id,
       title: this.title(),
       prompt: this.prompt(),
       command: this.command,

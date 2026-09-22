@@ -1,5 +1,5 @@
 diff --git a/node_modules/ghostty-web/dist/ghostty-web.js b/node_modules/ghostty-web/dist/ghostty-web.js
-index a4ca427..c92f287 100644
+index a4ca427..322152e 100644
 --- a/node_modules/ghostty-web/dist/ghostty-web.js
 +++ b/node_modules/ghostty-web/dist/ghostty-web.js
 @@ -1363,7 +1363,7 @@ class $ {
@@ -11,7 +11,54 @@ index a4ca427..c92f287 100644
      return { width: E, height: D, baseline: i };
    }
    /**
-@@ -1945,16 +1945,14 @@ const L = class Y {
+@@ -1478,6 +1478,20 @@ class $ {
+     }
+     g === 0 && I.visible && this.cursorVisible && this.renderCursor(I.x, I.y), E && C > 0 && this.renderScrollbar(g, i, D.rows, C), this.lastCursorPosition = { x: I.x, y: I.y }, A.clearDirty();
+   }
++  /**
++   * A cell edge falls between two device pixels whenever devicePixelRatio is
++   * fractional (1.4 on a 140% display), and the antialiased edges of two
++   * neighbours do not add up to one opaque pixel: the background shows through
++   * as a hairline seam across anything larger than a cell. Snapping every fill
++   * to the device pixel grid gives neighbours the exact same edge.
++   */
++  snapToDevicePixels(A) {
++    return Math.round(A * this.devicePixelRatio) / this.devicePixelRatio;
++  }
++  fillCells(A, B, g, E) {
++    const C = this.snapToDevicePixels(A * this.metrics.width), I = this.snapToDevicePixels(B * this.metrics.height), D = this.snapToDevicePixels((A + g) * this.metrics.width), i = this.snapToDevicePixels((B + E) * this.metrics.height);
++    this.ctx.fillRect(C, I, D - C, i - I);
++  }
+   /**
+    * Render a single line using two-pass approach:
+    * 1. First pass: Draw all cell backgrounds
+@@ -1490,8 +1504,7 @@ class $ {
+    * cover any left-extending portions of graphemes from cell N-1.
+    */
+   renderLine(A, B, g) {
+-    const E = B * this.metrics.height;
+-    this.ctx.fillStyle = this.theme.background, this.ctx.fillRect(0, E, g * this.metrics.width, this.metrics.height);
++    this.ctx.fillStyle = this.theme.background, this.fillCells(0, B, g, 1);
+     for (let C = 0; C < A.length; C++) {
+       const I = A[C];
+       I.width !== 0 && this.renderCellBackground(I, C, B);
+@@ -1507,13 +1520,12 @@ class $ {
+    * complex glyphs (like Devanagari) that extend outside their cell bounds.
+    */
+   renderCellBackground(A, B, g) {
+-    const E = B * this.metrics.width, C = g * this.metrics.height, I = this.metrics.width * A.width;
+     if (this.isInSelection(B, g)) {
+-      this.ctx.fillStyle = this.theme.selectionBackground, this.ctx.fillRect(E, C, I, this.metrics.height);
++      this.ctx.fillStyle = this.theme.selectionBackground, this.fillCells(B, g, A.width, 1);
+       return;
+     }
+     let i = A.bg_r, w = A.bg_g, s = A.bg_b;
+-    A.flags & e.INVERSE && (i = A.fg_r, w = A.fg_g, s = A.fg_b), i === 0 && w === 0 && s === 0 || (this.ctx.fillStyle = this.rgbToCSS(i, w, s), this.ctx.fillRect(E, C, I, this.metrics.height));
++    A.flags & e.INVERSE && (i = A.fg_r, w = A.fg_g, s = A.fg_b), i === 0 && w === 0 && s === 0 || (this.ctx.fillStyle = this.rgbToCSS(i, w, s), this.fillCells(B, g, A.width, 1));
+   }
+   /**
+    * Render a cell's text and decorations (Pass 2 of two-pass rendering)
+@@ -1945,16 +1957,14 @@ const L = class Y {
      }), this.boundMouseUpHandler = (B) => {
        if (this.isSelecting) {
          this.isSelecting = !1, this.stopAutoScroll();

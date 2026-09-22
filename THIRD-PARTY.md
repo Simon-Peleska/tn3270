@@ -13,8 +13,9 @@ for the recorded host traces taken from x3270's test suite.
 
 The terminal renderer, served to the browser out of `node_modules` at
 `/vendor/`. It is patched in place by `patches/ghostty-web+0.4.0.patch`, which
-changes one font-measurement call; the licence below covers the modified copy
-as well.
+fixes a font-measurement call, stops a selection from taking over the
+clipboard, and snaps every cell fill to the device pixel grid; the licence
+below covers the modified copy as well.
 
 <https://www.npmjs.com/package/ghostty-web>
 

@@ -152,3 +152,17 @@ shifts a pure black background by the same one bit.
 The input field in that trace is nondisplay. A `String` action there advances the
 cursor and produces `"rows":[]` — that is correct, not a dropped update. Assert
 on the cursor, not on visible text.
+
+## Hairline seams across coloured areas at a fractional `devicePixelRatio`
+
+At 140% scaling `devicePixelRatio` is 1.4, so a cell edge at `col * width` lands
+between two device pixels. The canvas antialiases both neighbours, and two half-
+covered pixels do not add up to one opaque one: the background shows through as
+a one-pixel seam wherever the colour spans more than a cell — a status bar, a
+field, a reverse-video block. `Math.round`-ing every fill's edges to the device
+pixel grid gives neighbouring cells the exact same boundary and the seams go.
+Done in `patches/ghostty-web+0.4.0.patch` (`snapToDevicePixels`/`fillCells`, used
+by `renderLine` and `renderCellBackground`) and, because this app replaces that
+method outright, again in `public/cursor-glyph.js`. It is invisible at dpr 1 or
+2, so test it by setting `renderer.devicePixelRatio` by hand — and pick a cell
+size that is actually fractional once multiplied, or the bug hides.

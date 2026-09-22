@@ -149,11 +149,9 @@ a time, over the session it belongs to, and leaving it repaints the screen
 underneath.
 
 ```
- Menu  Settings  Macros  Recorder  Keys  Help
-────────────────────────────────────────────────────────────────────────────────
                            TN3270 Primary Option Menu    No panel is numbered 7
  Option ===> ________________________________________________________
- Type an option number here, or =0 to =3 from any panel to jump straight to it.
+
 
     0  Settings     Colours, font, screen size and sharing
     1  Macros       Record, play back and trade keystroke macros
@@ -162,11 +160,17 @@ underneath.
     H  Help         The keys and commands panels answer to
     X  Exit         Back to the session
 
+    Type an option above, or =0 to =3 from any panel to jump straight to it.
+
  F1=Help  F3=Exit  F12=Cancel
 ```
 
-- The **action bar** on row 1 names every panel and is on every panel, with the
-  one you are on highlighted. Clicking a name opens it.
+- The **title** has row 1 to itself: there is no action bar, and no chrome of any
+  kind above the panel.
+- The menu's options are **point-and-shoot** fields, as ISPF's are: nothing is
+  highlighted, and the cursor itself rests on the option number it would run.
+  Everywhere else the line the cursor is on is lit, because those lines are
+  values you are about to change.
 - The **command line** is `Option ===>` on the menu and `Command ===>` on the
   rest. `More: - +` sits at its right end when the body scrolls that way.
 - A short **message** — a refused command, a bad option — appears against the
@@ -190,22 +194,26 @@ underneath.
 | `H`    | Help                                |
 | `X`    | Exit the panel, back to the session |
 
-**Keys**, all of them ISPF's:
+**Keys**, all of them ISPF's. A panel has no keyboard of its own: it answers to
+the 3270 commands of §5, so a key means the same thing in a panel as it does on
+the screen behind it, and rebinding one rebinds it in both places. The keys
+named here are the commands' defaults.
 
-| Key                        | What it does                                                                   |
-| -------------------------- | ------------------------------------------------------------------------------ |
-| Enter                      | Runs the command line, or picks the line the cursor is on when it is empty     |
-| F1                         | Help                                                                           |
-| F3, Esc                    | Exit: back where the panel was opened from                                     |
-| F4                         | Menu: the primary option menu                                                  |
-| F7 / F8, PageUp / PageDown | Backward and forward a bodyful at a time                                       |
-| F12                        | Cancel: leave without applying what was typed                                  |
-| Tab, Up / Down             | The cursor between the command line and the body lines, stepping over headings |
-| Left / Right               | Change the value the cursor is on                                              |
+| Command          | Key          | What it does                                                                   |
+| ---------------- | ------------ | ------------------------------------------------------------------------------ |
+| `Enter`          | Right Ctrl   | Runs the command line, or picks the line the cursor is on when it is empty     |
+| `PF1`            | F1           | Help                                                                           |
+| `PF3`, `Attn`    | F3, Esc      | Exit: back where the panel was opened from                                     |
+| `PF4`            | F4           | Menu: the primary option menu                                                  |
+| `PF7` / `PF8`    | F7 / F8      | Backward and forward a bodyful at a time                                       |
+| `PF12`           | F12          | Cancel: leave without applying what was typed                                  |
+| `Newline`, `Tab` | Enter, Tab   | The cursor between the command line and the body lines, stepping over headings |
+| `Up` / `Down`    | Up / Down    | The same, a line at a time                                                     |
+| `Left` / `Right` | Left / Right | Change the value the cursor is on                                              |
 
 **Command line words**: `=n` to jump, a bare number to pick a line on this
 panel, `END`/`EXIT`/`X`, `CANCEL`/`CAN`, `RETURN`/`RET`/`MENU`, `HELP`/`?`, the
-name of any panel on the action bar, and the words a panel adds of its own —
+name of any panel, and the words a panel adds of its own —
 `APPLY`, `RENAME`, `DELETE`, `EXPORT`, `IMPORT`, `MARK`, `RECORD`, `STOP`,
 `RESET`, `DEFAULTS`. A word that is none of these is answered on the panel.
 
@@ -215,7 +223,8 @@ closes it again. Ctrl and Meta are left to the browser while a panel is open, so
 **Ctrl-C and Ctrl-V work in a panel as they do on the screen**: a copy with
 nothing selected takes the command line or the field the cursor is on, and a
 paste puts the clipboard's first line into whichever of the two the cursor is
-on. Clicks land the same way — the action bar, the command line, or a body line.
+on. A click lands the cursor where it was aimed, on the command line or on a
+body line.
 
 ## 5. Keyboard
 
