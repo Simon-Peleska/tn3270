@@ -269,9 +269,14 @@ test("a printable key is text and Alt is otherwise left to the page", () => {
     kind: "text",
     value: "x",
   });
-  // Alt+Space opens the settings page, and nothing binds the space bar.
-  assert.equal(
+  // Opening a panel is a command like any other, so the keymap claims it.
+  assert.deepEqual(
     mapKey(key({ key: " ", code: "Space", altKey: true }), lookup),
+    { kind: "client", command: "Menu" },
+  );
+  // An Alt combo nothing binds still belongs to the browser.
+  assert.equal(
+    mapKey(key({ key: "x", code: "KeyX", altKey: true }), lookup),
     null,
   );
 });

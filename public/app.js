@@ -1,5 +1,5 @@
 import { init, Terminal } from "/vendor/dist/ghostty-web.js";
-import { commandForEvent, keyIdentity, mapKey } from "/keymap.js";
+import { PANEL_COMMANDS, commandForEvent, mapKey } from "/keymap.js";
 import { ESC, paint, terminalColors } from "/panel.js";
 import { HelpPage, MenuPage } from "/menu.js";
 import { SettingsPage, modeOversize } from "/settings.js";
@@ -1247,17 +1247,15 @@ window.addEventListener(
       else if (decision.action === "hint") jumpToHint(decision.letter);
       return;
     }
-    if (event.altKey && !event.ctrlKey && !event.metaKey) {
-      const pressed = keyIdentity(event);
-      const wanted = panels.find(
-        (page) => page.toggleKey !== "" && pressed === page.toggleKey,
-      );
-      if (wanted !== undefined) {
-        event.preventDefault();
-        event.stopPropagation();
-        startPanel(wanted.id);
-        return;
-      }
+    // A panel command opens its panel from anywhere, including from another
+    // panel, so it is claimed before the open panel gets to read the key.
+    const command = commandForEvent(event, keymap.lookup());
+    const wanted = command === null ? undefined : PANEL_COMMANDS[command];
+    if (wanted !== undefined) {
+      event.preventDefault();
+      event.stopPropagation();
+      startPanel(wanted);
+      return;
     }
 
     // Ctrl and Meta fall through on purpose: copy, paste and reload work in a panel.
@@ -1302,6 +1300,9 @@ screenEl.addEventListener(
       else send({ type: "copyField" });
       return;
     }
+    // The panel commands are the other client commands, and the window handler
+    // claims those before this one ever runs.
+    if (mapped.command !== "Paste") return;
     // Ctrl+V arrives as a paste event instead; every other binding must read the
     // clipboard, which Chrome asks permission for once.
     navigator.clipboard
@@ -1368,7 +1369,7 @@ function paneClicked(slot, event) {
 
   const panel = openPanel();
   if (panel !== null) {
-    if (slot === activeSession()) panel.clicked(row + 1, col + 1);
+    if (slot === activeSession()) panel.clicked(row + 1);
     return;
   }
 

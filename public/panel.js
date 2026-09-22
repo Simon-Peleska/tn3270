@@ -11,10 +11,11 @@ export const ESC = "\x1b";
 
 /**
  * Every panel, in the order their numbers run. The menu has no number of its
- * own: you get back to it with F4, or by naming it. The shortcut is the key Alt
- * opens the panel with — the character it prints, as `keyIdentity` reads it.
+ * own: you get back to it with F4, or by naming it. The command is the keymap
+ * command that opens the panel from the session, '' for a panel that is only
+ * reached from another one.
  *
- * @type {readonly { id: string, option: string, name: string, blurb: string, shortcut: string }[]}
+ * @type {readonly { id: string, option: string, name: string, blurb: string, command: string }[]}
  */
 export const PANELS = Object.freeze([
   {
@@ -22,42 +23,42 @@ export const PANELS = Object.freeze([
     option: "",
     name: "Menu",
     blurb: "The panel every other one is reached from",
-    shortcut: " ",
+    command: "Menu",
   },
   {
     id: "settings",
     option: "0",
     name: "Settings",
     blurb: "Colours, font, screen size and sharing",
-    shortcut: ",",
+    command: "Settings",
   },
   {
     id: "macros",
     option: "1",
     name: "Macros",
     blurb: "Record, play back and trade keystroke macros",
-    shortcut: "M",
+    command: "Macros",
   },
   {
     id: "recorder",
     option: "2",
     name: "Recorder",
     blurb: "Capture screens and keys as a script",
-    shortcut: "R",
+    command: "Recorder",
   },
   {
     id: "keymap",
     option: "3",
     name: "Keys",
     blurb: "What each key and key combination does",
-    shortcut: "K",
+    command: "Keys",
   },
   {
     id: "help",
     option: "H",
     name: "Help",
     blurb: "The keys and commands panels answer to",
-    shortcut: "",
+    command: "",
   },
 ]);
 
@@ -454,14 +455,32 @@ export function parseCommand(input) {
  * unbound command has no key to name, so it is left off.
  *
  * @param {PanelDeps} deps
- * @param {readonly [string, string][]} entries command id, and what it does here
+ * @param {string | readonly string[]} commands the ids doing one job here
+ * @returns {string} their keys, or '' if the user has bound none of them
+ */
+export function keyNames(deps, commands) {
+  const ids = typeof commands === "string" ? [commands] : commands;
+  return ids
+    .map((commandId) => deps.keyName(commandId))
+    .filter((name) => name !== "")
+    .join(" / ");
+}
+
+/**
+ * @param {PanelDeps} deps
+ * @param {readonly [string | readonly string[], string][]} entries the command
+ *   ids doing one job, and what that job is here
  * @returns {string[]}
  */
 export function keyLegend(deps, entries) {
-  return entries
-    .map(([commandId, label]) => [deps.keyName(commandId), label])
-    .filter(([name]) => name !== "")
-    .map(([name, label]) => `${name}=${label}`);
+  /** @type {string[]} */
+  const legend = [];
+  for (const [commands, label] of entries) {
+    const names = keyNames(deps, commands);
+    // An unbound command has no key to name, so it is left off the legend.
+    if (names !== "") legend.push(`${names}=${label}`);
+  }
+  return legend;
 }
 
 /**
@@ -478,8 +497,6 @@ export class Panel {
   constructor(id, deps) {
     this.id = id;
     this.deps = deps;
-    /** @type {string} the Alt+key code that opens this panel, '' for none */
-    this.toggleKey = PANELS.find((panel) => panel.id === id)?.shortcut ?? "";
     /** @type {boolean} */
     this.open = false;
     /** @type {string} what has been typed on the command line */
@@ -816,10 +833,9 @@ export class Panel {
 
   /**
    * @param {number} row 1-based terminal row
-   * @param {number} _col 1-based terminal column
    * @returns {void} where a click in the panel puts the cursor
    */
-  clicked(row, _col) {
+  clicked(row) {
     if (row === ROW_COMMAND) {
       this.onCommand = true;
       this.draw();

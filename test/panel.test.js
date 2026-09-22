@@ -18,13 +18,8 @@ import { SettingsPage, THEMES } from "../public/settings.js";
 import { MacrosPage } from "../public/macros.js";
 import { RecorderPage } from "../public/recorder.js";
 import { KeymapPage } from "../public/keymap-page.js";
-import {
-  DEFAULT_BINDINGS,
-  buildLookup,
-  commandForEvent,
-  comboLabel,
-} from "../public/keymap.js";
-import { key, enterKey, defaultKeymapDeps } from "./keyevent.js";
+import { DEFAULT_BINDINGS } from "../public/keymap.js";
+import { key, enterKey, defaultKeymapDeps, keymapDeps } from "./keyevent.js";
 
 /** @extends {Panel<import('../public/panel.js').PanelDeps>} */
 class ListPanel extends Panel {
@@ -237,15 +232,7 @@ test("a panel takes its keys from the keymap, legend and all", () => {
     // One keystroke, one command: the keys panel takes F9 off PF9 to give it away.
     PF9: [],
   };
-  const lookup = buildLookup(bindings);
-  const page = new ListPanel({
-    ...deps,
-    keyCommand: (event) => commandForEvent(event, lookup),
-    keyName: (commandId) => {
-      const first = bindings[commandId]?.[0];
-      return first === undefined ? "" : comboLabel(first);
-    },
-  });
+  const page = new ListPanel({ ...deps, ...keymapDeps(bindings) });
   page.show();
 
   assert.ok(
@@ -351,11 +338,11 @@ test("a click lands where it was aimed: the command line, or a line", () => {
   const { page } = fixture();
   page.show();
 
-  page.clicked(BODY_TOP + 2, 10);
+  page.clicked(BODY_TOP + 2);
   assert.equal(page.onCommand, false);
   assert.equal(page.selected, 2);
 
-  page.clicked(ROW_COMMAND, 20);
+  page.clicked(ROW_COMMAND);
   assert.equal(page.onCommand, true);
 });
 
@@ -517,5 +504,22 @@ test("the help panel lists the keys, the commands and the shortcuts", () => {
     .join("\n");
   assert.match(text, /F3/);
   assert.match(text, /=0 to =3/);
-  assert.match(text, /Alt-Space/);
+  assert.match(text, /Alt\+Space/);
+});
+
+test("rebinding the key that opens a panel renames it in the help", () => {
+  const { deps } = fixture();
+  const help = new HelpPage({
+    ...deps,
+    ...keymapDeps({
+      ...DEFAULT_BINDINGS,
+      Macros: [{ key: "F9", shift: false, ctrl: true, alt: false }],
+    }),
+  });
+  const text = help
+    .lines()
+    .map((line) => `${line.text ?? ""} ${line.value ?? ""}`)
+    .join("\n");
+  assert.match(text, /Ctrl\+F9 +Record, play back/);
+  assert.doesNotMatch(text, /Alt\+M/, "the old key is not still advertised");
 });

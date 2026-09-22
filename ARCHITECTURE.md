@@ -271,11 +271,13 @@ own editable field, and `override()` for a modal state (naming a macro, waiting
 for a key to bind) that has to take every keystroke before the generic handling.
 
 `public/app.js` is the registry: it holds the pages, the `trail` of how the
-current one was reached, the Alt-key table that opens one from the session, and
-the clipboard and click wiring that hands `Ctrl-C` / `Ctrl-V` / a mouse click to
-whichever panel is open instead of to the host. `F3` pops one level of the
-trail, `F4` unwinds to the menu, an Alt shortcut starts a fresh one. Nothing
-about navigation lives in a page.
+current one was reached, and the clipboard and click wiring that hands `Ctrl-C`
+/ `Ctrl-V` / a mouse click to whichever panel is open instead of to the host.
+`F3` pops one level of the trail, `F4` unwinds to the menu, a panel command
+starts a fresh one. Opening a panel is a keymap command like any other
+(`PANEL_COMMANDS` in `public/keymap.js`), claimed in the window's capture
+handler so it works from inside another panel as well as from the session.
+Nothing about navigation lives in a page.
 
 Ctrl and Meta deliberately fall through `Panel.handleKey`, which is what keeps
 reload, devtools, copy and paste working while a panel is open. `panel.js` has

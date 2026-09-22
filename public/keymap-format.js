@@ -6,55 +6,24 @@
  * @typedef {import('./keymap.js').Combo} Combo
  */
 
-import { COMMANDS } from "./keymap.js";
+import { COMMANDS, KEY_LABELS, keyLabel, normalizeKey } from "./keymap.js";
 import { actionToKeyword, keywordToAction } from "./macro-xml.js";
 
 /**
- * Only keys with no character of their own need a name; every other key writes
- * itself, so `C-?=redo` means the key that prints `?` wherever it sits.
+ * The file names a key exactly as the Keys panel does, so what a user reads
+ * there is what they can type here. Only keys with no character of their own
+ * need a name; every other key writes itself, so `C-?=redo` means the key that
+ * prints `?` wherever it sits. The inverse is the one direction `keymap.js` has
+ * no use for.
  *
  * @type {Readonly<Record<string, string>>}
  */
-const CODE_TO_KEY_NAME = Object.freeze({
-  " ": "Space",
-  Escape: "Esc",
-  CapsLock: "CapsLock",
-  Pause: "Pause",
-  Insert: "Insert",
-  Home: "Home",
-  End: "End",
-  PageUp: "PageUp",
-  PageDown: "PageDown",
-  Enter: "Enter",
-  Tab: "Tab",
-  Backspace: "Backspace",
-  Delete: "Delete",
-  ArrowUp: "Up",
-  ArrowDown: "Down",
-  ArrowLeft: "Left",
-  ArrowRight: "Right",
-  ControlLeft: "LCtrl",
-  ControlRight: "RCtrl",
-  ShiftLeft: "LShift",
-  ShiftRight: "RShift",
-  AltLeft: "LAlt",
-  AltRight: "RAlt",
-});
-
-/** @type {Readonly<Record<string, string>>} */
-const KEY_NAME_TO_CODE = Object.freeze(
-  Object.fromEntries(
-    Object.entries(CODE_TO_KEY_NAME).map(([code, name]) => [name, code]),
+const KEY_NAME_TO_CODE = Object.freeze({
+  Space: " ",
+  ...Object.fromEntries(
+    Object.entries(KEY_LABELS).map(([code, name]) => [name, code]),
   ),
-);
-
-/**
- * @param {string} key a combo's key
- * @returns {string}
- */
-function keyToName(key) {
-  return CODE_TO_KEY_NAME[key] ?? key;
-}
+});
 
 /**
  * @param {string} name
@@ -64,8 +33,7 @@ function nameToKey(name) {
   const known = KEY_NAME_TO_CODE[name];
   if (known !== undefined) return known;
   // A letter written in either case names the same key.
-  const upper = name.toUpperCase();
-  return [...name].length === 1 && [...upper].length === 1 ? upper : name;
+  return [...name].length === 1 ? normalizeKey(name) : name;
 }
 
 /**
@@ -74,7 +42,7 @@ function nameToKey(name) {
  */
 function comboToKey(combo) {
   const mods = `${combo.ctrl ? "C-" : ""}${combo.shift ? "S-" : ""}${combo.alt ? "A-" : ""}`;
-  return mods + keyToName(combo.key);
+  return mods + keyLabel(combo.key);
 }
 
 /**
@@ -102,14 +70,40 @@ function keyToCombo(text) {
 }
 
 /**
+ * Commands the browser answers itself, so `macro-xml.js` has no host action to
+ * name them by. The keyword is what a user writes in the file.
+ *
+ * @type {Readonly<Record<string, string>>}
+ */
+const OWN_KEYWORDS = Object.freeze({
+  Copy: "copy",
+  Paste: "paste",
+  Undo: "undo",
+  Redo: "redo",
+  Menu: "menu",
+  Settings: "settings",
+  Macros: "macros",
+  Recorder: "recorder",
+  Keys: "keys",
+});
+
+/** @type {Readonly<Record<string, string>>} */
+const OWN_COMMANDS = Object.freeze(
+  Object.fromEntries(
+    Object.entries(OWN_KEYWORDS).map(([command, keyword]) => [
+      keyword,
+      command,
+    ]),
+  ),
+);
+
+/**
  * @param {string} commandId
  * @returns {string}
  */
 function commandToKeyword(commandId) {
-  if (commandId === "Copy") return "copy";
-  if (commandId === "Paste") return "paste";
-  if (commandId === "Undo") return "undo";
-  if (commandId === "Redo") return "redo";
+  const own = OWN_KEYWORDS[commandId];
+  if (own !== undefined) return own;
   const pf = /^PF(\d+)$/.exec(commandId);
   if (pf) return /** @type {string} */ (actionToKeyword("PF", [pf[1] ?? "1"]));
   const pa = /^PA(\d+)$/.exec(commandId);
@@ -122,10 +116,8 @@ function commandToKeyword(commandId) {
  * @returns {string | null} null when nothing recognises it
  */
 function keywordToCommand(keyword) {
-  if (keyword === "copy") return "Copy";
-  if (keyword === "paste") return "Paste";
-  if (keyword === "undo") return "Undo";
-  if (keyword === "redo") return "Redo";
+  const own = OWN_COMMANDS[keyword];
+  if (own !== undefined) return own;
   const mapped = keywordToAction(keyword);
   if (mapped === null) return null;
   if (mapped.action === "PF") return `PF${mapped.args[0] ?? "1"}`;

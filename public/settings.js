@@ -1081,15 +1081,13 @@ export class SettingsPage extends Panel {
    * @returns {string[]}
    */
   keys() {
-    return [
-      ...keyLegend(this.deps, [
-        ["PF1", "Help"],
-        ["PF3", "Exit"],
-        ["PF4", "Menu"],
-        ["PF12", "Cancel"],
-        ["Enter", "Apply"],
-      ]),
-      "←→=Change",
-    ];
+    return keyLegend(this.deps, [
+      ["PF1", "Help"],
+      ["PF3", "Exit"],
+      ["PF4", "Menu"],
+      ["PF12", "Cancel"],
+      ["Enter", "Apply"],
+      [["Left", "Right"], "Change"],
+    ]);
   }
 }

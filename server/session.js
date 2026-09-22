@@ -468,11 +468,10 @@ export class Session {
    * in the middle of it were never anyone's.
    *
    * @param {{ action: string, args?: string[] }[]} actions
-   * @returns {string} the r-tag b3270 will answer with
+   * @returns {void}
    */
   runEdit(actions) {
     this.historyTag = this.b3270.runActions(actions);
-    return this.historyTag;
   }
 
   /**

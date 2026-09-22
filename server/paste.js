@@ -45,20 +45,19 @@ export function pasteSegments(cells, fieldsFormatted, cols, cursor, text) {
     }
 
     let chunk = "";
-    let chunkStart = pos;
     let i = 0;
     while (i < line.length && pos < total) {
       if (isEditable(pos)) {
-        if (chunk === "") chunkStart = pos;
         chunk += line[i];
         i++;
         pos++;
         continue;
       }
       if (chunk !== "") {
+        const start = pos - chunk.length;
         segments.push({
-          row: Math.floor(chunkStart / cols),
-          col: chunkStart % cols,
+          row: Math.floor(start / cols),
+          col: start % cols,
           text: chunk,
         });
         chunk = "";
@@ -67,9 +66,10 @@ export function pasteSegments(cells, fieldsFormatted, cols, cursor, text) {
       pos++;
     }
     if (chunk !== "") {
+      const start = pos - chunk.length;
       segments.push({
-        row: Math.floor(chunkStart / cols),
-        col: chunkStart % cols,
+        row: Math.floor(start / cols),
+        col: start % cols,
         text: chunk,
       });
     }

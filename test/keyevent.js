@@ -38,19 +38,22 @@ export function enterKey() {
   return key({ key: "Control", code: "ControlRight", ctrlKey: true });
 }
 
-const DEFAULT_LOOKUP = buildLookup(DEFAULT_BINDINGS);
-
 /**
- * A panel reads its keys through the keymap, so a panel under test is given the
- * default one.
+ * A panel reads its keys through the keymap, so a panel under test is given one.
  *
- * @type {{ keyCommand: (event: KeyboardEvent) => string | null,
+ * @param {import('../public/keymap.js').Bindings} bindings
+ * @returns {{ keyCommand: (event: KeyboardEvent) => string | null,
  *   keyName: (commandId: string) => string }}
  */
-export const defaultKeymapDeps = {
-  keyCommand: (event) => commandForEvent(event, DEFAULT_LOOKUP),
-  keyName: (commandId) => {
-    const first = DEFAULT_BINDINGS[commandId]?.[0];
-    return first === undefined ? "" : comboLabel(first);
-  },
-};
+export function keymapDeps(bindings) {
+  const lookup = buildLookup(bindings);
+  return {
+    keyCommand: (event) => commandForEvent(event, lookup),
+    keyName: (commandId) => {
+      const first = bindings[commandId]?.[0];
+      return first === undefined ? "" : comboLabel(first);
+    },
+  };
+}
+
+export const defaultKeymapDeps = keymapDeps(DEFAULT_BINDINGS);

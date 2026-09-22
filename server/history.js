@@ -41,12 +41,12 @@ export function editableSnapshot(cells, fieldsFormatted, cols, cursor) {
     }
   }
   if (start !== -1) {
-    const wrapped = runs[0];
-    const tail = { row: Math.floor(start / cols), col: start % cols, text };
-    if (wrapped !== undefined && wrapped.row === 0 && wrapped.col === 0) {
-      runs[0] = { ...tail, text: tail.text + wrapped.text };
-      runs.push(/** @type {Run} */ (runs.shift()));
-    } else runs.push(tail);
+    const head = runs[0];
+    if (head !== undefined && head.row === 0 && head.col === 0) {
+      runs.shift();
+      text += head.text;
+    }
+    runs.push({ row: Math.floor(start / cols), col: start % cols, text });
   }
 
   return {
@@ -70,17 +70,18 @@ export function changedRuns(snapshot, cells, cols) {
   const changed = [];
   for (const run of snapshot.runs) {
     const start = run.row * cols + run.col;
+    /** @type {string | null} */
     let onScreen = "";
     for (let i = 0; i < run.text.length; i++) {
       const cell = cells[(start + i) % cells.length];
-      // The field map moved under the snapshot, so this run is not ours to put back.
       if (cell === undefined || !cell.editable) {
-        onScreen = run.text;
+        onScreen = null;
         break;
       }
       onScreen += cell.ch;
     }
-    if (onScreen !== run.text) changed.push(run);
+    // A null means the field map moved under the snapshot: not ours to put back.
+    if (onScreen !== null && onScreen !== run.text) changed.push(run);
   }
   return changed;
 }

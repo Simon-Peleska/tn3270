@@ -3,8 +3,13 @@
  * they are the navigation: every other panel is one number away.
  */
 
-import { PANELS, Panel, panelIdForOption, keyLegend } from "./panel.js";
-import { keyLabel } from "./keymap.js";
+import {
+  PANELS,
+  Panel,
+  panelIdForOption,
+  keyLegend,
+  keyNames,
+} from "./panel.js";
 
 /** @extends {Panel<import('./panel.js').PanelDeps>} */
 export class MenuPage extends Panel {
@@ -122,17 +127,11 @@ const COMMANDS = Object.freeze([
   { key: "HELP, ?", what: "This panel" },
 ]);
 
-/** @type {readonly { key: string, what: string }[]} */
-const SHORTCUTS = Object.freeze([
-  ...PANELS.filter((panel) => panel.shortcut !== "").map((panel) => ({
-    key: `Alt-${keyLabel(panel.shortcut)}`,
-    what: panel.blurb,
-  })),
-  {
-    key: "Ctrl-B then 1-4",
-    what: "Aim the keyboard at that session; Shift lays out panes",
-  },
-]);
+/** @type {{ key: string, what: string }} */
+const SESSION_PREFIX = {
+  key: "Ctrl-B then 1-4",
+  what: "Aim the keyboard at that session; Shift lays out panes",
+};
 
 /** @extends {Panel<import('./panel.js').PanelDeps>} */
 export class HelpPage extends Panel {
@@ -171,18 +170,22 @@ export class HelpPage extends Panel {
       for (const entry of entries)
         lines.push({ text: `  ${entry.key}`, value: entry.what });
     };
-    section(
-      "Keys in a panel",
-      PANEL_KEYS.map((entry) => ({
-        key: entry.commands
-          .map((commandId) => this.deps.keyName(commandId))
-          .filter((name) => name !== "")
-          .join(" / "),
-        what: entry.what,
-      })).filter((entry) => entry.key !== ""),
-    );
+    /** @type {{ key: string, what: string }[]} */
+    const panelKeys = [];
+    for (const entry of PANEL_KEYS) {
+      const key = keyNames(this.deps, entry.commands);
+      if (key !== "") panelKeys.push({ key, what: entry.what });
+    }
+    section("Keys in a panel", panelKeys);
     section("Command line", COMMANDS);
-    section("From the session", SHORTCUTS);
+
+    /** @type {{ key: string, what: string }[]} */
+    const fromSession = [];
+    for (const panel of PANELS) {
+      const key = keyNames(this.deps, panel.command);
+      if (key !== "") fromSession.push({ key, what: panel.blurb });
+    }
+    section("From the session", [...fromSession, SESSION_PREFIX]);
     return lines;
   }
 

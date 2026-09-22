@@ -14,6 +14,9 @@ test("a function key, a Ctrl combo and Copy/Paste read as HOD-style lines", () =
   assert.match(text, /^S-F3=pf15$/m);
   assert.match(text, /^C-C=copy$/m);
   assert.match(text, /^S-Insert=paste$/m);
+  // A panel is opened by a command, so a saved keymap carries it like any other.
+  assert.match(text, /^A-Space=menu$/m);
+  assert.match(text, /^A-K=keys$/m);
 });
 
 test("a line for a command this app does not know is skipped, not thrown away entirely", () => {

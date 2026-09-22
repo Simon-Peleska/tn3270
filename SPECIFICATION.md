@@ -217,9 +217,11 @@ name of any panel, and the words a panel adds of its own —
 `APPLY`, `RENAME`, `DELETE`, `EXPORT`, `IMPORT`, `MARK`, `RECORD`, `STOP`,
 `RESET`, `DEFAULTS`. A word that is none of these is answered on the panel.
 
-A panel is opened from the session with `Alt-Space` (menu), `Alt-,` (settings),
-`Alt-M` (macros), `Alt-R` (recorder) or `Alt-K` (keys); the same combination
-closes it again. Ctrl and Meta are left to the browser while a panel is open, so
+Opening a panel is a command like any other, so it is in the keymap of §5 and
+can be rebound there: `Menu`, `Settings`, `Macros`, `Recorder` and `Keys`,
+bound by default to `Alt+Space`, `Alt+,`, `Alt+M`, `Alt+R` and `Alt+K`. The
+same combination pressed again closes the panel, and it opens its panel from
+within another one. Ctrl and Meta are left to the browser while a panel is open, so
 **Ctrl-C and Ctrl-V work in a panel as they do on the screen**: a copy with
 nothing selected takes the command line or the field the cursor is on, and a
 paste puts the clipboard's first line into whichever of the two the cursor is
@@ -268,9 +270,9 @@ Plain Ctrl and Meta combinations are left to the browser, except Ctrl-B (the
 session prefix, below) and Ctrl-C/Ctrl-V, which copy and paste the system
 clipboard rather than reaching the host as 3270 actions. Alt is otherwise left
 to the browser too, except the PA-key and Dup/FieldMark/EraseInput bindings
-above, the session digits below, and the panel shortcuts of §4.1 —
-`Alt-Space`, `Alt-,`, `Alt-M`, `Alt-R`, `Alt-K` — which open a panel over the
-session and, pressed again, close it. While a panel is open the keys in this
+above, the session digits below, and whatever the panel commands of §4.1 are
+bound to — by default `Alt+Space`, `Alt+,`, `Alt+M`, `Alt+R` and `Alt+K`, which
+open a panel over the session and, pressed again, close it. While a panel is open the keys in this
 table are its own (§4.1) and nothing reaches the host. There is no local echo:
 what appears on screen is what the host put there.
 

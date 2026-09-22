@@ -36,6 +36,11 @@ export const COMMANDS = Object.freeze([
   { id: "Paste", label: "Paste" },
   { id: "Undo", label: "Undo typing" },
   { id: "Redo", label: "Redo typing" },
+  { id: "Menu", label: "Menu panel" },
+  { id: "Settings", label: "Settings panel" },
+  { id: "Macros", label: "Macros panel" },
+  { id: "Recorder", label: "Recorder panel" },
+  { id: "Keys", label: "Keys panel" },
   ...Array.from({ length: 24 }, (_, index) => ({
     id: `PF${index + 1}`,
     label: `PF${index + 1}`,
@@ -46,8 +51,33 @@ export const COMMANDS = Object.freeze([
   })),
 ]);
 
-/** @type {ReadonlySet<string>} */
-export const CLIENT_COMMANDS = new Set(["Copy", "Paste"]);
+/**
+ * Commands this browser answers itself: the clipboard, and the panels, which
+ * are drawn over the session rather than sent to the host.
+ *
+ * @type {ReadonlySet<string>}
+ */
+export const CLIENT_COMMANDS = new Set([
+  "Copy",
+  "Paste",
+  "Menu",
+  "Settings",
+  "Macros",
+  "Recorder",
+  "Keys",
+]);
+
+/**
+ * A panel command, and the panel it opens.
+ * @type {Readonly<Record<string, string>>}
+ */
+export const PANEL_COMMANDS = Object.freeze({
+  Menu: "menu",
+  Settings: "settings",
+  Macros: "macros",
+  Recorder: "recorder",
+  Keys: "keymap",
+});
 
 /**
  * @param {string} key one character, or a `KeyboardEvent.code` for keys that
@@ -90,6 +120,11 @@ export const DEFAULT_BINDINGS = Object.freeze({
   // Bound, so the browser never sees them: Ctrl+R would reload the page.
   Undo: [combo("Z", { ctrl: true })],
   Redo: [combo("R", { ctrl: true })],
+  Menu: [combo(" ", { alt: true })],
+  Settings: [combo(",", { alt: true })],
+  Macros: [combo("M", { alt: true })],
+  Recorder: [combo("R", { alt: true })],
+  Keys: [combo("K", { alt: true })],
   PA1: [combo("Insert", { alt: true })],
   PA2: [combo("Home", { alt: true })],
   PA3: [combo("PageUp", { shift: true })],
@@ -144,10 +179,20 @@ export function serializeCombo(value) {
  */
 export function keyIdentity(event) {
   if ([...event.key].length !== 1) return event.code;
-  // Uppercase so Shift is carried by the flag alone, except where a letter has
-  // no single-character uppercase: German ß uppercases to SS.
-  const upper = event.key.toUpperCase();
-  return [...upper].length === 1 ? upper : event.key;
+  return normalizeKey(event.key);
+}
+
+/**
+ * Uppercase so Shift is carried by the flag alone, except where a letter has no
+ * single-character uppercase: German ß uppercases to SS. A saved keymap is read
+ * back through this too, or an imported binding stops matching a live keypress.
+ *
+ * @param {string} character one character
+ * @returns {string}
+ */
+export function normalizeKey(character) {
+  const upper = character.toUpperCase();
+  return [...upper].length === 1 ? upper : character;
 }
 
 /**
@@ -166,7 +211,7 @@ export function comboFromEvent(event) {
  * Keys that print nothing, so a saved map and the dialog name them by position.
  * @type {Readonly<Record<string, string>>}
  */
-const KEY_LABELS = Object.freeze({
+export const KEY_LABELS = Object.freeze({
   ControlLeft: "LCtrl",
   ControlRight: "RCtrl",
   ShiftLeft: "LShift",
@@ -316,8 +361,8 @@ export function commandForEvent(event, lookup) {
 export function mapKey(event, lookup) {
   if (event.metaKey) return null;
 
-  const commandId = commandForEvent(event, lookup) ?? undefined;
-  if (commandId !== undefined) {
+  const commandId = commandForEvent(event, lookup);
+  if (commandId !== null) {
     if (event.repeat && isAidCommand(commandId)) return null;
     if (CLIENT_COMMANDS.has(commandId))
       return { kind: "client", command: commandId };
