@@ -15,7 +15,9 @@ function row(picture) {
 }
 
 /**
- * Stands in for b3270: PasteString skips protected cells without writing them.
+ * Stands in for b3270: a character landing on a protected cell is dropped, and
+ * the paste resumes at the next editable cell. That is why a segment must never
+ * span a protected run.
  *
  * @param {{ ch: string, editable: boolean }[]} cells
  * @param {number} cols
@@ -27,13 +29,58 @@ function apply(cells, cols, segments) {
   for (const { row: atRow, col, text } of segments) {
     let at = atRow * cols + col;
     for (const ch of text) {
-      while (!cells[at].editable) at++;
+      if (at < cells.length && !cells[at].editable) {
+        while (at < cells.length && !cells[at].editable) at++;
+        continue;
+      }
+      if (at >= cells.length) break;
       result[at] = ch;
       at++;
     }
   }
   return result.join("");
 }
+
+test("a paste with no gaps of its own fills three short fields in a row, one segment each", () => {
+  const cells = row(" ___ ___ ___");
+  const segments = pasteSegments(
+    cells,
+    true,
+    cells.length,
+    { row: 0, col: 1 },
+    "123456789",
+  );
+  assert.deepEqual(segments, [
+    { row: 0, col: 1, text: "123" },
+    { row: 0, col: 5, text: "456" },
+    { row: 0, col: 9, text: "789" },
+  ]);
+  assert.equal(apply(cells, cells.length, segments), " 123 456 789");
+});
+
+test("a paste whose gaps line up with the ones on screen is consumed there, landing the same way", () => {
+  const cells = row(" ___ ___ ___");
+  const segments = pasteSegments(
+    cells,
+    true,
+    cells.length,
+    { row: 0, col: 1 },
+    "123 456 789",
+  );
+  assert.equal(apply(cells, cells.length, segments), " 123 456 789");
+});
+
+test("one gap of the paste lining up by chance does not make the line a match: its blank is typed like any other character", () => {
+  const cells = row(" ___ ___ ___");
+  const segments = pasteSegments(
+    cells,
+    true,
+    cells.length,
+    { row: 0, col: 1 },
+    "123456 789",
+  );
+  assert.equal(apply(cells, cells.length, segments), " 123 456  78");
+});
 
 test("text shorter than a run of fields overflows into the next one, skipping the gap between them", () => {
   const cells = row("___ ___ ___");

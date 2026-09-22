@@ -1,0 +1,49 @@
+// rows 43
+// columns 80
+//
+// Three writable fields of three columns each, one cell apart: ___ ___ ___
+// The gap is each field's attribute byte, which always costs one cell.
+//
+// For driving the emulator by hand: `npm run start:fake three-fields`.
+//
+// The TELNET negotiation below is the same exchange as reverse.trc; only the
+// screen that follows it is ours.
+//
+// # Ask for TN3270E.
+// telnet.do tn3270e
+< 0x0   fffd28
+// # Ask for the device type.
+// telnet.sb tn3270e
+//  raw 0802 # send device-type
+//  telnet.se
+< 0x0   fffa280802fff0
+// # Tell them what the device type is.
+// telnet.sb tn3270e
+//  raw 0204 # device-type is
+//  atext IBM-3278-4-E
+//  raw 01 # connect
+//  atext IBM0TEQO
+//  telnet.se
+< 0x0   fffa28020449424d2d333237382d342d450149424d305445514ffff0
+// # Tell them what TN3270E we will support (no BIND-IMAGE)
+// telnet.sb tn3270e
+//  raw 0304 # functions is
+//  raw 0204 #  RESPONSES SYSREQ
+//  telnet.se
+< 0x0   fffa2803040204fff0
+// # Draw the screen.
+// tn3270e 3270-data none no-response 0
+//  cmd.ewa restore,reset-mdt
+//   ord.sba 1 1
+//   ord.sfe normal,underscore    # columns 2-4
+//   ord.sba 1 5
+//   ord.sfe normal,underscore    # columns 6-8
+//   ord.sba 1 9
+//   ord.sfe normal,underscore    # columns 10-12
+//   ord.sba 1 13
+//   ord.sf protect,skip          # ends the third field
+//   ord.sba 1 2
+//   ord.ic
+//  telnet.eor
+< 0x0   00000000007ec31140402902c0c041f41140c42902c0c041f41140c82902c0c0
+< 0x20  41f411404c1df01140c113ffef

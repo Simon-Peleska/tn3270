@@ -40,21 +40,21 @@
 //   ord.sf protect,skip
 //   text "Name:"
 //   ord.sba 3 11
-//   ord.sf normal          # 20 columns, ends at the field below
+//   ord.sfe normal,underscore     # 20 columns, ends at the field below
 //   ord.sba 3 32
 //   ord.sf protect,skip
 //   ord.sba 5 1
 //   ord.sf protect,skip
 //   text "Note:"
 //   ord.sba 5 11
-//   ord.sf intensify       # 40 columns
+//   ord.sfe intensify,underscore  # 40 columns
 //   ord.sba 5 52
 //   ord.sf protect,skip
 //   ord.sba 7 1
 //   ord.sf protect,skip
 //   text "Secret:"
 //   ord.sba 7 11
-//   ord.sf zero            # non-display, so the hidden case stays testable
+//   ord.sfe zero,underscore       # non-display, so the hidden case stays testable
 //   ord.sba 7 32
 //   ord.sf protect,skip
 //   ord.sba 9 1
@@ -67,9 +67,10 @@
 //   ord.ic
 //  telnet.eor
 < 0x0   00000000007ec31140401df8e3d5f3f2f7f040e3c5e2e340e2c3d9c5c5d511c2
-< 0x20  601df0d58194857a11c26a1dc011c27f1df011c5401df0d596a3857a11c54a1d
-< 0x40  c811c5f31df011c7601df0e285839985a37a11c76a1dcc11c77f1df0114a401d
-< 0x60  f0e3a89785408995a39640a38885408689859384a240818296a5854b40e38182
-< 0x80  409496a585a26b40c595a385994093968392a240a38885114b501df09285a882
-< 0xa0  968199847a40a38885409985979381a8408881a2409596408896a2a340a39640
-< 0xc0  8195a2a685994089a34b40d985a285a3408393858199a24b11c26b13ffef
+< 0x20  601df0d58194857a11c26a2902c0c041f411c27f1df011c5401df0d596a3857a
+< 0x40  11c54a2902c0c841f411c5f31df011c7601df0e285839985a37a11c76a2902c0
+< 0x60  cc41f411c77f1df0114a401df0e3a89785408995a39640a38885408689859384
+< 0x80  a240818296a5854b40e38182409496a585a26b40c595a385994093968392a240
+< 0xa0  a38885114b501df09285a882968199847a40a38885409985979381a8408881a2
+< 0xc0  409596408896a2a340a396408195a2a685994089a34b40d985a285a340839385
+< 0xe0  8199a24b11c26b13ffef

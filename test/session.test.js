@@ -923,6 +923,32 @@ test("pasting more than a field holds is truncated at its edge, not spilled into
   );
 });
 
+test("a paste crossing the gaps between short fields lands whole, with nothing eaten by the attribute bytes", async (t) => {
+  // three-fields.trc: ___ ___ ___ on row 1, each gap a field attribute byte.
+  for (const [text, expected] of [
+    ["123456789", " 123 456 789"],
+    ["123 456 789", " 123 456 789"],
+    ["123456 789", " 123 456  78"],
+  ]) {
+    const fixture = await startTracedSession("test/traces/three-fields.trc");
+    t.after(() => fixture.close());
+    const { session } = fixture;
+    await settle(session);
+    await waitUntil(() => session.screen.fieldsFormatted, "the field map");
+
+    const controller = collectingViewer("controller");
+    session.attach(controller);
+    session.handleClientMessage(controller, { type: "paste", text });
+    await settle(session);
+
+    assert.equal(
+      session.screen.rowText(0).slice(0, 12),
+      expected,
+      `pasting ${JSON.stringify(text)}`,
+    );
+  }
+});
+
 test("a b3270 resource set in the config reaches the emulator", async (t) => {
   const session = new Session(
     testConfig({

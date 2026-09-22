@@ -1,8 +1,14 @@
 /**
- * Splits pasted text into runs to type, jumping protected stretches. A run
- * matching the text lined up against it is consumed instead of skipped when
- * skipping would overflow, or when the pasted line ends inside it. A newline
- * moves one row down, to the column the paste started at.
+ * Splits pasted text into runs to type, one per stretch of editable cells:
+ * b3270's PasteString drops a character that lands on a protected cell, so no
+ * segment may span one.
+ *
+ * A pasted line is laid out like the screen only when every protected cell it
+ * covers already holds the character pasted onto it; then those characters are
+ * the screen's own text and are eaten. One mismatch anywhere in the line and
+ * none of them are: the text flows across the protected cells instead, its own
+ * blanks typed into fields like any other character. A newline moves one row
+ * down, to the column the paste started at.
  *
  * @param {{ ch: string, editable: boolean }[]} cells row-major, length rows*cols
  * @param {boolean} fieldsFormatted false types straight through
@@ -23,62 +29,52 @@ export function pasteSegments(cells, fieldsFormatted, cols, cursor, text) {
   const isEditable = (pos) =>
     !fieldsFormatted || (cells[pos]?.editable ?? false);
 
-  // Editable cells remaining from each position, so a matching run can tell
-  // whether skipping it would leave the rest of the paste nowhere to go.
-  const editableSuffixCount = new Array(total + 1).fill(0);
-  for (let p = total - 1; p >= 0; p--)
-    editableSuffixCount[p] =
-      editableSuffixCount[p + 1] + (isEditable(p) ? 1 : 0);
-
   /** @type {{ row: number, col: number, text: string }[]} */
   const segments = [];
   let pos = cursor.row * cols + cursor.col;
-  let segmentStart = { row: cursor.row, col: cursor.col };
-  let chunk = "";
 
-  for (let i = 0; i < normalized.length && pos < total;) {
-    if (normalized[i] === "\n") {
-      if (chunk !== "") segments.push({ ...segmentStart, text: chunk });
-      chunk = "";
-      const row = Math.floor(pos / cols) + 1;
-      pos = row * cols + startCol;
-      segmentStart = { row, col: startCol };
-      i++;
-      continue;
+  for (const line of normalized.split("\n")) {
+    if (pos >= total) break;
+
+    let laidOutLikeTheScreen = true;
+    for (let i = 0; i < line.length && pos + i < total; i++) {
+      if (!isEditable(pos + i) && cells[pos + i].ch !== line[i]) {
+        laidOutLikeTheScreen = false;
+        break;
+      }
     }
 
-    if (isEditable(pos)) {
-      chunk += normalized[i];
-      i++;
+    let chunk = "";
+    let chunkStart = pos;
+    let i = 0;
+    while (i < line.length && pos < total) {
+      if (isEditable(pos)) {
+        if (chunk === "") chunkStart = pos;
+        chunk += line[i];
+        i++;
+        pos++;
+        continue;
+      }
+      if (chunk !== "") {
+        segments.push({
+          row: Math.floor(chunkStart / cols),
+          col: chunkStart % cols,
+          text: chunk,
+        });
+        chunk = "";
+      }
+      if (laidOutLikeTheScreen) i++;
       pos++;
-      continue;
+    }
+    if (chunk !== "") {
+      segments.push({
+        row: Math.floor(chunkStart / cols),
+        col: chunkStart % cols,
+        text: chunk,
+      });
     }
 
-    let runLength = 0;
-    while (pos + runLength < total && !isEditable(pos + runLength)) runLength++;
-    const newline = normalized.indexOf("\n", i);
-    const lineEnd = newline === -1 ? normalized.length : newline;
-    const width = Math.min(runLength, lineEnd - i);
-    const pasted = normalized.slice(i, i + width);
-    const onScreen = cells
-      .slice(pos, pos + width)
-      .map((cell) => cell.ch)
-      .join("");
-    const matches = pasted === onScreen;
-
-    // The line ran out inside the run, so skipping would drop its tail into a
-    // field it was never meant for.
-    if (matches && width < runLength) {
-      i += width;
-      pos += width;
-      continue;
-    }
-
-    const wouldOverflowIfSkipped =
-      normalized.length - i > editableSuffixCount[pos + runLength];
-    if (matches && wouldOverflowIfSkipped) i += runLength;
-    pos += runLength;
+    pos = (Math.floor(pos / cols) + 1) * cols + startCol;
   }
-  if (chunk !== "") segments.push({ ...segmentStart, text: chunk });
   return segments;
 }
