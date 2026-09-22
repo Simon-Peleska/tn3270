@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { B3270 } from "./b3270.js";
 import { editableFieldText, fieldMap } from "./readbuffer.js";
 import { pasteSegments } from "./paste.js";
+import { editableSnapshot, changedRuns } from "./history.js";
 import { computeHints } from "./hints.js";
 import { ScreenModel } from "./screen.js";
 import { OiaModel } from "./oia.js";
@@ -22,6 +23,20 @@ import { logger } from "./log.js";
  * @property {(bytes: string) => void} sendScreen
  * @property {(message: import('./protocol.js').ServerMessage) => void} sendMessage
  */
+
+/** Deep enough for a screen's worth of typing, shallow enough to forget. */
+const HISTORY_LIMIT = 100;
+
+/** The keys that hand the screen to the host. @type {ReadonlySet<string>} */
+const AID_ACTIONS = new Set([
+  "Enter",
+  "PF",
+  "PA",
+  "Clear",
+  "Attn",
+  "SysReq",
+  "CursorSelect",
+]);
 
 export class Session {
   /**
@@ -94,6 +109,17 @@ export class Session {
     this.passwordField = false;
     /** @type {{ steps: import('./protocol.js').RecorderStep[] } | null} */
     this.recording = null;
+
+    /** @type {import('./history.js').Snapshot | null} What the fields hold now. */
+    this.snapshot = null;
+    /** @type {import('./history.js').Snapshot[]} States to undo back through. */
+    this.undoStack = [];
+    /** @type {import('./history.js').Snapshot[]} States undone, to redo forward. */
+    this.redoStack = [];
+    /** @type {string | null} The r-tag of a restore in flight. Its erases and
+     * retypes pass over states that were never the user's, so they are not
+     * history. */
+    this.historyTag = null;
 
     /** @type {() => void} */
     this.markReady = () => {};
@@ -335,6 +361,12 @@ export class Session {
       );
       const tag = result["r-tag"];
 
+      // The edit has settled, so the state it reached is a step to undo back to.
+      if (tag !== undefined && tag === this.historyTag) {
+        this.historyTag = null;
+        this.scheduleFlush();
+      }
+
       if (tag !== undefined && tag === this.fieldReadTag) {
         this.fieldReadTag = null;
         if (result.success) {
@@ -401,6 +433,8 @@ export class Session {
       ]);
     }
 
+    this.recordHistory();
+
     const nextOia = this.oia.render(this.screen.cols, this.screen.cursor);
     const oiaChanged = nextOia !== this.oiaText;
     this.oiaText = nextOia;
@@ -426,6 +460,118 @@ export class Session {
       }
       viewer.sendScreen(bytes);
     }
+  }
+
+  /**
+   * Everything that edits the screen goes through here, so that one thing the
+   * user did is one undo step: b3270 reports a batch in pieces, and the states
+   * in the middle of it were never anyone's.
+   *
+   * @param {{ action: string, args?: string[] }[]} actions
+   * @returns {string} the r-tag b3270 will answer with
+   */
+  runEdit(actions) {
+    this.historyTag = this.b3270.runActions(actions);
+    return this.historyTag;
+  }
+
+  /**
+   * One undo step per settled edit. A restore sets `snapshot` before it runs, so
+   * the state it lands on comes back looking like no change at all.
+   *
+   * @returns {void}
+   */
+  recordHistory() {
+    if (this.historyTag !== null) return;
+
+    const snapshot = editableSnapshot(
+      this.screen.cells,
+      this.screen.fieldsFormatted,
+      this.screen.cols,
+      this.screen.cursor,
+    );
+    if (snapshot === null) return;
+
+    if (this.snapshot === null) {
+      this.snapshot = snapshot;
+      return;
+    }
+    // A new field layout is a new screen: the old states describe fields that
+    // are no longer there.
+    if (snapshot.layout !== this.snapshot.layout) {
+      this.clearHistory("the field layout changed");
+      this.snapshot = snapshot;
+      return;
+    }
+    if (snapshot.key === this.snapshot.key) return;
+
+    this.undoStack.push(this.snapshot);
+    if (this.undoStack.length > HISTORY_LIMIT) this.undoStack.shift();
+    this.redoStack.length = 0;
+    this.snapshot = snapshot;
+  }
+
+  /**
+   * @param {string} why for the log; history is cheap to lose but never silently
+   * @returns {void}
+   */
+  clearHistory(why) {
+    if (this.undoStack.length === 0 && this.redoStack.length === 0) return;
+    this.log.info("history cleared", {
+      why,
+      undo: this.undoStack.length,
+      redo: this.redoStack.length,
+    });
+    this.undoStack.length = 0;
+    this.redoStack.length = 0;
+  }
+
+  /**
+   * Ctrl+Z and Ctrl+R: put the editable fields back the way they were, erasing
+   * and retyping only the runs that differ, then returning the cursor.
+   *
+   * @param {boolean} back true undoes, false redoes
+   * @returns {void}
+   */
+  stepHistory(back) {
+    const from = back ? this.undoStack : this.redoStack;
+    const to = back ? this.redoStack : this.undoStack;
+    const target = from.pop();
+    if (target === undefined || this.snapshot === null) {
+      this.log.info(back ? "nothing to undo" : "nothing to redo", {});
+      return;
+    }
+    to.push(this.snapshot);
+
+    const runs = changedRuns(target, this.screen.cells, this.screen.cols);
+    this.log.info(back ? "undo" : "redo", {
+      fields: runs.length,
+      undo: this.undoStack.length,
+      redo: this.redoStack.length,
+    });
+
+    /** @type {{ action: string, args: string[] }[]} */
+    const actions = [];
+    for (const run of runs) {
+      actions.push({
+        action: "MoveCursor1",
+        args: [String(run.row + 1), String(run.col + 1)],
+      });
+      actions.push({ action: "EraseEOF", args: [] });
+      const text = run.text.replace(/ +$/, "");
+      if (text !== "")
+        actions.push({
+          action: "PasteString",
+          args: [Buffer.from(text, "utf8").toString("hex")],
+        });
+    }
+    actions.push({
+      action: "MoveCursor1",
+      args: [String(target.cursor.row + 1), String(target.cursor.col + 1)],
+    });
+
+    this.snapshot = target;
+    this.runEdit(actions);
   }
 
   /** @returns {string} `<rows>x<cols>` */
@@ -664,13 +810,21 @@ export class Session {
 
     switch (message.type) {
       case "action":
+        // Ours alone, and not an action a recording could ever replay.
+        if (message.action === "Undo" || message.action === "Redo") {
+          this.stepHistory(message.action === "Undo");
+          return;
+        }
+        // Past an AID key the screen belongs to the host, so there is nothing
+        // left to put back.
+        if (AID_ACTIONS.has(message.action)) this.clearHistory(message.action);
         // Control keys carry no field content, so they are always safe to record.
         this.record(message.action, message.args ?? []);
         // b3270's Backspace only moves left, as real 3270 hardware does; a PC
         // keyboard expects a delete, and the field map says if there is room.
         if (message.action === "Backspace") {
           if (this.canBackspace())
-            this.b3270.runActions([{ action: "Left" }, { action: "Delete" }]);
+            this.runEdit([{ action: "Left" }, { action: "Delete" }]);
           return;
         }
         // b3270 has no upward Newline; the cached field map answers it here.
@@ -684,9 +838,7 @@ export class Session {
           ]);
           return;
         }
-        this.b3270.runActions([
-          { action: message.action, args: message.args ?? [] },
-        ]);
+        this.runEdit([{ action: message.action, args: message.args ?? [] }]);
         return;
       case "text":
         if (message.value !== "") {
@@ -703,7 +855,7 @@ export class Session {
                   },
                   { action: "String", args: [message.value] },
                 ];
-          this.b3270.runActions(actions);
+          this.runEdit(actions);
         }
         return;
       case "paste": {
@@ -726,7 +878,7 @@ export class Session {
               args: [Buffer.from(text, "utf8").toString("hex")],
             },
           ]);
-          if (actions.length > 0) this.b3270.runActions(actions);
+          if (actions.length > 0) this.runEdit(actions);
         }
         return;
       }

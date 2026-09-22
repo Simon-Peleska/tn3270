@@ -17,7 +17,13 @@ import { SettingsPage, THEMES } from "../public/settings.js";
 import { MacrosPage } from "../public/macros.js";
 import { RecorderPage } from "../public/recorder.js";
 import { KeymapPage } from "../public/keymap-page.js";
-import { key } from "./keyevent.js";
+import {
+  DEFAULT_BINDINGS,
+  buildLookup,
+  commandForEvent,
+  comboLabel,
+} from "../public/keymap.js";
+import { key, enterKey, defaultKeymapDeps } from "./keyevent.js";
 
 /** @extends {Panel<import('../public/panel.js').PanelDeps>} */
 class ListPanel extends Panel {
@@ -96,6 +102,7 @@ function fixture(count = 4) {
     /** @type {string[]} */ went: [],
   };
   const deps = {
+    ...defaultKeymapDeps,
     write: (/** @type {string} */ bytes) => calls.written.push(bytes),
     geometry: () => ({ cols: 80, rows: 25 }),
     theme: () => THEMES[0],
@@ -180,7 +187,7 @@ test("a line number typed on the command line picks that line", () => {
   page.show();
 
   for (const char of "3") page.handleKey(key({ key: char }));
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
 
   assert.deepEqual(page.picked, ["Line 3"]);
   assert.equal(page.command, "", "the command line is cleared once it has run");
@@ -190,7 +197,7 @@ test("a number no line carries is answered on the panel", () => {
   const { page } = fixture();
   page.show();
   for (const char of "9") page.handleKey(key({ key: char }));
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
   assert.match(page.message, /9/);
   assert.deepEqual(page.picked, []);
 });
@@ -210,16 +217,78 @@ test("the PF keys do what ISPF says they do", () => {
   assert.equal(calls.ends, 1);
 });
 
+test("a panel takes its keys from the keymap, legend and all", () => {
+  const { deps, calls } = fixture();
+  /** @type {import('../public/keymap.js').Bindings} */
+  const bindings = {
+    ...DEFAULT_BINDINGS,
+    PF3: [{ key: "F9", shift: false, ctrl: false, alt: false }],
+    // One keystroke, one command: the keys panel takes F9 off PF9 to give it away.
+    PF9: [],
+  };
+  const lookup = buildLookup(bindings);
+  const page = new ListPanel({
+    ...deps,
+    keyCommand: (event) => commandForEvent(event, lookup),
+    keyName: (commandId) => {
+      const first = bindings[commandId]?.[0];
+      return first === undefined ? "" : comboLabel(first);
+    },
+  });
+  page.show();
+
+  assert.ok(
+    page.keys().includes("F9=Exit"),
+    `the legend still names F3: ${page.keys().join(" ")}`,
+  );
+
+  page.handleKey(key({ key: "F3" }));
+  assert.equal(page.open, true, "F3 carries nothing here any more");
+
+  page.handleKey(key({ key: "F9" }));
+  assert.equal(page.open, false);
+  assert.equal(calls.ends, 1);
+});
+
+test("a panel's Enter is the AID key, and the key marked Enter is Newline here too", () => {
+  const { page } = fixture();
+  page.show();
+  for (const char of "3") page.handleKey(key({ key: char }));
+
+  page.handleKey(key({ key: "Enter" }));
+  assert.deepEqual(
+    page.picked,
+    [],
+    "the Enter key is Newline: it runs nothing",
+  );
+  assert.equal(page.onCommand, false, "it steps on to the next field");
+  assert.equal(page.command, "3", "and what was typed is still there");
+
+  page.handleKey(key({ key: "Enter", shiftKey: true }));
+  assert.equal(page.onCommand, true, "back newline steps back");
+
+  page.handleKey(enterKey());
+  assert.deepEqual(page.picked, ["Line 3"], "the AID key is what runs it");
+});
+
+test("Attn walks out of a panel, and it is Escape here for the same reason it is there", () => {
+  const { page, calls } = fixture();
+  page.show();
+  page.handleKey(key({ key: "Escape" }));
+  assert.equal(page.open, false);
+  assert.equal(calls.ends, 1);
+});
+
 test("a jump command reaches any panel, and a bad one says so", () => {
   const { page, calls } = fixture();
   page.show();
 
   for (const char of "=2") page.handleKey(key({ key: char }));
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
   assert.deepEqual(calls.went, ["recorder"]);
 
   for (const char of "=7") page.handleKey(key({ key: char }));
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
   assert.deepEqual(calls.went, ["recorder"], "nothing is numbered 7");
   assert.match(page.message, /7/);
 });
@@ -228,7 +297,7 @@ test("a panel named on the action bar can be typed instead of its number", () =>
   const { page, calls } = fixture();
   page.show();
   for (const char of "macros") page.handleKey(key({ key: char }));
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
   assert.deepEqual(calls.went, ["macros"]);
 });
 
@@ -237,11 +306,11 @@ test("a word the panel knows is its own, and one it does not is refused", () => 
   page.show();
 
   for (const char of "known") page.handleKey(key({ key: char }));
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
   assert.deepEqual(page.picked, ["the word"]);
 
   for (const char of "unknown") page.handleKey(key({ key: char }));
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
   assert.match(page.message, /unknown is not a command here/i);
 });
 
@@ -395,11 +464,11 @@ test("the primary option menu opens the panel behind each number", () => {
   menu.show();
 
   for (const char of "1") menu.handleKey(key({ key: char }));
-  menu.handleKey(key({ key: "Enter" }));
+  menu.handleKey(enterKey());
   assert.deepEqual(calls.went, ["macros"]);
 
   for (const char of "x") menu.handleKey(key({ key: char }));
-  menu.handleKey(key({ key: "Enter" }));
+  menu.handleKey(enterKey());
   assert.equal(menu.open, false);
   assert.equal(calls.ends, 1);
 });

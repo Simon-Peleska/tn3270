@@ -19,10 +19,32 @@ test("a function key, a Ctrl combo and Copy/Paste read as HOD-style lines", () =
 test("a line for a command this app does not know is skipped, not thrown away entirely", () => {
   const bindings = parseKeymapText("F5=pf5\nF6=notarealcommand\n");
   assert.deepEqual(bindings, {
-    PF5: [{ code: "F5", shift: false, ctrl: false, alt: false }],
+    PF5: [{ key: "F5", shift: false, ctrl: false, alt: false }],
   });
 });
 
 test('a stray line with no "=" is ignored', () => {
   assert.deepEqual(parseKeymapText("not a binding line"), {});
+});
+
+test("a punctuation key writes the character it prints, and comes back as that key", () => {
+  const bindings = {
+    Dup: [{ key: "?", shift: true, ctrl: true, alt: false }],
+    FieldMark: [{ key: " ", shift: false, ctrl: false, alt: true }],
+    // "=" is the line's own separator and "-" is its modifier mark.
+    Attn: [{ key: "=", shift: false, ctrl: true, alt: false }],
+    Reset: [{ key: "-", shift: false, ctrl: true, alt: false }],
+  };
+  const text = keymapToText(bindings);
+  assert.match(text, /^C-S-\?=dup$/m);
+  assert.match(text, /^A-Space=fieldmark$/m);
+  assert.match(text, /^C-==attn$/m);
+  assert.match(text, /^C--=reset$/m);
+  assert.deepEqual(parseKeymapText(text), bindings);
+});
+
+test("a letter written in either case names the same key", () => {
+  assert.deepEqual(parseKeymapText("C-z=undo"), {
+    Undo: [{ key: "Z", shift: false, ctrl: true, alt: false }],
+  });
 });

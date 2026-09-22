@@ -9,17 +9,14 @@
 import { COMMANDS } from "./keymap.js";
 import { actionToKeyword, keywordToAction } from "./macro-xml.js";
 
-/** @type {Readonly<Record<string, string>>} */
+/**
+ * Only keys with no character of their own need a name; every other key writes
+ * itself, so `C-?=redo` means the key that prints `?` wherever it sits.
+ *
+ * @type {Readonly<Record<string, string>>}
+ */
 const CODE_TO_KEY_NAME = Object.freeze({
-  ...Object.fromEntries(
-    Array.from({ length: 26 }, (_, index) => [
-      `Key${String.fromCharCode(65 + index)}`,
-      String.fromCharCode(65 + index),
-    ]),
-  ),
-  ...Object.fromEntries(
-    Array.from({ length: 10 }, (_, index) => [`Digit${index}`, String(index)]),
-  ),
+  " ": "Space",
   Escape: "Esc",
   CapsLock: "CapsLock",
   Pause: "Pause",
@@ -32,7 +29,6 @@ const CODE_TO_KEY_NAME = Object.freeze({
   Tab: "Tab",
   Backspace: "Backspace",
   Delete: "Delete",
-  Space: "Space",
   ArrowUp: "Up",
   ArrowDown: "Down",
   ArrowLeft: "Left",
@@ -53,19 +49,23 @@ const KEY_NAME_TO_CODE = Object.freeze(
 );
 
 /**
- * @param {string} code a KeyboardEvent.code
+ * @param {string} key a combo's key
  * @returns {string}
  */
-function codeToKeyName(code) {
-  return CODE_TO_KEY_NAME[code] ?? code;
+function keyToName(key) {
+  return CODE_TO_KEY_NAME[key] ?? key;
 }
 
 /**
  * @param {string} name
- * @returns {string} a KeyboardEvent.code
+ * @returns {string} a combo's key
  */
-function keyNameToCode(name) {
-  return KEY_NAME_TO_CODE[name] ?? name;
+function nameToKey(name) {
+  const known = KEY_NAME_TO_CODE[name];
+  if (known !== undefined) return known;
+  // A letter written in either case names the same key.
+  const upper = name.toUpperCase();
+  return [...name].length === 1 && [...upper].length === 1 ? upper : name;
 }
 
 /**
@@ -74,7 +74,7 @@ function keyNameToCode(name) {
  */
 function comboToKey(combo) {
   const mods = `${combo.ctrl ? "C-" : ""}${combo.shift ? "S-" : ""}${combo.alt ? "A-" : ""}`;
-  return mods + codeToKeyName(combo.code);
+  return mods + keyToName(combo.key);
 }
 
 /**
@@ -98,7 +98,7 @@ function keyToCombo(text) {
       rest = rest.slice(2);
     } else break;
   }
-  return { code: keyNameToCode(rest), shift, ctrl, alt };
+  return { key: nameToKey(rest), shift, ctrl, alt };
 }
 
 /**
@@ -108,6 +108,8 @@ function keyToCombo(text) {
 function commandToKeyword(commandId) {
   if (commandId === "Copy") return "copy";
   if (commandId === "Paste") return "paste";
+  if (commandId === "Undo") return "undo";
+  if (commandId === "Redo") return "redo";
   const pf = /^PF(\d+)$/.exec(commandId);
   if (pf) return /** @type {string} */ (actionToKeyword("PF", [pf[1] ?? "1"]));
   const pa = /^PA(\d+)$/.exec(commandId);
@@ -122,6 +124,8 @@ function commandToKeyword(commandId) {
 function keywordToCommand(keyword) {
   if (keyword === "copy") return "Copy";
   if (keyword === "paste") return "Paste";
+  if (keyword === "undo") return "Undo";
+  if (keyword === "redo") return "Redo";
   const mapped = keywordToAction(keyword);
   if (mapped === null) return null;
   if (mapped.action === "PF") return `PF${mapped.args[0] ?? "1"}`;
@@ -154,7 +158,8 @@ export function parseKeymapText(text) {
   for (const rawLine of text.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (line === "" || line.startsWith("#")) continue;
-    const sep = line.indexOf("=");
+    // The last one, so the `=` key can be bound: `C-==undo`.
+    const sep = line.lastIndexOf("=");
     if (sep === -1) continue;
     const commandId = keywordToCommand(
       line

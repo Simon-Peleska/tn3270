@@ -3,7 +3,8 @@
  * they are the navigation: every other panel is one number away.
  */
 
-import { PANELS, Panel, panelIdForOption } from "./panel.js";
+import { PANELS, Panel, panelIdForOption, keyLegend } from "./panel.js";
+import { keyLabel } from "./keymap.js";
 
 /** @extends {Panel<import('./panel.js').PanelDeps>} */
 export class MenuPage extends Panel {
@@ -60,7 +61,11 @@ export class MenuPage extends Panel {
    * @override
    * @returns {string[]} */
   keys() {
-    return ["F1=Help", "F3=Exit", "F12=Cancel"];
+    return keyLegend(this.deps, [
+      ["PF1", "Help"],
+      ["PF3", "Exit"],
+      ["PF12", "Cancel"],
+    ]);
   }
 
   /**
@@ -77,21 +82,37 @@ export class MenuPage extends Panel {
   }
 }
 
-/** @type {readonly { key: string, what: string }[]} */
+/**
+ * A panel answers to the keymap, so the help names whatever keys carry these
+ * commands rather than the ones they started out on.
+ *
+ * @type {readonly { commands: string[], what: string }[]}
+ */
 const PANEL_KEYS = Object.freeze([
-  { key: "Enter", what: "Run the command line, or pick the cursor's line" },
-  { key: "F1", what: "This panel" },
-  { key: "F3", what: "Exit: leave the panel the way you came in" },
-  { key: "F4", what: "Menu: back to the primary option menu" },
-  { key: "F7 / F8", what: "Backward and forward through a long list" },
-  { key: "F12", what: "Cancel: leave without applying what was typed" },
-  { key: "Tab", what: "Between the command line and the panel body" },
-  { key: "Up / Down", what: "Move the cursor a line at a time" },
-  { key: "Left / Right", what: "Change the value the cursor is on" },
   {
-    key: "Ctrl-C / Ctrl-V",
-    what: "Copy and paste, in a panel as on the screen",
+    commands: ["Enter"],
+    what: "Run the command line, or pick the cursor's line",
   },
+  { commands: ["PF1"], what: "This panel" },
+  { commands: ["PF3"], what: "Exit: leave the panel the way you came in" },
+  { commands: ["PF4"], what: "Menu: back to the primary option menu" },
+  {
+    commands: ["PF7", "PF8"],
+    what: "Backward and forward through a long list",
+  },
+  {
+    commands: ["PF12"],
+    what: "Cancel: leave without applying what was typed",
+  },
+  {
+    commands: ["Tab", "Newline"],
+    what: "On to the next field; back one with Shift",
+  },
+  { commands: ["Up", "Down"], what: "Move the cursor a line at a time" },
+  { commands: ["Attn"], what: "Out of the panel, whatever it was doing" },
+  { commands: ["Left", "Right"], what: "Change the value the cursor is on" },
+  { commands: ["Copy"], what: "Copy, in a panel as on the screen" },
+  { commands: ["Paste"], what: "Paste, in a panel as on the screen" },
 ]);
 
 /** @type {readonly { key: string, what: string }[]} */
@@ -107,7 +128,7 @@ const COMMANDS = Object.freeze([
 /** @type {readonly { key: string, what: string }[]} */
 const SHORTCUTS = Object.freeze([
   ...PANELS.filter((panel) => panel.shortcut !== "").map((panel) => ({
-    key: panel.shortcutLabel,
+    key: `Alt-${keyLabel(panel.shortcut)}`,
     what: panel.blurb,
   })),
   {
@@ -153,7 +174,16 @@ export class HelpPage extends Panel {
       for (const entry of entries)
         lines.push({ text: `  ${entry.key}`, value: entry.what });
     };
-    section("Keys in a panel", PANEL_KEYS);
+    section(
+      "Keys in a panel",
+      PANEL_KEYS.map((entry) => ({
+        key: entry.commands
+          .map((commandId) => this.deps.keyName(commandId))
+          .filter((name) => name !== "")
+          .join(" / "),
+        what: entry.what,
+      })).filter((entry) => entry.key !== ""),
+    );
     section("Command line", COMMANDS);
     section("From the session", SHORTCUTS);
     return lines;
@@ -163,6 +193,11 @@ export class HelpPage extends Panel {
    * @override
    * @returns {string[]} */
   keys() {
-    return ["F3=Exit", "F4=Menu", "F7=Bkwd", "F8=Fwd"];
+    return keyLegend(this.deps, [
+      ["PF3", "Exit"],
+      ["PF4", "Menu"],
+      ["PF7", "Bkwd"],
+      ["PF8", "Fwd"],
+    ]);
   }
 }

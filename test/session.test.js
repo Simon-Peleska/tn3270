@@ -949,6 +949,68 @@ test("a paste crossing the gaps between short fields lands whole, with nothing e
   }
 });
 
+test("undo takes the typing back out a step at a time, and redo puts it back", async (t) => {
+  const fixture = await startTracedSession("test/traces/three-fields.trc");
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  await settle(session);
+  await waitUntil(() => session.screen.fieldsFormatted, "the field map");
+
+  const controller = collectingViewer("controller");
+  session.attach(controller);
+  const row = () => session.screen.rowText(0).slice(0, 12);
+  /** @param {string} action */
+  const press = (action) =>
+    session.handleClientMessage(controller, { type: "action", action });
+
+  session.handleClientMessage(controller, { type: "text", value: "abc" });
+  await waitUntil(() => row() === " abc        ", "the typing to land");
+  session.handleClientMessage(controller, { type: "paste", text: "456789" });
+  await waitUntil(() => row() === " abc 456 789", "the paste to land");
+
+  // One thing the user did is one step, however many actions it took.
+  await waitUntil(() => session.undoStack.length === 2, "two steps of history");
+
+  press("Undo");
+  await waitUntil(() => row() === " abc        ", "the paste to come back out");
+  press("Undo");
+  await waitUntil(
+    () => row() === "            ",
+    "the typing to come back out",
+  );
+
+  press("Undo");
+  await settle(session);
+  assert.equal(row(), "            ", "an empty history is a no-op");
+
+  press("Redo");
+  await waitUntil(() => row() === " abc        ", "the typing to come back");
+  press("Redo");
+  await waitUntil(() => row() === " abc 456 789", "the paste to come back");
+});
+
+test("an AID key ends the history: what was typed before it cannot be undone", async (t) => {
+  const fixture = await startTracedSession("test/traces/three-fields.trc");
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  await settle(session);
+  await waitUntil(() => session.screen.fieldsFormatted, "the field map");
+
+  const controller = collectingViewer("controller");
+  session.attach(controller);
+  const row = () => session.screen.rowText(0).slice(0, 12);
+
+  session.handleClientMessage(controller, { type: "text", value: "abc" });
+  await waitUntil(() => session.undoStack.length === 1, "a step of history");
+
+  session.handleClientMessage(controller, { type: "action", action: "Enter" });
+  assert.equal(session.undoStack.length, 0, "the screen went to the host");
+
+  session.handleClientMessage(controller, { type: "action", action: "Undo" });
+  await settle(session);
+  assert.equal(row(), " abc        ", "the typing stands");
+});
+
 test("a b3270 resource set in the config reaches the emulator", async (t) => {
   const session = new Session(
     testConfig({

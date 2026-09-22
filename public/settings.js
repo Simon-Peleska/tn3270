@@ -1,6 +1,6 @@
 // The settings panel, drawn as VT bytes into the terminal itself rather than HTML.
 
-import { Panel, cycle } from "./panel.js";
+import { Panel, cycle, keyLegend } from "./panel.js";
 
 /**
  * @typedef {object} Theme
@@ -646,7 +646,7 @@ export class SettingsPage extends Panel {
     rows.push({ key: "", label: "", value: "", gap: true });
     rows.push({
       key: "",
-      label: "Enter / to turn one on",
+      label: "Type / to turn one on",
       value: "",
       gap: true,
     });
@@ -888,11 +888,12 @@ export class SettingsPage extends Panel {
   typed(event) {
     const row = this.rows()[this.selected];
     if (row === undefined) return false;
+    const rubout = this.deps.keyCommand(event) === "Backspace";
     if (row.key === "host" && this.hostLocked) {
       // Swallowed, not passed on: a locked host must not become a command.
-      return event.key.length === 1 || event.key === "Backspace";
+      return event.key.length === 1 || rubout;
     }
-    if (row.key === "host" && event.key === "Backspace") {
+    if (row.key === "host" && rubout) {
       this.host = this.host.slice(0, -1);
       this.draw();
       return true;
@@ -1068,7 +1069,7 @@ export class SettingsPage extends Panel {
       ];
     }
     return [
-      "Enter applies the new screen size.",
+      `${this.deps.keyName("Enter")} applies the new screen size.`,
       this.connected
         ? "  The host connection is dropped and reopened."
         : "  The screen is erased.",
@@ -1081,11 +1082,13 @@ export class SettingsPage extends Panel {
    */
   keys() {
     return [
-      "F1=Help",
-      "F3=Exit",
-      "F4=Menu",
-      "F12=Cancel",
-      "Enter=Apply",
+      ...keyLegend(this.deps, [
+        ["PF1", "Help"],
+        ["PF3", "Exit"],
+        ["PF4", "Menu"],
+        ["PF12", "Cancel"],
+        ["Enter", "Apply"],
+      ]),
       "←→=Change",
     ];
   }

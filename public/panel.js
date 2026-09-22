@@ -12,10 +12,10 @@ export const ESC = "\x1b";
 /**
  * The panels the action bar lists, in the order their numbers run. The menu has
  * no number of its own: you get back to it with F4, or by naming it. The
- * shortcut is the Alt+code that opens the panel from the session, and the label
- * beside it is how the help panel spells that key.
+ * shortcut is the key Alt opens the panel with — the character it prints, as
+ * `keyIdentity` reads it.
  *
- * @type {readonly { id: string, option: string, name: string, blurb: string, shortcut: string, shortcutLabel: string }[]}
+ * @type {readonly { id: string, option: string, name: string, blurb: string, shortcut: string }[]}
  */
 export const PANELS = Object.freeze([
   {
@@ -23,40 +23,35 @@ export const PANELS = Object.freeze([
     option: "",
     name: "Menu",
     blurb: "The panel every other one is reached from",
-    shortcut: "Space",
-    shortcutLabel: "Alt-Space",
+    shortcut: " ",
   },
   {
     id: "settings",
     option: "0",
     name: "Settings",
     blurb: "Colours, font, screen size and sharing",
-    shortcut: "Comma",
-    shortcutLabel: "Alt-,",
+    shortcut: ",",
   },
   {
     id: "macros",
     option: "1",
     name: "Macros",
     blurb: "Record, play back and trade keystroke macros",
-    shortcut: "KeyM",
-    shortcutLabel: "Alt-M",
+    shortcut: "M",
   },
   {
     id: "recorder",
     option: "2",
     name: "Recorder",
     blurb: "Capture screens and keys as a script",
-    shortcut: "KeyR",
-    shortcutLabel: "Alt-R",
+    shortcut: "R",
   },
   {
     id: "keymap",
     option: "3",
     name: "Keys",
     blurb: "What each key and key combination does",
-    shortcut: "KeyK",
-    shortcutLabel: "Alt-K",
+    shortcut: "K",
   },
   {
     id: "help",
@@ -64,7 +59,6 @@ export const PANELS = Object.freeze([
     name: "Help",
     blurb: "The keys and commands panels answer to",
     shortcut: "",
-    shortcutLabel: "",
   },
 ]);
 
@@ -393,55 +387,49 @@ function drawPanel(view) {
 }
 
 /**
- * The PF keys an ISPF panel answers to. Escape is not one of them, but every
- * browser habit says it closes a dialog, so it ends the panel like F3.
+ * A panel has no keyboard of its own: it answers to the 3270 commands, so a key
+ * means the same thing here as it does on the screen behind it. Enter is the
+ * AID key — right Ctrl by default, not the key marked Enter, which is Newline
+ * and steps to the next field. Attn is how you walk out of anything.
  *
- * @param {KeyboardEvent} event
- * @returns {'help' | 'end' | 'return' | 'cancel' | 'backward' | 'forward' | 'up' | 'down' | 'left' | 'right' | 'tab' | 'submit' | null}
+ * @type {Readonly<Record<string, PanelAction>>}
  */
-function panelAction(event) {
-  if (event.ctrlKey || event.metaKey) return null;
-  switch (event.key) {
-    case "F1":
-      return "help";
-    case "F3":
-    case "Escape":
-      return "end";
-    case "F4":
-      return "return";
-    case "F7":
-    case "PageUp":
-      return "backward";
-    case "F8":
-    case "PageDown":
-      return "forward";
-    case "F12":
-      return "cancel";
-    case "Enter":
-      return "submit";
-    case "ArrowUp":
-      return "up";
-    case "ArrowDown":
-      return "down";
-    case "ArrowLeft":
-      return "left";
-    case "ArrowRight":
-      return "right";
-    case "Tab":
-      return "tab";
-    default:
-      return null;
-  }
-}
+const COMMAND_ACTIONS = Object.freeze({
+  Enter: "submit",
+  PF1: "help",
+  PF3: "end",
+  PF4: "return",
+  PF7: "backward",
+  PF8: "forward",
+  PF12: "cancel",
+  Attn: "end",
+  Newline: "next",
+  Tab: "next",
+  Down: "next",
+  BackNewline: "prev",
+  BackTab: "prev",
+  Up: "prev",
+  Left: "left",
+  Right: "right",
+});
 
 /**
+ * @typedef {'help' | 'end' | 'return' | 'cancel' | 'backward' | 'forward'
+ *   | 'prev' | 'next' | 'left' | 'right' | 'submit'} PanelAction
+ */
+
+/**
+ * A character is itself wherever it sits, so typing goes by the key; taking one
+ * back is the Backspace command, which the keymap may have moved.
+ *
  * @param {string} text
  * @param {KeyboardEvent} event
+ * @param {string | null} command what the keymap makes of the key
  * @returns {string | null} the text after the key, or null when it was not for it
  */
-export function typeKey(text, event) {
+export function typeKey(text, event, command) {
   if (event.ctrlKey || event.metaKey || event.altKey) return null;
-  if (event.key === "Backspace") return text.slice(0, -1);
+  if (command === "Backspace") return text.slice(0, -1);
   if (event.key.length === 1) return text + event.key;
   return null;
 }
@@ -479,7 +467,26 @@ export function parseCommand(input) {
  * @property {() => Theme} [theme] the panel's own theme wins where a page has one
  * @property {() => void} end this panel is finished: back where it was opened from
  * @property {(id: string) => void} go open another panel
+ * @property {(event: KeyboardEvent) => string | null} keyCommand what the
+ *   keymap makes of a key
+ * @property {(commandId: string) => string} keyName what key carries a command,
+ *   '' when nothing does
  */
+
+/**
+ * A panel's key legend, written from the keymap rather than from habit: an
+ * unbound command has no key to name, so it is left off.
+ *
+ * @param {PanelDeps} deps
+ * @param {readonly [string, string][]} entries command id, and what it does here
+ * @returns {string[]}
+ */
+export function keyLegend(deps, entries) {
+  return entries
+    .map(([commandId, label]) => [deps.keyName(commandId), label])
+    .filter(([name]) => name !== "")
+    .map(([name, label]) => `${name}=${label}`);
+}
 
 /**
  * What every panel does the same way: the command line, the cursor, scrolling
@@ -523,7 +530,14 @@ export class Panel {
 
   /** @returns {string[]} */
   keys() {
-    return ["F1=Help", "F3=Exit", "F4=Menu", "F7=Bkwd", "F8=Fwd", "F12=Cancel"];
+    return keyLegend(this.deps, [
+      ["PF1", "Help"],
+      ["PF3", "Exit"],
+      ["PF4", "Menu"],
+      ["PF7", "Bkwd"],
+      ["PF8", "Fwd"],
+      ["PF12", "Cancel"],
+    ]);
   }
 
   /** @returns {string[]} */
@@ -748,10 +762,9 @@ export class Panel {
   handleKey(event) {
     if (!this.open) return false;
     if (this.override(event)) return true;
-    // Reload, devtools, copy and paste belong to the browser even here.
-    if (event.ctrlKey || event.metaKey) return false;
 
-    const action = panelAction(event);
+    const command = this.deps.keyCommand(event);
+    const action = command === null ? null : (COMMAND_ACTIONS[command] ?? null);
     if (action === "help") {
       this.deps.go("help");
       return true;
@@ -768,8 +781,8 @@ export class Panel {
       this.cancel();
       return true;
     }
-    if (action === "up" || action === "down" || action === "tab") {
-      this.move(action === "up" ? -1 : 1);
+    if (action === "prev" || action === "next") {
+      this.move(action === "prev" ? -1 : 1);
       return true;
     }
     if (action === "backward" || action === "forward") {
@@ -788,9 +801,12 @@ export class Panel {
       this.submit();
       return true;
     }
+    // A key the keymap has nothing for here is the browser's: reload, devtools,
+    // and the clipboard, which app.js dispatches for panel and screen alike.
+    if (event.ctrlKey || event.metaKey) return false;
     if (!this.onCommand && this.typed(event)) return true;
 
-    const typed = typeKey(this.command, event);
+    const typed = typeKey(this.command, event, command);
     if (typed !== null) {
       this.command = typed;
       this.onCommand = true;

@@ -2,7 +2,7 @@
  * Keyboard → 3270 actions as a table the keymap dialog can edit. Defaults
  * follow IBM PCOMM's 3270 layout, not x3270's Ctrl-letter mnemonics.
  *
- * @typedef {{ code: string, shift: boolean, ctrl: boolean, alt: boolean }} Combo
+ * @typedef {{ key: string, shift: boolean, ctrl: boolean, alt: boolean }} Combo
  * @typedef {{ id: string, label: string }} Command
  * @typedef {Record<string, Combo[]>} Bindings
  */
@@ -34,6 +34,8 @@ export const COMMANDS = Object.freeze([
   { id: "Clear", label: "Clear" },
   { id: "Copy", label: "Copy" },
   { id: "Paste", label: "Paste" },
+  { id: "Undo", label: "Undo typing" },
+  { id: "Redo", label: "Redo typing" },
   ...Array.from({ length: 24 }, (_, index) => ({
     id: `PF${index + 1}`,
     label: `PF${index + 1}`,
@@ -48,12 +50,13 @@ export const COMMANDS = Object.freeze([
 export const CLIENT_COMMANDS = new Set(["Copy", "Paste"]);
 
 /**
- * @param {string} code
+ * @param {string} key one character, or a `KeyboardEvent.code` for keys that
+ *   print none
  * @param {{ shift?: boolean, ctrl?: boolean, alt?: boolean }} [modifiers]
  * @returns {Combo}
  */
-function combo(code, { shift = false, ctrl = false, alt = false } = {}) {
-  return { code, shift, ctrl, alt };
+function combo(key, { shift = false, ctrl = false, alt = false } = {}) {
+  return { key, shift, ctrl, alt };
 }
 
 /**
@@ -82,8 +85,11 @@ export const DEFAULT_BINDINGS = Object.freeze({
   Attn: [combo("Escape")],
   SysReq: [combo("Escape", { shift: true })],
   Clear: [combo("Pause")],
-  Copy: [combo("KeyC", { ctrl: true }), combo("Insert", { ctrl: true })],
+  Copy: [combo("C", { ctrl: true }), combo("Insert", { ctrl: true })],
   Paste: [combo("Insert", { shift: true })],
+  // Bound, so the browser never sees them: Ctrl+R would reload the page.
+  Undo: [combo("Z", { ctrl: true })],
+  Redo: [combo("R", { ctrl: true })],
   PA1: [combo("Insert", { alt: true })],
   PA2: [combo("Home", { alt: true })],
   PA3: [combo("PageUp", { shift: true })],
@@ -123,7 +129,25 @@ function isAidCommand(commandId) {
  * @returns {string}
  */
 export function serializeCombo(value) {
-  return `${value.ctrl ? "C" : ""}${value.shift ? "S" : ""}${value.alt ? "A" : ""}:${value.code}`;
+  return `${value.ctrl ? "C" : ""}${value.shift ? "S" : ""}${value.alt ? "A" : ""}:${value.key}`;
+}
+
+/**
+ * A key is the character it prints, not the place it sits. `KeyboardEvent.code`
+ * names a position on a US board: the key marked Z is `KeyY` on a German one,
+ * and `?` is `Shift+Slash` there but `Shift+Minus` here. Only keys that print
+ * nothing — F3, Home, the arrows — have no character to go by, and those keep
+ * their position, which is the same everywhere.
+ *
+ * @param {KeyboardEvent} event
+ * @returns {string} one character, or a `KeyboardEvent.code`
+ */
+export function keyIdentity(event) {
+  if ([...event.key].length !== 1) return event.code;
+  // Uppercase so Shift is carried by the flag alone, except where a letter has
+  // no single-character uppercase: German ß uppercases to SS.
+  const upper = event.key.toUpperCase();
+  return [...upper].length === 1 ? upper : event.key;
 }
 
 /**
@@ -131,15 +155,18 @@ export function serializeCombo(value) {
  * @returns {Combo}
  */
 export function comboFromEvent(event) {
-  return combo(event.code, {
+  return combo(keyIdentity(event), {
     shift: event.shiftKey,
     ctrl: event.ctrlKey,
     alt: event.altKey,
   });
 }
 
-/** @type {Readonly<Record<string, string>>} */
-const CODE_LABELS = Object.freeze({
+/**
+ * Keys that print nothing, so a saved map and the dialog name them by position.
+ * @type {Readonly<Record<string, string>>}
+ */
+const KEY_LABELS = Object.freeze({
   ControlLeft: "LCtrl",
   ControlRight: "RCtrl",
   ShiftLeft: "LShift",
@@ -162,41 +189,77 @@ const CODE_LABELS = Object.freeze({
   Tab: "Tab",
   Backspace: "Backspace",
   Delete: "Delete",
-  Space: "Space",
 });
 
 /**
- * @param {string} code
+ * @param {string} key a combo's key: one character, or a `KeyboardEvent.code`
  * @returns {string}
  */
-export function codeLabel(code) {
-  if (/^Key[A-Z]$/.test(code)) return code.slice(3);
-  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
-  if (/^F\d{1,2}$/.test(code)) return code;
-  return CODE_LABELS[code] ?? code;
+export function keyLabel(key) {
+  if (key === " ") return "Space";
+  if ([...key].length === 1) return key;
+  return KEY_LABELS[key] ?? key;
 }
+
+/**
+ * Pressing a modifier sets its own flag, so right Ctrl would read "Ctrl+RCtrl".
+ * @type {Readonly<Record<string, string>>}
+ */
+const MODIFIER_KEYS = Object.freeze({
+  ControlLeft: "ctrl",
+  ControlRight: "ctrl",
+  ShiftLeft: "shift",
+  ShiftRight: "shift",
+  AltLeft: "alt",
+  AltRight: "alt",
+});
 
 /**
  * @param {Combo} value
  * @returns {string} e.g. "Ctrl+Shift+F1"
  */
 export function comboLabel(value) {
+  const held = MODIFIER_KEYS[value.key];
   const mods = [
-    value.ctrl && "Ctrl",
-    value.shift && "Shift",
-    value.alt && "Alt",
+    value.ctrl && held !== "ctrl" && "Ctrl",
+    value.shift && held !== "shift" && "Shift",
+    value.alt && held !== "alt" && "Alt",
   ].filter(Boolean);
-  return [...mods, codeLabel(value.code)].join("+");
+  return [...mods, keyLabel(value.key)].join("+");
+}
+
+/**
+ * A map saved before keys were known by their character holds a
+ * `KeyboardEvent.code`. Letters, digits and Space say which character that was;
+ * a punctuation position does not, since the character depended on the layout
+ * it was bound on, so it is left alone to be shown and pressed again.
+ *
+ * @param {Combo} value
+ * @returns {Combo}
+ */
+function fromStored(value) {
+  if (typeof value.key === "string") return value;
+  const code = /** @type {{ code?: string }} */ (value).code ?? "";
+  const letter = /^Key([A-Z])$/.exec(code);
+  const digit = /^Digit([0-9])$/.exec(code);
+  const key = letter?.[1] ?? digit?.[1] ?? (code === "Space" ? " " : code);
+  return { key, shift: value.shift, ctrl: value.ctrl, alt: value.alt };
 }
 
 /**
  * A saved keymap is the whole map, not a diff, so commands added to the app
  * later need filling in. An empty combo list is a deliberate unbinding.
  *
- * @param {Bindings} saved
+ * @param {Bindings} stored
  * @returns {Bindings}
  */
-export function withDefaults(saved) {
+export function withDefaults(stored) {
+  /** @type {Bindings} */
+  const saved = {};
+  for (const [commandId, combos] of Object.entries(stored)) {
+    saved[commandId] = combos.map(fromStored);
+  }
+
   const taken = new Set(Object.values(saved).flat().map(serializeCombo));
   /** @type {Bindings} */
   const filled = { ...saved };
@@ -237,6 +300,15 @@ function commandToAction(commandId) {
 /**
  * @param {KeyboardEvent} event
  * @param {Map<string, string>} lookup
+ * @returns {string | null} the command this key carries, whatever is listening
+ */
+export function commandForEvent(event, lookup) {
+  return lookup.get(serializeCombo(comboFromEvent(event))) ?? null;
+}
+
+/**
+ * @param {KeyboardEvent} event
+ * @param {Map<string, string>} lookup
  * @returns {{ kind: 'action', action: string, args: string[] }
  *   | { kind: 'client', command: string }
  *   | { kind: 'text', value: string } | null}
@@ -244,7 +316,7 @@ function commandToAction(commandId) {
 export function mapKey(event, lookup) {
   if (event.metaKey) return null;
 
-  const commandId = lookup.get(serializeCombo(comboFromEvent(event)));
+  const commandId = commandForEvent(event, lookup) ?? undefined;
   if (commandId !== undefined) {
     if (event.repeat && isAidCommand(commandId)) return null;
     if (CLIENT_COMMANDS.has(commandId))

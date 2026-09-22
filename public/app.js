@@ -1,5 +1,5 @@
 import { init, Terminal } from "/vendor/dist/ghostty-web.js";
-import { mapKey } from "/keymap.js";
+import { commandForEvent, keyIdentity, mapKey } from "/keymap.js";
 import { ESC, paint, terminalColors } from "/panel.js";
 import { HelpPage, MenuPage } from "/menu.js";
 import { SettingsPage, modeOversize } from "/settings.js";
@@ -414,6 +414,8 @@ const panelIo = {
   theme: () => settings.theme(),
   end: () => endPanel(),
   go: (id) => goPanel(id),
+  keyCommand: (event) => commandForEvent(event, keymap.lookup()),
+  keyName: (commandId) => keymap.labelFor(commandId),
 };
 
 const settings = new SettingsPage({
@@ -1246,8 +1248,9 @@ window.addEventListener(
       return;
     }
     if (event.altKey && !event.ctrlKey && !event.metaKey) {
+      const pressed = keyIdentity(event);
       const wanted = panels.find(
-        (page) => page.toggleKey !== "" && event.code === page.toggleKey,
+        (page) => page.toggleKey !== "" && pressed === page.toggleKey,
       );
       if (wanted !== undefined) {
         event.preventDefault();

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { MacrosPage } from "../public/macros.js";
 import { THEMES } from "../public/settings.js";
-import { key } from "./keyevent.js";
+import { key, enterKey, defaultKeymapDeps } from "./keyevent.js";
 
 /** @param {string[]} [files] */
 function fixture(files = []) {
@@ -20,6 +20,7 @@ function fixture(files = []) {
   /** @type {(() => void)[]} */
   const pendingUnlocks = [];
   const page = new MacrosPage({
+    ...defaultKeymapDeps,
     write: (bytes) => calls.written.push(bytes),
     geometry: () => ({ cols: 80, rows: 25 }),
     theme: () => THEMES[0],
@@ -68,7 +69,7 @@ test("a macro is numbered, and typing its number on the command line plays it", 
   );
 
   for (const char of "2") page.handleKey(key({ key: char }));
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
   assert.equal(page.playing?.macro, macro);
 });
 
@@ -132,14 +133,14 @@ test("stopping a recording asks for a name, and enter saves it", () => {
   page.startRecording();
   page.record({ type: "action", action: "Enter", args: [] });
   page.show(); // reopen the page to reach the control row and stop it
-  page.handleKey(key({ key: "Enter" })); // stop, via the control row
+  page.handleKey(enterKey()); // stop, via the control row
   assert.equal(page.naming?.kind, "save");
 
   const defaultLength = page.nameBuffer.length;
   for (let i = 0; i < defaultLength; i++)
     page.handleKey(key({ key: "Backspace" }));
   for (const char of "My Macro") page.handleKey(key({ key: char }));
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
 
   assert.equal(page.macros.length, 1);
   assert.equal(page.macros[0]?.name, "My Macro");
@@ -162,7 +163,7 @@ test("a blank name is refused, leaving the page waiting for a real one", () => {
   page.stopRecording();
   page.nameBuffer = "";
   page.show();
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
   assert.equal(page.naming !== null, true, "nothing was saved");
 });
 
@@ -182,14 +183,14 @@ test("renaming an existing macro updates it in place", () => {
   page.show();
   page.selected = 1;
   for (const char of "ren") page.handleKey(key({ key: char }));
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
   assert.deepEqual(page.naming, { kind: "rename", index: 0 });
 
   page.handleKey(key({ key: "Backspace" }));
   page.handleKey(key({ key: "Backspace" }));
   page.handleKey(key({ key: "Backspace" }));
   for (const char of "New") page.handleKey(key({ key: char }));
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
 
   assert.equal(page.macros[0]?.name, "New");
   assert.equal(page.naming, null);
@@ -256,7 +257,7 @@ test("exporting with nothing marked exports the macro under the cursor", () => {
   page.show();
   page.selected = 1;
   for (const char of "export") page.handleKey(key({ key: char }));
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
 
   assert.equal(calls.exported.length, 1);
   assert.equal(calls.exported[0]?.filename, "Solo.xml");
@@ -270,7 +271,7 @@ test("exporting several marked macros produces one file with all of them", () =>
   page.marked.add(1);
   page.show();
   for (const char of "export") page.handleKey(key({ key: char }));
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
 
   assert.equal(calls.exported.length, 1);
   assert.equal(calls.exported[0]?.filename, "macros.xml");
@@ -396,7 +397,7 @@ test("enter on a macro row closes the page and plays it", async () => {
   page.macros.push(macro);
   page.show();
   page.selected = 1;
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
 
   assert.equal(page.open, false);
   assert.equal(page.playing?.macro, macro);

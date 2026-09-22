@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { SettingsPage, THEMES, FONTS } from "../public/settings.js";
-import { key } from "./keyevent.js";
+import { key, enterKey, defaultKeymapDeps } from "./keyevent.js";
 
 /**
  * A fixed-pixel window whose cells grow with the text, as a monospace font's do.
@@ -45,6 +45,7 @@ function fixture(fit = () => ({ cols: 158, rows: 60 })) {
     /** @type {boolean[]} */ automation: [],
   };
   const page = new SettingsPage({
+    ...defaultKeymapDeps,
     write: (bytes) => calls.written.push(bytes),
     geometry: () => ({ cols: 80, rows: 25 }),
     applyTheme: (theme) => calls.themes.push(theme.name),
@@ -105,7 +106,7 @@ test("the command line takes the ISPF verbs: a jump, the menu and help", () => {
   page.show();
 
   for (const char of "=1") page.handleKey(key({ key: char }));
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
   assert.deepEqual(calls.went, ["macros"]);
 
   page.handleKey(key({ key: "F4" }));
@@ -121,7 +122,7 @@ test("a command the panel does not know is answered on the panel, not swallowed"
   page.show();
 
   for (const char of "zork") page.handleKey(key({ key: char }));
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
 
   assert.match(page.message, /zork/);
   assert.equal(page.open, true);
@@ -138,7 +139,7 @@ test("APPLY on the command line does what Enter on the panel does", () => {
   page.handleKey(key({ key: "ArrowRight" }));
   page.onCommand = true;
   for (const char of "apply") page.handleKey(key({ key: char }));
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
 
   assert.deepEqual(calls.models, [3]);
   assert.equal(page.open, false);
@@ -345,7 +346,7 @@ test("a screen size change waits for Enter and warns what it costs", () => {
   assert.match(drawn, /Model 5 - 27x132/);
   assert.match(drawn, /The host connection is dropped and reopened/);
 
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
   assert.deepEqual(calls.models, [5]);
   assert.equal(page.open, false);
   assert.equal(calls.ends, 1);
@@ -377,7 +378,7 @@ test("the dynamic screen is one more choice after the models, asked for as an ov
     "a size asked for by name has nothing to fit to the window",
   );
 
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
   assert.deepEqual(calls.oversizes, ["160x62"]);
   assert.deepEqual(calls.models, [], "the model underneath it did not move");
 });
@@ -421,7 +422,7 @@ test("fit to window asks for the screen the browser measured, on Enter", () => {
   assert.match(drawn, /158x60/);
   assert.match(drawn, /The host connection is dropped and reopened/);
 
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
   assert.deepEqual(calls.oversizes, ["158x60"]);
   assert.deepEqual(calls.models, [], "the model itself did not move");
 });
@@ -470,7 +471,7 @@ test("the text size appears with the fit and drives what it measures", () => {
     "the text size is remembered",
   );
 
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
   assert.deepEqual(calls.oversizes, ["156x38"]);
 });
 
@@ -538,7 +539,7 @@ test("applying a screen size saves it as a choice, so another tab can ask for it
   page.handleKey(key({ key: "ArrowRight" }));
   focus(page, "fit");
   page.handleKey(key({ key: "ArrowRight" }));
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
 
   assert.deepEqual(calls.models, [3]);
   assert.deepEqual(calls.oversizes, ["158x60"]);
@@ -567,14 +568,14 @@ test("the dynamic screen and a plain model are saved as themselves", () => {
     "160x62",
     "one step back from model 2 is the dynamic screen",
   );
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
   assert.equal(calls.saved.at(-1)?.screenSize, "dynamic");
 
   page.setOversize("160x62");
   page.show();
   focus(page, "model");
   page.handleKey(key({ key: "ArrowRight" }));
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
   assert.equal(calls.saved.at(-1)?.screenSize, "model");
 });
 
@@ -652,7 +653,7 @@ test("the host field leads while disconnected, types, backspaces, and enter conn
   page.handleKey(key({ key: "Backspace" }));
   assert.equal(page.host, "127.");
 
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
   assert.deepEqual(calls.hosts, ["127."]);
   assert.equal(
     page.open,
@@ -673,7 +674,7 @@ test("a locked host is shown but not editable, and enter asks to reopen it", () 
     "typing must not reach a host the server controls",
   );
 
-  page.handleKey(key({ key: "Enter" }));
+  page.handleKey(enterKey());
   assert.deepEqual(calls.hosts, [null]);
 });
 

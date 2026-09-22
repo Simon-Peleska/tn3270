@@ -1,6 +1,6 @@
 /** The keys panel: an ISPF list of commands, each opening its own list of keystrokes. */
 
-import { Panel } from "./panel.js";
+import { Panel, keyLegend } from "./panel.js";
 import {
   COMMANDS,
   DEFAULT_BINDINGS,
@@ -85,6 +85,15 @@ export class KeymapPage extends Panel {
    */
   combosFor(commandId) {
     return this.bindings[commandId] ?? [];
+  }
+
+  /**
+   * @param {string} commandId
+   * @returns {string} the first key bound to it, '' when nothing is
+   */
+  labelFor(commandId) {
+    const first = this.combosFor(commandId)[0];
+    return first === undefined ? "" : comboLabel(first);
   }
 
   /**
@@ -189,7 +198,7 @@ export class KeymapPage extends Panel {
       {
         option: "A",
         text: "Add a binding",
-        value: "Enter listens for a keystroke",
+        value: `${this.deps.keyName("Enter")} listens for a keystroke`,
       },
     ];
   }
@@ -220,9 +229,11 @@ export class KeymapPage extends Panel {
       return ["Press the key combination to bind. F12 or Escape cancels."];
     if (this.mode === "combos")
       return [
-        "Enter opens a line, DELETE removes a binding, F3 goes back to the list.",
+        `${this.deps.keyName("Enter")} opens a line, DELETE removes a binding, ${this.deps.keyName("PF3")} goes back to the list.`,
       ];
-    return ["Enter opens a command. Commands: EXPORT, IMPORT, RESET."];
+    return [
+      `${this.deps.keyName("Enter")} opens a command. Commands: EXPORT, IMPORT, RESET.`,
+    ];
   }
 
   /**
@@ -230,16 +241,14 @@ export class KeymapPage extends Panel {
    * @returns {string[]}
    */
   keys() {
-    if (this.mode === "combos")
-      return [
-        "F1=Help",
-        "F3=Back",
-        "F4=Menu",
-        "F7=Bkwd",
-        "F8=Fwd",
-        "Enter=Open",
-      ];
-    return ["F1=Help", "F3=Exit", "F4=Menu", "F7=Bkwd", "F8=Fwd", "Enter=Open"];
+    return keyLegend(this.deps, [
+      ["PF1", "Help"],
+      ["PF3", this.mode === "combos" ? "Back" : "Exit"],
+      ["PF4", "Menu"],
+      ["PF7", "Bkwd"],
+      ["PF8", "Fwd"],
+      ["Enter", "Open"],
+    ]);
   }
 
   /**
@@ -326,7 +335,9 @@ export class KeymapPage extends Panel {
 
   /**
    * Listening takes every key, modifiers included: a modifier on its own is a
-   * binding someone may want.
+   * binding someone may want. The two keys out are the only ones in the app
+   * that go by their own name rather than the keymap — the keymap is what is
+   * being edited, so the way out of the edit cannot depend on it.
    *
    * @override
    * @param {KeyboardEvent} event
@@ -354,7 +365,8 @@ export class KeymapPage extends Panel {
    * @returns {boolean}
    */
   typed(event) {
-    if (this.mode !== "combos" || event.key !== "Delete") return false;
+    if (this.mode !== "combos" || this.deps.keyCommand(event) !== "Delete")
+      return false;
     this.removeSelectedCombo();
     return true;
   }

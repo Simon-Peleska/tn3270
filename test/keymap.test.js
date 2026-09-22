@@ -100,6 +100,67 @@ test("Ctrl-C and Ctrl-Insert are the Copy command, not a 3270 action", () => {
   );
 });
 
+test("a binding follows the character printed on the key, not its place on the board", () => {
+  // QWERTZ: the key marked Z sits where a US layout keeps Y, so it reports KeyY.
+  assert.deepEqual(
+    mapKey(key({ key: "z", code: "KeyY", ctrlKey: true }), lookup),
+    { kind: "action", action: "Undo", args: [] },
+  );
+  // And the key marked Y, in the US Z position, is not it.
+  assert.equal(
+    mapKey(key({ key: "y", code: "KeyZ", ctrlKey: true }), lookup),
+    null,
+  );
+});
+
+test("a key with no character of its own is known by its place, which every layout shares", () => {
+  const board = buildLookup({
+    ...DEFAULT_BINDINGS,
+    Dup: [{ key: "F13", shift: false, ctrl: false, alt: false }],
+  });
+  assert.deepEqual(mapKey(key({ key: "F13", code: "F13" }), board), {
+    kind: "action",
+    action: "Dup",
+    args: [],
+  });
+  // A Cyrillic layout prints no Latin letter anywhere, so Ctrl+Z stays put.
+  assert.equal(
+    mapKey(key({ key: "я", code: "KeyZ", ctrlKey: true }), lookup),
+    null,
+  );
+});
+
+test("a punctuation binding is the key that prints it, wherever the layout puts it", () => {
+  // ? is Shift+ß on a German board and Shift+/ on a US one; both are the ? key.
+  const bound = buildLookup({
+    ...DEFAULT_BINDINGS,
+    Dup: [{ key: "?", shift: true, ctrl: true, alt: false }],
+    FieldMark: [{ key: "*", shift: false, ctrl: true, alt: false }],
+  });
+  const dup = { kind: "action", action: "Dup", args: [] };
+  assert.deepEqual(
+    mapKey(
+      key({ key: "?", code: "Minus", shiftKey: true, ctrlKey: true }),
+      bound,
+    ),
+    dup,
+    "German: Shift+ß",
+  );
+  assert.deepEqual(
+    mapKey(
+      key({ key: "?", code: "Slash", shiftKey: true, ctrlKey: true }),
+      bound,
+    ),
+    dup,
+    "US: Shift+/",
+  );
+  // The numeric keypad prints * without Shift, wherever it is.
+  assert.deepEqual(
+    mapKey(key({ key: "*", code: "NumpadMultiply", ctrlKey: true }), bound),
+    { kind: "action", action: "FieldMark", args: [] },
+  );
+});
+
 test("function keys are PF keys, shifted ones are the high twelve", () => {
   assert.deepEqual(mapKey(key({ key: "F3", code: "F3" }), lookup), {
     kind: "action",
@@ -247,7 +308,7 @@ test("filling in defaults leaves a deliberate unbinding, and a key the operator 
       ...older,
       Clear: [
         ...DEFAULT_BINDINGS.Clear,
-        { code: "Enter", shift: true, ctrl: false, alt: false },
+        { key: "Enter", shift: true, ctrl: false, alt: false },
       ],
     }),
   );
@@ -265,6 +326,39 @@ test("an empty saved keymap is simply the defaults", () => {
   assert.deepEqual(withDefaults({}), DEFAULT_BINDINGS);
 });
 
+test("a keymap saved when keys went by position still works: letters, digits and Space carry over", () => {
+  const stored = /** @type {any} */ ({
+    Dup: [{ code: "KeyD", shift: false, ctrl: true, alt: false }],
+    FieldMark: [{ code: "Digit7", shift: false, ctrl: true, alt: false }],
+    DeleteWord: [{ code: "Space", shift: false, ctrl: true, alt: false }],
+    Attn: [{ code: "Escape", shift: false, ctrl: false, alt: false }],
+  });
+  const filled = withDefaults(stored);
+  assert.deepEqual(filled.Dup, [
+    { key: "D", shift: false, ctrl: true, alt: false },
+  ]);
+  assert.deepEqual(filled.FieldMark, [
+    { key: "7", shift: false, ctrl: true, alt: false },
+  ]);
+  assert.deepEqual(filled.DeleteWord, [
+    { key: " ", shift: false, ctrl: true, alt: false },
+  ]);
+  // A key that never had a character keeps its name, so it keeps working.
+  assert.deepEqual(filled.Attn, [
+    { key: "Escape", shift: false, ctrl: false, alt: false },
+  ]);
+
+  const board = buildLookup(filled);
+  assert.deepEqual(
+    mapKey(key({ key: "d", code: "KeyD", ctrlKey: true }), board),
+    {
+      kind: "action",
+      action: "Dup",
+      args: [],
+    },
+  );
+});
+
 test("rebinding a combo to a new command steals it from whatever had it, at the lookup level", () => {
   // Removing a combo from its old command is the keymap page's job, not buildLookup's.
   const moved = buildLookup({
@@ -272,7 +366,7 @@ test("rebinding a combo to a new command steals it from whatever had it, at the 
     Attn: [],
     Clear: [
       ...DEFAULT_BINDINGS.Clear,
-      { code: "Escape", shift: false, ctrl: false, alt: false },
+      { key: "Escape", shift: false, ctrl: false, alt: false },
     ],
   });
   assert.deepEqual(mapKey(key({ key: "Escape", code: "Escape" }), moved), {

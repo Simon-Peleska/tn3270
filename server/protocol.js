@@ -91,7 +91,8 @@ export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 
 /**
  * Allow-list: b3270 also accepts actions that read files and run programs.
- * `BackNewline` is ours alone; the session turns it into a cursor move.
+ * `BackNewline` is ours alone; the session turns it into a cursor move, as it
+ * turns `Undo` and `Redo` into a retype of the fields as they were.
  *
  * @type {ReadonlySet<string>}
  */
@@ -125,6 +126,8 @@ const ALLOWED_ACTIONS = new Set([
   "PA",
   "CursorSelect",
   "MoveCursor1",
+  "Undo",
+  "Redo",
 ]);
 
 /**

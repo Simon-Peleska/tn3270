@@ -3,7 +3,7 @@
  * and export them as JSON for an s3270 script to replay.
  */
 
-import { Panel } from "./panel.js";
+import { Panel, keyLegend } from "./panel.js";
 
 /** @typedef {import('../server/protocol.js').RecorderStep} RecorderStep */
 
@@ -75,13 +75,13 @@ export class RecorderPage extends Panel {
       lines.push({
         option: "1",
         text: "Recording",
-        value: `${count} step${count === 1 ? "" : "s"} - Enter stops`,
+        value: `${count} step${count === 1 ? "" : "s"} - ${this.deps.keyName("Enter")} stops`,
       });
     } else {
       lines.push({
         option: "1",
         text: "Record screen and keys",
-        value: "Enter starts",
+        value: `${this.deps.keyName("Enter")} starts`,
       });
     }
     if (this.current !== null && !this.active) {
@@ -127,7 +127,13 @@ export class RecorderPage extends Panel {
    * @returns {string[]}
    */
   keys() {
-    return ["F1=Help", "F3=Exit", "F4=Menu", "F12=Cancel", "Enter=Start/Stop"];
+    return keyLegend(this.deps, [
+      ["PF1", "Help"],
+      ["PF3", "Exit"],
+      ["PF4", "Menu"],
+      ["PF12", "Cancel"],
+      ["Enter", "Start/Stop"],
+    ]);
   }
 
   /**

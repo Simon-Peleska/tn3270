@@ -4,7 +4,7 @@
  * done with line commands typed on the command line.
  */
 
-import { Panel, typeKey } from "./panel.js";
+import { Panel, typeKey, keyLegend } from "./panel.js";
 import { macrosToXml, parseMacrosXml } from "./macro-xml.js";
 
 /** @typedef {import('./macro-xml.js').Macro} Macro */
@@ -253,7 +253,7 @@ export class MacrosPage extends Panel {
       const count = this.recording.steps.length;
       lines.push({
         text: "Recording",
-        value: `${count} step${count === 1 ? "" : "s"} - Enter stops`,
+        value: `${count} step${count === 1 ? "" : "s"} - ${this.deps.keyName("Enter")} stops`,
       });
     } else if (this.naming?.kind === "save") {
       lines.push({
@@ -265,10 +265,13 @@ export class MacrosPage extends Panel {
     } else if (this.playing !== null) {
       lines.push({
         text: `Playing "${this.playing.macro.name}"`,
-        value: "Enter stops",
+        value: `${this.deps.keyName("Enter")} stops`,
       });
     } else {
-      lines.push({ text: "Record a new macro", value: "Enter starts" });
+      lines.push({
+        text: "Record a new macro",
+        value: `${this.deps.keyName("Enter")} starts`,
+      });
     }
     this.macros.forEach((macro, index) => {
       if (this.naming?.kind === "rename" && this.naming.index === index) {
@@ -313,9 +316,11 @@ export class MacrosPage extends Panel {
    */
   notes() {
     if (this.naming !== null)
-      return ["Type a name and press Enter. F12 leaves it unsaved."];
+      return [
+        `Type a name and press ${this.deps.keyName("Enter")}. ${this.deps.keyName("PF12")} leaves it unsaved.`,
+      ];
     return [
-      "Enter records, stops or plays the line the cursor is on. / marks a macro.",
+      `${this.deps.keyName("Enter")} records, stops or plays the line the cursor is on. / marks a macro.`,
       "Commands: RENAME, DELETE, EXPORT, IMPORT, MARK.",
     ];
   }
@@ -325,7 +330,14 @@ export class MacrosPage extends Panel {
    * @returns {string[]}
    */
   keys() {
-    return ["F1=Help", "F3=Exit", "F4=Menu", "F7=Bkwd", "F8=Fwd", "Enter=Play"];
+    return keyLegend(this.deps, [
+      ["PF1", "Help"],
+      ["PF3", "Exit"],
+      ["PF4", "Menu"],
+      ["PF7", "Bkwd"],
+      ["PF8", "Fwd"],
+      ["Enter", "Play"],
+    ]);
   }
 
   /**
@@ -451,19 +463,20 @@ export class MacrosPage extends Panel {
    */
   override(event) {
     if (this.naming === null) return false;
-    if (event.ctrlKey || event.metaKey) return false;
-    if (event.key === "Escape" || event.key === "F12") {
+    const command = this.deps.keyCommand(event);
+    if (command === "Attn" || command === "PF12") {
       this.naming = null;
       this.nameBuffer = "";
       this.draw();
       return true;
     }
-    if (event.key === "Enter") {
+    if (command === "Enter") {
       this.confirmName();
       this.draw();
       return true;
     }
-    const typed = typeKey(this.nameBuffer, event);
+    if (event.ctrlKey || event.metaKey) return false;
+    const typed = typeKey(this.nameBuffer, event, command);
     if (typed !== null) {
       this.nameBuffer = typed;
       this.draw();
@@ -494,7 +507,7 @@ export class MacrosPage extends Panel {
       this.mark(index);
       return true;
     }
-    if (event.key === "Delete") {
+    if (this.deps.keyCommand(event) === "Delete") {
       this.removeMacro(index);
       return true;
     }
