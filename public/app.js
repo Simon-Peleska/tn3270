@@ -1,11 +1,11 @@
-import { init, Terminal } from "/vendor/dist/ghostty-web.js";
-import { PANEL_COMMANDS, commandForEvent, mapKey } from "/keymap.js";
-import { ESC, paint, terminalColors } from "/panel.js";
-import { HelpPage, MenuPage } from "/menu.js";
-import { SettingsPage, modeOversize } from "/settings.js";
-import { MacrosPage } from "/macros.js";
-import { RecorderPage } from "/recorder.js";
-import { KeymapPage } from "/keymap-page.js";
+import { init, Terminal } from "./vendor/dist/ghostty-web.js";
+import { PANEL_COMMANDS, commandForEvent, mapKey } from "./keymap.js";
+import { ESC, paint, terminalColors } from "./panel.js";
+import { HelpPage, MenuPage } from "./menu.js";
+import { SettingsPage, modeOversize } from "./settings.js";
+import { MacrosPage } from "./macros.js";
+import { RecorderPage } from "./recorder.js";
+import { KeymapPage } from "./keymap-page.js";
 import {
   loadSettings,
   saveSettings,
@@ -13,7 +13,7 @@ import {
   saveMacros,
   loadKeymap,
   saveKeymap,
-} from "/store.js";
+} from "./store.js";
 import {
   MAX_SESSIONS,
   SessionPrefix,
@@ -21,11 +21,11 @@ import {
   parseSessionHash,
   sessionHash,
   switcherText,
-} from "/sessions.js";
-import { backoffDelay, reconnectStep } from "/reconnect.js";
-import { chooseFontSize } from "/fitfont.js";
-import { installBoxSelection } from "/box-select.js";
-import { installCursorGlyph } from "/cursor-glyph.js";
+} from "./sessions.js";
+import { backoffDelay, reconnectStep } from "./reconnect.js";
+import { chooseFontSize } from "./fitfont.js";
+import { installBoxSelection } from "./box-select.js";
+import { installCursorGlyph } from "./cursor-glyph.js";
 
 installBoxSelection();
 installCursorGlyph();
@@ -175,7 +175,7 @@ const DEFAULT_IDLE_TIMEOUT_MS = 300000;
 
 /** @returns {Promise<{ id: string, rows: number, cols: number }>} */
 async function createSession() {
-  const response = await fetch("/api/sessions", { method: "POST" });
+  const response = await fetch("./api/sessions", { method: "POST" });
   const body = await response.json();
   if (!response.ok)
     throw new Error(
@@ -187,7 +187,7 @@ async function createSession() {
 /** @returns {Promise<Set<string> | null>} null when the server did not answer */
 async function liveSessionIds() {
   try {
-    const response = await fetch("/api/sessions");
+    const response = await fetch("./api/sessions");
     if (!response.ok) return null;
     const body = await response.json();
     return new Set(
@@ -860,9 +860,11 @@ function connectSocket(slot) {
   const query = new URLSearchParams();
   if (!settings.hostColors) query.set("hostColors", "0");
   query.set("fieldColor", settings.theme().colors.field);
-  const ws = new WebSocket(
-    `${scheme}://${location.host}/ws/${slot.id}?${query}`,
-  );
+
+  const wsUrl = new URL(`./ws/${slot.id}?${query}`, document.baseURI);
+  wsUrl.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+
+  const ws = new WebSocket(wsUrl.href);
   ws.binaryType = "arraybuffer";
   slot.socket = ws;
 

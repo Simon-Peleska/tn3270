@@ -1,4 +1,4 @@
-import { CanvasRenderer, SelectionManager } from "/vendor/dist/ghostty-web.js";
+import { CanvasRenderer, SelectionManager } from "./vendor/dist/ghostty-web.js";
 
 /**
  * ghostty-web only does stream selection; a 3270 grid needs rectangular, and the

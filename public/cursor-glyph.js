@@ -1,4 +1,4 @@
-import { CanvasRenderer, CellFlags } from "/vendor/dist/ghostty-web.js";
+import { CanvasRenderer, CellFlags } from "./vendor/dist/ghostty-web.js";
 
 /**
  * ghostty-web's block cursor is opaque and hides the character under it, so the

@@ -1,19 +1,19 @@
 /* Vendored so any browser gets them. See public/fonts/NOTICE. */
 @font-face {
   font-family: "IBM 3270";
-  src: url("/fonts/3270-Regular.ttf") format("truetype");
+  src: url("./fonts/3270-Regular.ttf") format("truetype");
   font-display: block;
 }
 
 @font-face {
   font-family: "Fira Mono";
-  src: url("/fonts/FiraMono-Regular.ttf") format("truetype");
+  src: url("./fonts/FiraMono-Regular.ttf") format("truetype");
   font-display: block;
 }
 
 @font-face {
   font-family: "IBM Plex Mono";
-  src: url("/fonts/IBMPlexMono-Regular.ttf") format("truetype");
+  src: url("./fonts/IBMPlexMono-Regular.ttf") format("truetype");
   font-display: block;
 }
 
