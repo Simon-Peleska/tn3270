@@ -43,6 +43,8 @@ export class ScreenModel {
     this.cells = [];
     /** @type {boolean} False for an unformatted screen, or before the first read. */
     this.fieldsFormatted = false;
+    /** @type {boolean[]} Row-major. Non-display fields: a password is typed here. */
+    this.fieldsHidden = [];
     /** @type {Set<number>} */
     this.dirtyRows = new Set();
     /** @type {boolean} A cursor move touches no row, so it is tracked apart. */
@@ -63,6 +65,7 @@ export class ScreenModel {
     for (let i = 0; i < this.cells.length; i++) this.cells[i] = blankCell();
     this.moveCursor(0, 0, this.cursor.enabled);
     this.fieldsFormatted = false;
+    this.fieldsHidden = [];
     this.markAllDirty();
   }
 
@@ -123,17 +126,24 @@ export class ScreenModel {
       cell.editable = false;
     }
     this.fieldsFormatted = false;
+    this.fieldsHidden = [];
     this.moveCursor(0, 0, this.cursor.enabled);
     this.markAllDirty();
   }
 
   /**
+   * The hidden map is kept whole rather than reduced to "the cursor is in one
+   * now": the cursor moves without the fields changing, and a stale answer
+   * writes a password into a recording.
+   *
    * @param {boolean[]} editable row-major
+   * @param {boolean[]} hidden row-major
    * @param {boolean} formatted whether the screen has any fields at all
    * @returns {void}
    */
-  applyFields(editable, formatted) {
+  applyFields(editable, hidden, formatted) {
     this.fieldsFormatted = formatted;
+    this.fieldsHidden = hidden;
     for (let i = 0; i < this.cells.length; i++) {
       const cell = this.cells[i];
       const next = editable[i] ?? false;
@@ -141,6 +151,12 @@ export class ScreenModel {
       cell.editable = next;
       this.dirtyRows.add(Math.floor(i / this.cols));
     }
+  }
+
+  /** @returns {boolean} Whether what is typed now goes into a password field. */
+  cursorHidden() {
+    const at = this.cursor.row * this.cols + this.cursor.col;
+    return this.fieldsHidden[at] ?? false;
   }
 
   /**

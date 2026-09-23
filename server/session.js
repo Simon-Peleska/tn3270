@@ -98,8 +98,6 @@ export class Session {
     this.fieldsStale = false;
     /** @type {string | null} The r-tag of the field-map read in flight. */
     this.fieldReadTag = null;
-    /** @type {boolean} Cursor is in a non-display field; never record typing there. */
-    this.passwordField = false;
     /** @type {{ steps: import('./protocol.js').RecorderStep[] } | null} */
     this.recording = null;
 
@@ -374,8 +372,7 @@ export class Session {
             this.screen.rows,
             this.screen.cols,
           );
-          this.screen.applyFields(editable, formatted);
-          this.updatePasswordField(hidden);
+          this.screen.applyFields(editable, hidden, formatted);
         }
         this.scheduleFlush();
         return;
@@ -599,16 +596,6 @@ export class Session {
   }
 
   /**
-   * @param {boolean[]} hidden row-major
-   * @returns {void}
-   */
-  updatePasswordField(hidden) {
-    const at =
-      this.screen.cursor.row * this.screen.cols + this.screen.cursor.col;
-    this.passwordField = hidden[at] ?? false;
-  }
-
-  /**
    * @param {string} before
    * @returns {void}
    */
@@ -801,7 +788,7 @@ export class Session {
         return;
       case "text":
         if (message.value !== "") {
-          if (this.passwordField) this.recordPassword();
+          if (this.screen.cursorHidden()) this.recordPassword();
           else this.record("String", [message.value]);
           const nudge = this.typingNudge();
           const actions =
@@ -819,7 +806,7 @@ export class Session {
         return;
       case "paste": {
         if (message.text !== "") {
-          if (this.passwordField) this.recordPassword();
+          if (this.screen.cursorHidden()) this.recordPassword();
           else this.record("PasteString", [message.text]);
 
           // Batched, so nothing else can be typed between the segments.

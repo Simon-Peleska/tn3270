@@ -5,8 +5,9 @@ same purpose: replaying a recorded host session against a real emulator.
   Upstream: https://github.com/pmattes/x3270
   Files:    reverse.trc, invisible_underscore.trc, short_sba.trc, invalid_ra.trc
 
-fields.trc is this project's own, written for manual testing. Its TELNET
-negotiation is the same exchange as reverse.trc's; the screen is ours.
+fields.trc, three-fields.trc and password-field.trc are this project's own.
+Their TELNET negotiation is the same exchange as reverse.trc's; the screens
+that follow it are ours.
 
 x3270 is distributed under the following licence.
 

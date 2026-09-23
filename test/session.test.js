@@ -796,7 +796,8 @@ test("BackNewline on a screen with no fields falls back to the start of the row 
   });
   await settle(session);
 
-  screen.applyFields(new Array(screen.cells.length).fill(false), false);
+  const none = new Array(screen.cells.length).fill(false);
+  screen.applyFields(none, none, false);
   session.handleClientMessage(controller, {
     type: "action",
     action: "BackNewline",
@@ -1277,8 +1278,11 @@ test("a run of keystrokes into a password field collapses to a single marker", a
     type: "recorder",
     action: "start",
   });
-  // Set directly; readbuffer.test.js covers the attribute-bit detection behind it.
-  session.passwordField = true;
+  // Set directly; readbuffer.test.js covers the attribute-bit detection behind
+  // it, and the trace-driven test below covers the cursor finding its way in.
+  const everywhere = (/** @type {boolean} */ hidden) =>
+    new Array(session.screen.cells.length).fill(hidden);
+  session.screen.fieldsHidden = everywhere(true);
 
   session.handleClientMessage(controller, { type: "text", value: "s" });
   session.handleClientMessage(controller, { type: "text", value: "ec" });
@@ -1301,7 +1305,7 @@ test("a run of keystrokes into a password field collapses to a single marker", a
   assert.equal(steps.length, 2);
   assert.equal(steps[1].action, "Enter");
 
-  session.passwordField = false;
+  session.screen.fieldsHidden = everywhere(false);
   session.handleClientMessage(controller, { type: "text", value: "next" });
   assert.equal(steps.length, 3);
   assert.deepEqual(steps[2], {
@@ -1309,6 +1313,51 @@ test("a run of keystrokes into a password field collapses to a single marker", a
     action: "String",
     args: ["next"],
   });
+});
+
+test("tabbing into a password field is enough to redact what is typed there", async (t) => {
+  // password-field.trc: an ordinary field at columns 2-4, a non-display one at
+  // 6-8. Nothing but the cursor moves between them, which is the point: the
+  // field map does not change, so nothing re-reads it.
+  const fixture = await startTracedSession("test/traces/password-field.trc");
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  await settle(session);
+  await waitUntil(() => session.screen.fieldsFormatted, "the field map");
+
+  const controller = collectingViewer("controller");
+  session.attach(controller);
+  session.handleClientMessage(controller, {
+    type: "recorder",
+    action: "start",
+  });
+
+  session.handleClientMessage(controller, { type: "text", value: "ab" });
+  await settle(session);
+
+  session.handleClientMessage(controller, { type: "action", action: "Tab" });
+  await waitUntil(
+    () => session.screen.cursor.col === 5,
+    "the cursor to reach the password field",
+  );
+
+  session.handleClientMessage(controller, { type: "text", value: "hunter2" });
+  await settle(session);
+
+  const steps = /** @type {import('../server/protocol.js').RecorderStep[]} */ (
+    session.recording?.steps ?? []
+  );
+  assert.deepEqual(
+    steps.map((step) => [step.action, ...(step.args ?? [])]),
+    [["String", "ab"], ["Tab"], [undefined]],
+    "the password keystrokes must reach the recording as a marker only",
+  );
+  assert.equal(steps.at(-1)?.password, true);
+  assert.equal(
+    JSON.stringify(session.recording).includes("hunter2"),
+    false,
+    "and the recording must not carry it anywhere at all",
+  );
 });
 
 test("a session with no viewers left is closed once the idle timeout passes", async (t) => {
