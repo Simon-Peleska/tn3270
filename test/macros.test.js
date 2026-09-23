@@ -7,7 +7,7 @@ import { key, enterKey, defaultKeymapDeps } from "./keyevent.js";
 /** @param {string[]} [files] */
 function fixture(files = []) {
   const calls = {
-    /** @type {string[]} */ written: [],
+    /** @type {number} */ redraws: 0,
     /** @type {import('../server/protocol.js').ClientMessage[]} */ dispatched:
       [],
     /** @type {number} */ ends: 0,
@@ -21,8 +21,9 @@ function fixture(files = []) {
   const pendingUnlocks = [];
   const page = new MacrosPage({
     ...defaultKeymapDeps,
-    write: (bytes) => calls.written.push(bytes),
-    geometry: () => ({ cols: 80, rows: 25 }),
+    redraw: () => {
+      calls.redraws += 1;
+    },
     theme: () => THEMES[0],
     dispatch: (message) => calls.dispatched.push(message),
     waitForUnlock: () => {
@@ -47,7 +48,7 @@ test("opening draws the panel, and F3 closes it and asks for the screen back", (
 
   page.show();
   assert.equal(page.open, true);
-  assert.ok(calls.written.length > 0, "the panel must have been drawn");
+  assert.ok(calls.redraws > 0, "the panel must have asked to be drawn");
 
   assert.equal(page.handleKey(key({ key: "F3" })), true);
   assert.equal(page.open, false);

@@ -1,6 +1,7 @@
-import { init, Terminal } from "./vendor/dist/ghostty-web.js";
+import { Pane, Screen } from "./canvas.js";
+import { renderOia, keyboardLocked } from "./oia.js";
 import { PANEL_COMMANDS, commandForEvent, mapKey } from "./keymap.js";
-import { ESC, paint, terminalColors } from "./panel.js";
+import { paint } from "./panel.js";
 import { HelpPage, MenuPage } from "./menu.js";
 import { SettingsPage, modeOversize } from "./settings.js";
 import { MacrosPage } from "./macros.js";
@@ -17,18 +18,12 @@ import {
 import {
   MAX_SESSIONS,
   SessionPrefix,
-  paneAreas,
+  paneShares,
   parseSessionHash,
   sessionHash,
   switcherText,
 } from "./sessions.js";
 import { backoffDelay, reconnectStep } from "./reconnect.js";
-import { chooseFontSize } from "./fitfont.js";
-import { installBoxSelection } from "./box-select.js";
-import { installCursorGlyph } from "./cursor-glyph.js";
-
-installBoxSelection();
-installCursorGlyph();
 
 /**
  * @param {string} id
@@ -42,11 +37,37 @@ function element(id) {
 
 const screenEl = element("screen");
 
+// The page's markup is fixed: `index.html` has the canvas, and nothing here
+// ever builds, moves or removes an element.
+const canvasEl = element("canvas");
+if (!(canvasEl instanceof HTMLCanvasElement))
+  throw new Error("#canvas is not a canvas");
+
+/**
+ * One canvas for the whole page. Every session is a rectangle on it, and every
+ * frame is drawn whole — see `redraw()`, which is the only way one happens.
+ *
+ * @type {Screen}
+ */
+let screen;
+
 const RESET_LABEL = "[Reset]";
 const MENU_LABEL = "[Menu]";
-// The menu is the way to every panel, so one button reaches all of them.
-// Narrower than BUTTON_COLUMNS in server/oia.js, which keeps these cells clear.
+// The menu is the way to every panel, so one button reaches all of them. They
+// sit at the right end of the status row, which this page lays out whole.
 const BUTTONS = `${RESET_LABEL} ${MENU_LABEL}`;
+
+/**
+ * Where the two buttons start. `drawChrome` puts them here and `canvasClicked`
+ * hit-tests them here, so the row that is drawn and the row that is clickable
+ * cannot drift apart.
+ *
+ * @param {number} cols
+ * @returns {{ reset: number, menu: number }}
+ */
+function buttonColumns(cols) {
+  return { reset: cols - BUTTONS.length, menu: cols - MENU_LABEL.length };
+}
 
 /** @type {{ code: string, message: string } | null} */
 let activeError = null;
@@ -54,85 +75,135 @@ let activeError = null;
 let errorTimer;
 
 /**
- * @param {number} row 1-based
- * @param {number} cols
- * @param {string} text
- * @param {string} fg `#rrggbb`
- * @param {string} bg `#rrggbb`
- * @returns {string}
- */
-function barBytes(row, cols, text, fg, bg) {
-  const line = text.slice(0, cols).padEnd(cols, " ");
-  // Save and restore: a panel puts its cursor on a field, and this must not move it.
-  return `${ESC}7${ESC}[${row};1H${paint(fg, bg, true)}${line}${ESC}[0m${ESC}8`;
-}
-
-/** @returns {string} */
-function errorOverlayBytes() {
-  const term = activeTerminal();
-  if (activeError === null || term === null) return "";
-  return barBytes(
-    term.rows,
-    term.cols,
-    `[${activeError.code}] ${activeError.message}`,
-    "#ffd9d9",
-    "#3a1d20",
-  );
-}
-
-/** @returns {string} */
-function prefixBarBytes() {
-  const term = activeTerminal();
-  if (!prefix.armed || term === null) return "";
-  const { background, foreground } = settings.theme().colors;
-  const text = switcherText(
-    sessions.map((slot) => slot?.id ?? null),
-    active,
-  );
-  return barBytes(term.rows, term.cols, text, background, foreground);
-}
-
-/**
- * Save and restore the cursor, or a repaint steals it from the host's field.
+ * Everything this page draws over the screen: a panel across all of it, or the
+ * status row under it, and then the switcher bar, an error and the hint letters
+ * on top of either. The host's own grid is never touched, so taking the overlay
+ * off puts the screen back without asking the server for it again.
  *
- * @param {import('ghostty-web').Terminal} term
- * @returns {string}
+ * @param {SessionSlot} slot
+ * @returns {void}
  */
-function buttonBytes(term) {
-  const { background, foreground } = settings.theme().colors;
-  const col = term.cols - BUTTONS.length + 1;
-  return `${ESC}7${ESC}[${term.rows};${col}H${paint(background, foreground, true)}${BUTTONS}${ESC}[0m${ESC}8`;
-}
-
-/**
- * @returns {string}
- */
-function hintOverlayBytes() {
-  const term = activeTerminal();
-  if (!prefix.armed || !settings.hints || term === null || hints.length === 0)
-    return "";
+function drawChrome(slot) {
+  const canvas = slot.pane;
+  if (canvas === null) return;
+  const overlay = canvas.overlay;
+  const bottom = canvas.statusRow;
+  const buttons = buttonColumns(canvas.cols);
   const colors = settings.theme().colors;
-  const fg = colors["background"] ?? "#000000";
-  const bg = colors["foreground"] ?? "#00ff00";
-  let bytes = `${ESC}7`;
-  for (const hint of hints) {
-    bytes += `${ESC}[${hint.row + 1};${hint.col + 1}H${paint(fg, bg, true)}${hint.letter}${ESC}[0m`;
+  const background = colors["background"] ?? "#000000";
+  const foreground = colors["foreground"] ?? "#00ff00";
+  /** @param {string} text */
+  const wide = (text) => text.slice(0, canvas.cols).padEnd(canvas.cols, " ");
+
+  overlay.clear();
+  const onScreen = slot === activeSession();
+  const panel = onScreen ? openPanel() : null;
+
+  if (panel !== null) panel.drawInto(overlay);
+  else {
+    // Reverse video, as the operator information area is on the hardware.
+    const style = paint(background, foreground);
+    const cursor = canvas.host.cursor ?? { row: 0, col: 0 };
+    overlay.put(bottom, 0, wide(""), style);
+    overlay.put(
+      bottom,
+      0,
+      renderOia(oiaState(slot), cursor, buttons.reset - 1),
+      style,
+    );
+    overlay.put(
+      bottom,
+      buttons.reset,
+      BUTTONS,
+      paint(background, foreground, true),
+    );
   }
-  return `${bytes}${ESC}8`;
+
+  // Everything below belongs to the session being looked at, not to every pane.
+  if (!onScreen) return;
+
+  if (activeError !== null)
+    overlay.put(
+      bottom,
+      0,
+      wide(`[${activeError.code}] ${activeError.message}`),
+      paint("#ffd9d9", "#3a1d20", true),
+    );
+  else if (prefix.armed)
+    overlay.put(
+      bottom,
+      0,
+      wide(
+        switcherText(
+          sessions.map((each) => each?.id ?? null),
+          active,
+        ),
+      ),
+      paint(background, foreground, true),
+    );
+
+  if (prefix.armed && settings.hints)
+    for (const hint of hints)
+      overlay.put(
+        hint.row,
+        hint.col,
+        hint.letter,
+        paint(background, foreground, true),
+      );
 }
 
+/** @type {number | null} */
+let chromeFrame = null;
+
 /**
- * Never write '': ghostty-web 0.4.0 throws on a zero-byte write.
+ * The one way a frame happens. Every pane on screen gets its chrome rebuilt
+ * from the current state and then the whole canvas is drawn again, so there is
+ * no such thing as a half-updated screen — and nothing has to work out which
+ * part of it an action touched.
+ *
+ * It happens once per frame rather than once per caller: one keystroke can
+ * bring a paint and two status messages, and each rebuild clears an overlay the
+ * size of the screen. Whatever the state is when the frame comes is what gets
+ * drawn, which is the answer the last caller would have got anyway.
  *
  * @returns {void}
  */
-function writeOverlays() {
-  const slot = activeSession();
-  const bytes = errorOverlayBytes() + prefixBarBytes() + hintOverlayBytes();
-  if (bytes === "" || slot === null || slot.terminal === null) return;
-  slot.terminal.write(bytes);
-  // By the time the overlay comes off, the keyboard may be on another pane.
-  overlaySlot = slot;
+function redraw() {
+  if (chromeFrame !== null) return;
+  chromeFrame = requestAnimationFrame(() => {
+    chromeFrame = null;
+    for (const index of panes) {
+      const slot = sessions[index];
+      if (slot != null) drawChrome(slot);
+    }
+    screen.render();
+  });
+}
+
+/**
+ * A session with no pane on screen — a fourth one running a macro, say — still
+ * takes its paints, but a frame it cannot appear in would be the same pixels.
+ *
+ * @param {SessionSlot} slot
+ * @returns {boolean}
+ */
+function displayed(slot) {
+  return panes.some((index) => sessions[index] === slot);
+}
+
+/**
+ * @param {SessionSlot} slot
+ * @returns {import('./oia.js').OiaState}
+ */
+function oiaState(slot) {
+  return {
+    connection: slot.connection,
+    connected: slot.connected === true,
+    host: slot.hostName,
+    lock: slot.lock,
+    insert: slot.insert,
+    typeahead: slot.typeahead,
+  };
 }
 
 /**
@@ -145,9 +216,7 @@ function showError(code, message) {
   activeError = { code, message };
   if (errorTimer !== undefined) clearTimeout(errorTimer);
   errorTimer = setTimeout(clearError, 6000);
-  const page = openPanel();
-  if (page) page.draw();
-  else writeOverlays();
+  redraw();
 }
 
 /** @returns {void} */
@@ -155,19 +224,7 @@ function clearError() {
   if (activeError === null) return;
   activeError = null;
   if (errorTimer !== undefined) clearTimeout(errorTimer);
-  repaintStatus();
-}
-
-/** @returns {void} Only the server can undo a row this browser painted over. */
-function repaintStatus() {
-  const painted = overlaySlot;
-  overlaySlot = null;
-  const page = openPanel();
-  if (page) {
-    page.draw();
-    return;
-  }
-  sendQuietly(painted, { type: "refresh" });
+  redraw();
 }
 
 /** @type {number} */
@@ -199,13 +256,14 @@ async function liveSessionIds() {
 }
 
 /**
- * A hidden pane's bytes are dropped, but its socket stays open or the server
- * reaps the session.
+ * A hidden pane keeps taking paints — applying cells to a grid nobody is looking
+ * at is free, and it means coming back into view costs no round trip. Its socket
+ * stays open too, or the server reaps the session.
  *
  * @typedef {object} SessionSlot
  * @property {string} id
- * @property {HTMLElement} pane
- * @property {import('ghostty-web').Terminal | null} terminal
+ * @property {import('./canvas.js').Pane | null} pane its rectangle on the page's
+ *   canvas, once the server has said how big the screen is
  * @property {WebSocket | null} socket
  * @property {number} attempt
  * @property {number | null} reconnectUntil null while connected, Infinity when
@@ -216,11 +274,14 @@ async function liveSessionIds() {
  * @property {number} model
  * @property {string} oversize
  * @property {number} cols
- * @property {number} rows including the OIA row
+ * @property {number} rows the host's screen; the status row is not the host's
  * @property {string} connection
  * @property {boolean | null} connected null until the first status
+ * @property {string | null} hostName what b3270 calls the host it is on
  * @property {boolean} touched
- * @property {boolean} locked
+ * @property {string} lock b3270's own word for why the keyboard is locked
+ * @property {boolean} insert
+ * @property {boolean} typeahead
  * @property {'controller' | 'observer'} role
  * @property {boolean} allowSharing
  * @property {boolean} allowSharedEditing
@@ -237,9 +298,6 @@ let active = 0;
 /** @type {number[]} The slots on screen, in pane order. */
 let panes = [0];
 
-/** @type {SessionSlot | null} The pane an overlay is painted over. */
-let overlaySlot = null;
-
 const prefix = new SessionPrefix();
 
 /** @type {{ row: number, col: number, letter: string }[]} */
@@ -250,28 +308,23 @@ function activeSession() {
   return sessions[active] ?? null;
 }
 
-/** @returns {import('ghostty-web').Terminal | null} */
-function activeTerminal() {
-  return activeSession()?.terminal ?? null;
+/** @returns {import('./canvas.js').Pane | null} */
+function activePane() {
+  return activeSession()?.pane ?? null;
 }
 
 /**
  * @param {string} id
  * @param {boolean} started
  * @param {number} cols
- * @param {number} rows including the OIA row
+ * @param {number} rows the host's screen, without the status row
  * @returns {SessionSlot}
  */
 function newSlot(id, started = false, cols = 0, rows = 0) {
-  const pane = document.createElement("div");
-  pane.className = "pane";
-  pane.hidden = true;
-  screenEl.append(pane);
   /** @type {SessionSlot} */
   const slot = {
     id,
-    pane,
-    terminal: null,
+    pane: null,
     socket: null,
     started,
     attempt: 0,
@@ -281,16 +334,18 @@ function newSlot(id, started = false, cols = 0, rows = 0) {
     oversize: "",
     cols,
     rows,
-    connection: "",
+    connection: "not-connected",
     connected: null,
+    hostName: null,
     touched: false,
-    locked: false,
+    lock: "",
+    insert: false,
+    typeahead: false,
     role: "controller",
     allowSharing: true,
     allowSharedEditing: false,
     allowAutomation: false,
   };
-  pane.addEventListener("click", (event) => paneClicked(slot, event));
   return slot;
 }
 
@@ -327,7 +382,7 @@ const unlockWaiters = new Map();
  * @returns {Promise<void>}
  */
 function waitForUnlock(slot) {
-  if (slot === null || !slot.locked) return Promise.resolve();
+  if (slot === null || !keyboardLocked(slot.lock)) return Promise.resolve();
   return new Promise((resolve) => {
     const waiters = unlockWaiters.get(slot) ?? [];
     waiters.push(resolve);
@@ -400,17 +455,10 @@ function pickKeymapFiles() {
  * What every panel needs to draw itself and to hand the screen on: the rest of
  * each page's deps are its own.
  *
- * @type {import('/panel.js').PanelDeps}
+ * @type {import('./panel.js').PanelDeps}
  */
 const panelIo = {
-  write: (bytes) => {
-    activeTerminal()?.write(bytes);
-    writeOverlays();
-  },
-  geometry: () => ({
-    cols: activeTerminal()?.cols ?? 80,
-    rows: activeTerminal()?.rows ?? 25,
-  }),
+  redraw,
   theme: () => settings.theme(),
   end: () => endPanel(),
   go: (id) => goPanel(id),
@@ -428,7 +476,10 @@ const settings = new SettingsPage({
     const slot = activeSession();
     return slot === null ? null : paneFit(slot, fontSize);
   },
-  applyHostColors: (enabled) => send({ type: "hostColors", enabled }),
+  applyHostColors: (enabled) => {
+    screen.hostColors = enabled;
+    redraw();
+  },
   applySharing: (allowView, allowEdit) =>
     send({ type: "sharing", allowView, allowEdit }),
   applyAutomation: (allowed) => send({ type: "automation", allowed }),
@@ -502,11 +553,6 @@ function openPanel() {
   return panels.find((page) => page.open) ?? null;
 }
 
-/** @returns {boolean} */
-function anyPanelOpen() {
-  return panels.some((page) => page.open);
-}
-
 /**
  * Navigation inside the panels: an option number, F4, or a name on the action
  * bar. Going back to a panel already behind us unwinds to it instead of piling
@@ -529,11 +575,10 @@ function goPanel(id) {
 /** @returns {void} F3: back one level, and out to the session at the bottom. */
 function endPanel() {
   const previous = panelById(trail.pop() ?? "");
-  if (previous === null) {
-    send({ type: "refresh" });
-    return;
-  }
-  previous.show();
+  // The screen was never painted over, only covered, so the overlay coming off
+  // is the whole of giving it back.
+  if (previous === null) redraw();
+  else previous.show();
 }
 
 /**
@@ -559,97 +604,38 @@ function closePanels() {
   trail.length = 0;
   if (current === null) return;
   current.hide();
-  send({ type: "refresh" });
+  redraw();
 }
 
 /**
- * ghostty-web 0.4.0 drops the device-pixel backing store on a font or theme
- * change, so put it back or HiDPI glyphs go soft.
- *
- * @param {import('ghostty-web').Terminal} created
- * @returns {void}
- */
-function repaintCanvas(created) {
-  const renderer = created.renderer;
-  if (renderer === undefined) return;
-  renderer.resize(created.cols, created.rows);
-  if (created.wasmTerm !== undefined) renderer.render(created.wasmTerm, true);
-}
-
-/**
- * Build the session's terminal, or resize the one it has to the geometry the
- * server last reported. A session with no geometry yet has nothing to build.
+ * Build the session's pane, or resize the one it has to the geometry the server
+ * last reported. A session with no geometry yet has nothing to build.
  *
  * @param {SessionSlot} slot
  * @returns {void}
  */
-function ensureTerminal(slot) {
+function ensurePane(slot) {
   if (slot.cols < 1 || slot.rows < 1) return;
-  const existing = slot.terminal;
-  if (existing !== null) {
-    if (existing.cols !== slot.cols || existing.rows !== slot.rows)
-      existing.resize(slot.cols, slot.rows);
-    fitFontSize(slot);
-    if (slot === activeSession()) openPanel()?.draw();
+  if (slot.pane !== null) {
+    slot.pane.resize(slot.cols, slot.rows);
     return;
   }
-  const created = new Terminal({
-    cols: slot.cols,
-    rows: slot.rows,
-    cursorBlink: false,
-    disableStdin: true,
-    fontFamily: settings.font().family,
-    fontSize: 15,
-    scrollback: 0,
-    theme: terminalColors(settings.theme()),
-  });
-  created.open(slot.pane);
-  slot.terminal = created;
-  paintFrame();
-  fitFontSize(slot);
-}
-
-/** @returns {void} */
-function paintFrame() {
-  const background = settings.theme().colors.background;
-  screenEl.style.background = background;
-  for (const slot of sessions) {
-    if (slot === null) continue;
-    slot.pane.style.background = background;
-  }
+  slot.pane = new Pane(slot.cols, slot.rows);
+  // It was built empty, and every paint before it was built went nowhere.
+  sendQuietly(slot, { type: "refresh" });
 }
 
 /**
- * setTheme() only recolors chrome; reset() is what rebuilds the WASM ANSI
- * palette host colours index into.
+ * The colours are the browser's own now, so a theme change is a repaint and
+ * nothing more: no pane has to ask the server for its screen back.
  *
- * @param {import('/settings.js').Theme} theme
+ * @param {import('./settings.js').Theme} theme
  * @returns {void}
  */
 function applyTheme(theme) {
-  paintFrame();
-  const colors = terminalColors(theme);
-  for (const slot of sessions) {
-    if (slot === null) continue;
-    // The server paints the typeable fields, so every session is told which
-    // colour this theme wants them. A theme is the page's, not one pane's.
-    sendQuietly(slot, { type: "fieldColor", color: theme.colors.field });
-
-    const created = slot.terminal;
-    const renderer = created?.renderer;
-    if (created == null || renderer === undefined) continue;
-
-    renderer.setTheme(colors);
-    created.options.theme = colors;
-    created.reset();
-    // reset() rebuilds the WASM terminal; the selection manager keeps a stale
-    // pointer into the freed one.
-    const selection = created["selectionManager"];
-    const wasmTerm = created.wasmTerm;
-    if (selection !== undefined && wasmTerm !== undefined)
-      selection["wasmTerm"] = wasmTerm;
-    repaintCanvas(created);
-  }
+  screenEl.style.background = theme.colors.background;
+  screen.theme = theme.colors;
+  redraw();
 }
 
 /**
@@ -663,51 +649,8 @@ async function applyFont(font) {
   } catch (cause) {
     console.warn(`could not preload ${font.name}`, cause);
   }
-
-  for (const slot of sessions) {
-    if (slot?.terminal == null) continue;
-    slot.terminal.options.fontFamily = font.family;
-    fitFontSize(slot);
-  }
+  applyLayout();
   if (settings.open) settings.draw();
-}
-
-/**
- * @param {HTMLElement} pane
- * @returns {{ width: number, height: number } | null}
- */
-function paneBox(pane) {
-  const width = pane.clientWidth;
-  const height = pane.clientHeight;
-  if (width < 1 || height < 1) return null;
-  return { width, height };
-}
-
-/**
- * @param {SessionSlot} slot
- * @returns {void}
- */
-function fitFontSize(slot) {
-  const created = slot.terminal;
-  const renderer = created?.renderer;
-  if (created == null || renderer === undefined) return;
-
-  const box = paneBox(slot.pane);
-  if (box === null) return;
-
-  // Measuring means setting the size, so the search leaves its last probe on.
-  created.options.fontSize = chooseFontSize({
-    measure: (size) => {
-      created.options.fontSize = size;
-      return { width: renderer.charWidth, height: renderer.charHeight };
-    },
-    cols: created.cols,
-    rows: created.rows,
-    box,
-    start: created.options.fontSize,
-  });
-
-  repaintCanvas(created);
 }
 
 /**
@@ -718,24 +661,18 @@ function fitFontSize(slot) {
  * @returns {{ cols: number, rows: number } | null}
  */
 function paneFit(slot, fontSize) {
-  const created = slot.terminal;
-  const renderer = created?.renderer;
-  if (created == null || renderer === undefined) return null;
+  const pane = slot.pane;
+  if (pane === null) return null;
 
-  const box = paneBox(slot.pane);
-  if (box === null) return null;
+  const box = pane.box;
+  if (box.width < 1 || box.height < 1) return null;
 
-  // Never scale from the drawn size: ghostty rounds cells up to whole pixels,
-  // so scaled panes never agree on a screen.
-  const drawn = created.options.fontSize;
-  created.options.fontSize = fontSize;
-  const cellWidth = renderer.charWidth;
-  const cellHeight = renderer.charHeight;
-  created.options.fontSize = drawn;
-
-  const cols = Math.floor(box.width / cellWidth);
+  // Never scale from the drawn size: a cell rounds up to whole pixels, so
+  // scaled panes never agree on a screen.
+  const cell = screen.measure(settings.font().family, fontSize);
+  const cols = Math.floor(box.width / cell.width);
   // One row is the OIA, which this side paints and the host knows nothing about.
-  const rows = Math.floor(box.height / cellHeight) - 1;
+  const rows = Math.floor(box.height / cell.height) - 1;
   if (cols < 1 || rows < 1) return null;
   return { cols, rows };
 }
@@ -791,14 +728,6 @@ function fitIdleSessions() {
   }
 }
 
-/** @returns {void} */
-function fitPanes() {
-  for (const index of panes) {
-    const slot = sessions[index];
-    if (slot != null) fitFontSize(slot);
-  }
-}
-
 // Coalesced into a frame: a drag fires this continuously.
 let fitScheduled = false;
 /** @type {ReturnType<typeof setTimeout> | undefined} */
@@ -808,7 +737,7 @@ new ResizeObserver(() => {
     fitScheduled = true;
     requestAnimationFrame(() => {
       fitScheduled = false;
-      fitPanes();
+      applyLayout();
     });
   }
   // A refit costs a host round trip, so wait for the drag to settle.
@@ -855,31 +784,15 @@ function sendQuietly(slot, message) {
  * @returns {void}
  */
 function connectSocket(slot) {
-  const scheme = location.protocol === "https:" ? "wss" : "ws";
-  // On the URL so the first repaint already has the saved colours.
-  const query = new URLSearchParams();
-  if (!settings.hostColors) query.set("hostColors", "0");
-  query.set("fieldColor", settings.theme().colors.field);
+  // Relative to the document, so a reverse proxy can mount us under a path.
+  const url = new URL(`./ws/${slot.id}`, document.baseURI);
+  url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
 
-  const wsUrl = new URL(`./ws/${slot.id}?${query}`, document.baseURI);
-  wsUrl.protocol = location.protocol === "https:" ? "wss:" : "ws:";
-
-  const ws = new WebSocket(wsUrl.href);
-  ws.binaryType = "arraybuffer";
+  const ws = new WebSocket(url.href);
   slot.socket = ws;
 
   ws.addEventListener("message", (event) => {
-    if (!(event.data instanceof ArrayBuffer)) {
-      handleServerMessage(slot, JSON.parse(String(event.data)));
-      return;
-    }
-    // Dropping bytes is safe: a pane coming back into view asks for a repaint.
-    const term = slot.terminal;
-    const covered = anyPanelOpen() && slot === activeSession();
-    if (term === null || slot.pane.hidden || covered) return;
-    term.write(new Uint8Array(event.data));
-    term.write(buttonBytes(term));
-    if (slot === activeSession()) writeOverlays();
+    handleServerMessage(slot, JSON.parse(String(event.data)));
   });
 
   // A failed connect fires error then close; close decides the retry.
@@ -941,7 +854,7 @@ async function startFreshSession(slot) {
   slot.id = created.id;
   slot.started = true;
   slot.cols = created.cols;
-  slot.rows = created.rows + 1;
+  slot.rows = created.rows;
   writeHash();
   connectSocket(slot);
 }
@@ -966,28 +879,37 @@ function handleServerMessage(slot, message) {
     }
   }
 
-  if (message.type === "hello" || message.type === "screen") {
+  if (message.type === "screen") {
     slot.model = message.model;
     slot.oversize = message.oversize;
     slot.cols = message.cols;
-    slot.rows = message.rows + 1;
-    if (message.type === "hello") settings.models = message.models;
-    if (!slot.pane.hidden) ensureTerminal(slot);
-    if (message.type === "hello") applySavedSize(slot);
+    slot.rows = message.rows;
+    if (!onScreen) return;
+    applyLayout();
+    settings.setModel(slot.model);
+    settings.setOversize(slot.oversize);
+    return;
+  }
+  if (message.type === "hello") {
+    slot.model = message.model;
+    slot.oversize = message.oversize;
+    slot.cols = message.cols;
+    slot.rows = message.rows;
+    settings.models = message.models;
+    if (onScreen) applyLayout();
+    applySavedSize(slot);
     if (!onScreen) return;
     settings.setModel(slot.model);
     settings.setOversize(slot.oversize);
-    if (message.type === "hello") {
-      slot.role = message.role;
-      slot.allowSharing = message.allowSharing;
-      slot.allowSharedEditing = message.allowSharedEditing;
-      slot.allowAutomation = message.allowAutomation;
-      settings.setRole(slot.role);
-      settings.setSharing(slot.allowSharing, slot.allowSharedEditing);
-      settings.setAutomation(slot.allowAutomation);
-      settings.setHostLocked(message.hostLocked);
-      screenEl.focus();
-    }
+    slot.role = message.role;
+    slot.allowSharing = message.allowSharing;
+    slot.allowSharedEditing = message.allowSharedEditing;
+    slot.allowAutomation = message.allowAutomation;
+    settings.setRole(slot.role);
+    settings.setSharing(slot.allowSharing, slot.allowSharedEditing);
+    settings.setAutomation(slot.allowAutomation);
+    settings.setHostLocked(message.hostLocked);
+    screenEl.focus();
     return;
   }
   if (message.type === "fieldContent") {
@@ -1002,33 +924,43 @@ function handleServerMessage(slot, message) {
     // A late answer would paint stale letters over the wrong pane.
     if (onScreen && prefix.armed) {
       hints = message.hints;
-      writeOverlays();
+      redraw();
     }
+    return;
+  }
+  if (message.type === "paint") {
+    // Even hidden, even behind a panel: a grid nobody is looking at costs
+    // nothing to keep, and keeping it is what makes coming back free.
+    slot.pane?.host.applyPaint(message);
+    if (displayed(slot)) redraw();
     return;
   }
   if (message.type === "status") {
     const changed = slot.connected !== message.connected;
     slot.connection = message.connection;
     slot.connected = message.connected;
+    slot.hostName = message.host;
     slot.touched = message.touched;
-    slot.locked = message.locked;
+    slot.lock = message.lock;
+    slot.insert = message.insert;
+    slot.typeahead = message.typeahead;
     slot.role = message.role;
     slot.allowSharing = message.allowSharing;
     slot.allowSharedEditing = message.allowSharedEditing;
     slot.allowAutomation = message.allowAutomation;
-    if (!slot.locked) {
+    if (!keyboardLocked(slot.lock)) {
       const waiters = unlockWaiters.get(slot);
       if (waiters !== undefined) {
         unlockWaiters.delete(slot);
         for (const resolve of waiters) resolve();
       }
     }
-    slot.terminal?.renderer?.setCursorStyle(
-      message.insert ? "underline" : "block",
-    );
+    if (slot.pane !== null)
+      slot.pane.cursorStyle = message.insert ? "underline" : "block";
+    if (displayed(slot)) redraw();
     // A new pane's session is only reachable once its socket has said hello,
     // which is after the layout that made the pane.
-    if (changed && !message.connected && !slot.pane.hidden && panes.length > 1)
+    if (changed && !message.connected && onScreen && panes.length > 1)
       fitIdleSessions();
     if (!onScreen) return;
     settings.connected = message.connected;
@@ -1062,44 +994,31 @@ function handleServerMessage(slot, message) {
 }
 
 /**
- * @param {SessionSlot} slot
+ * Everything that decides where a cell lands on the canvas, in one pass: which
+ * sessions are on screen, how the page is split between them, how big their
+ * text has to be to fit, and then the frame. A resize, a layout change and a
+ * new session all come through here, so none of them can leave the three
+ * disagreeing.
+ *
  * @returns {void}
  */
-function repaint(slot) {
-  const page = slot === activeSession() ? openPanel() : null;
-  if (page) {
-    page.draw();
-    return;
-  }
-  // A session still opening has nothing to repaint; its screen is already stale.
-  if (!sendQuietly(slot, { type: "refresh" }))
-    slot.terminal?.write(`${ESC}[2J`);
-}
-
-/** @returns {void} */
 function applyLayout() {
-  const areas = paneAreas(panes.length);
-  /** @type {SessionSlot[]} */
-  const revealed = [];
-
-  for (let index = 0; index < MAX_SESSIONS; index++) {
+  /** @type {import('./canvas.js').Pane[]} */
+  const onCanvas = [];
+  for (const index of panes) {
     const slot = sessions[index];
     if (slot == null) continue;
-    const position = panes.indexOf(index);
-    if (position < 0) {
-      slot.pane.hidden = true;
-      continue;
-    }
-    if (slot.pane.hidden) revealed.push(slot);
-    slot.pane.hidden = false;
-    slot.pane.style.gridArea = areas[position];
+    ensurePane(slot);
+    if (slot.pane !== null) onCanvas.push(slot.pane);
   }
-  paintFrame();
 
-  // Order matters: lay out, then build, then repaint.
-  for (const slot of revealed) ensureTerminal(slot);
-  fitPanes();
-  for (const slot of revealed) repaint(slot);
+  screen.layout(
+    onCanvas,
+    paneShares(onCanvas.length),
+    { width: screenEl.clientWidth, height: screenEl.clientHeight },
+    settings.font().family,
+  );
+  redraw();
 }
 
 /**
@@ -1141,7 +1060,7 @@ async function ensureSlot(index) {
   const existing = sessions[index];
   if (existing != null) return existing;
   const created = await createSession();
-  const slot = newSlot(created.id, true, created.cols, created.rows + 1);
+  const slot = newSlot(created.id, true, created.cols, created.rows);
   sessions[index] = slot;
   writeHash();
   connectSocket(slot);
@@ -1238,12 +1157,12 @@ window.addEventListener(
       if (decision.action === "arm") {
         hints = [];
         if (settings.hints) send({ type: "hints" });
-        writeOverlays();
+        redraw();
         return;
       }
-      // Before the switch: the pane under the bar is the one to repaint.
+      // The bar comes off first: a hint or a cancel draws nothing after it.
       clearError();
-      repaintStatus();
+      redraw();
       if (decision.action === "switch") switchTo(decision.index);
       else if (decision.action === "layout") changeLayout(decision.panes);
       else if (decision.action === "hint") jumpToHint(decision.letter);
@@ -1295,9 +1214,9 @@ screenEl.addEventListener(
     // Copy and Paste are this browser's clipboard, not 3270 actions, so keymap.js
     // maps them but cannot dispatch them.
     if (mapped.command === "Copy") {
-      const term = activeTerminal();
-      if (term !== null && term.hasSelection())
-        navigator.clipboard.writeText(term.getSelection());
+      const canvas = activePane();
+      if (canvas !== null && canvas.hasSelection())
+        navigator.clipboard.writeText(canvas.getSelection());
       else if (panel !== null) navigator.clipboard.writeText(panel.copy());
       else send({ type: "copyField" });
       return;
@@ -1324,7 +1243,7 @@ screenEl.addEventListener(
   true,
 );
 
-// Capture: ghostty's own paste handler on the hidden textarea would eat this.
+// Capture: the keydown handler above would otherwise see Ctrl+V twice.
 screenEl.addEventListener(
   "paste",
   (event) => {
@@ -1349,25 +1268,26 @@ screenEl.addEventListener(
  */
 function resetScreen(slot) {
   if (settings.fitsWindow()) fitSession(slot);
-  fitFontSize(slot);
-  repaint(slot);
+  applyLayout();
 }
 
 /**
- * @param {SessionSlot} slot
+ * One canvas means one click listener: which session was clicked is a question
+ * about where on the page it landed, and the renderer is what knows.
+ *
  * @param {MouseEvent} event
  * @returns {void}
  */
-function paneClicked(slot, event) {
+function canvasClicked(event) {
   screenEl.focus();
+  const hit = screen.paneAt(event.clientX, event.clientY);
+  if (hit === null) return;
+  const slot = sessions.find((each) => each?.pane === hit.pane) ?? null;
+  if (slot == null) return;
   focusSlot(sessions.indexOf(slot));
-  const term = slot.terminal;
-  const renderer = term?.renderer;
-  if (term === null || renderer === undefined) return;
 
-  const rect = renderer.getCanvas().getBoundingClientRect();
-  const row = Math.floor((event.clientY - rect.top) / renderer.charHeight);
-  const col = Math.floor((event.clientX - rect.left) / renderer.charWidth);
+  const canvas = hit.pane;
+  const { row, col } = hit;
 
   const panel = openPanel();
   if (panel !== null) {
@@ -1375,26 +1295,21 @@ function paneClicked(slot, event) {
     return;
   }
 
-  const menuStart = term.cols - MENU_LABEL.length;
-  const resetStart = term.cols - BUTTONS.length;
-
-  if (row === term.rows - 1) {
-    // Widest first: each start is left of the last, so the first match wins.
-    const buttons = [
-      { start: menuStart, action: () => startPanel("menu") },
-      { start: resetStart, action: () => resetScreen(slot) },
-    ];
-    for (const button of buttons) {
-      if (col >= button.start) {
-        button.action();
-        return;
-      }
+  if (row === canvas.statusRow) {
+    const buttons = buttonColumns(canvas.cols);
+    if (col >= buttons.menu) {
+      startPanel("menu");
+      return;
+    }
+    if (col >= buttons.reset) {
+      resetScreen(slot);
+      return;
     }
   }
 
   // The last row is ours, and a click ending a drag was aiming at the selection.
-  if (row < 0 || row >= term.rows - 1 || col < 0 || col >= term.cols) return;
-  if (term.hasSelection()) return;
+  if (row < 0 || row >= canvas.rows || col < 0 || col >= canvas.cols) return;
+  if (canvas.hasSelection()) return;
   sendTo(slot, {
     type: "action",
     action: "MoveCursor1",
@@ -1402,21 +1317,13 @@ function paneClicked(slot, event) {
   });
 }
 
-// The font has to be loaded before the first terminal, or the first screen is
-// painted in the wrong face and then restyled.
-const [renderer, saved, savedMacros, savedKeymap] = await Promise.allSettled([
-  init(),
+// The font has to be loaded before the first canvas, or the first screen is
+// measured in the wrong face and fitted to the wrong size.
+const [saved, savedMacros, savedKeymap] = await Promise.allSettled([
   loadSettings(),
   loadMacros(),
   loadKeymap(),
 ]);
-if (renderer.status === "rejected") {
-  showError(
-    "E5001",
-    `The terminal renderer failed to load: ${String(renderer.reason)}`,
-  );
-  throw renderer.reason;
-}
 if (saved.status === "fulfilled") settings.restoreSaved(saved.value);
 else
   showError(
@@ -1442,6 +1349,19 @@ try {
   console.warn("could not preload the saved font", cause);
 }
 
+try {
+  screen = new Screen({
+    canvas: canvasEl,
+    theme: settings.theme().colors,
+    hostColors: settings.hostColors,
+  });
+} catch (cause) {
+  showError("E5001", `The renderer failed to start: ${String(cause)}`);
+  throw cause;
+}
+canvasEl.addEventListener("click", canvasClicked);
+screenEl.style.background = settings.theme().colors.background;
+
 const storedHost = localStorage.getItem("tn3270.host");
 if (storedHost !== null) settings.setHost(storedHost);
 
@@ -1465,7 +1385,7 @@ if (wanted.some((id) => id !== null)) {
 
 if (!sessions.some((slot) => slot !== null)) {
   const created = await createSession();
-  sessions[0] = newSlot(created.id, true, created.cols, created.rows + 1);
+  sessions[0] = newSlot(created.id, true, created.cols, created.rows);
 }
 writeHash();
 

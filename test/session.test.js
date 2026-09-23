@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Session, SessionRegistry } from "../server/session.js";
-import { INIT_SEQUENCE } from "../server/vt.js";
 import { AppError } from "../server/errors.js";
+import { keyboardLocked } from "../public/oia.js";
 import {
   testConfig,
   collectingViewer,
@@ -40,17 +40,18 @@ test("a viewer joining mid-stream gets a repaint matching what the first viewer 
   const late = collectingViewer("late");
   session.attach(late);
 
-  const repaint = late.screen[0];
+  const repaint = late.paints[0];
   assert.ok(
     repaint !== undefined,
     "the late viewer should receive a repaint on attach",
   );
-  assert.ok(
-    repaint.startsWith(INIT_SEQUENCE),
-    "the repaint must set the terminal up from scratch",
+  assert.equal(
+    repaint.full,
+    true,
+    "the repaint must build the screen up from scratch",
   );
   assert.ok(
-    repaint.includes("_____"),
+    late.grid.rowText(0).includes("_____"),
     "the repaint must contain the current screen",
   );
 
@@ -72,58 +73,17 @@ test("every attached viewer receives the same delta", async (t) => {
   const b = collectingViewer("b");
   session.attach(a);
   session.attach(b);
-  const beforeA = a.screen.length;
-  const beforeB = b.screen.length;
+  const beforeA = a.paints.length;
+  const beforeB = b.paints.length;
 
   session.b3270.runActions([{ action: "String", args: ["hello"] }]);
-  await waitUntil(() => a.screen.length > beforeA, "a delta to be broadcast");
+  await waitUntil(() => a.paints.length > beforeA, "a delta to be broadcast");
   await waitUntil(
-    () => b.screen.length > beforeB,
+    () => b.paints.length > beforeB,
     "the observer to get it too",
   );
 
-  assert.deepEqual(a.screen.slice(beforeA), b.screen.slice(beforeB));
-});
-
-test("a viewer with host colours off gets no truecolor from the host, another viewer is unaffected", async (t) => {
-  const fixture = await startTracedSession("test/traces/reverse.trc");
-  t.after(() => fixture.close());
-  const { session } = fixture;
-  await waitUntil(
-    () => session.screen.rowText(0).includes("_____"),
-    "the screen to be drawn",
-  );
-
-  const plain = collectingViewer("plain");
-  plain.hostColors = false;
-  const colored = collectingViewer("colored");
-  session.attach(plain);
-  session.attach(colored);
-
-  // 41 is the indexed red background; bounded, since 41 also occurs inside a cursor row.
-  const redBackground = /(?:^|;)41(?:;|m)/;
-  const plainRepaint = plain.screen[0] ?? "";
-  const coloredRepaint = colored.screen[0] ?? "";
-  assert.ok(
-    !redBackground.test(plainRepaint),
-    "the red field must not reach a viewer with host colours off",
-  );
-  assert.ok(
-    redBackground.test(coloredRepaint),
-    "the other viewer must still see the host red",
-  );
-
-  session.handleClientMessage(colored, { type: "hostColors", enabled: false });
-  const latest = colored.screen.at(-1) ?? "";
-  assert.ok(
-    !redBackground.test(latest),
-    "toggling off must repaint without the host colour",
-  );
-  assert.equal(
-    plain.screen.length,
-    1,
-    "the other viewer must not have been repainted",
-  );
+  assert.deepEqual(a.paints.slice(beforeA), b.paints.slice(beforeB));
 });
 
 test("an observer cannot type, and is told why in place", async (t) => {
@@ -157,7 +117,7 @@ test("a session counts as untouched until someone types at it", async (t) => {
     return status?.type === "status" ? status.touched : false;
   };
 
-  session.handleClientMessage(viewer, { type: "hostColors", enabled: false });
+  session.handleClientMessage(viewer, { type: "refresh" });
   session.handleClientMessage(viewer, { type: "oversize", value: "100x40" });
   assert.equal(session.touched, false);
 
@@ -167,6 +127,44 @@ test("a session counts as untouched until someone types at it", async (t) => {
     reported(),
     true,
     "the browsers must be told the moment it changes",
+  );
+});
+
+test("the keyboard locking is pushed to every viewer the moment it happens", async (t) => {
+  const fixture = await startTracedSession("test/traces/fields.trc");
+  t.after(() => fixture.close());
+  const { session } = fixture;
+
+  const viewer = collectingViewer("viewer");
+  session.attach(viewer);
+  await waitUntil(
+    () => session.screen.fieldsFormatted,
+    "the field map to arrive",
+  );
+
+  // The first input broadcasts a status of its own, because it is what makes the
+  // session touched. The lock under test is the one after that, with nothing
+  // else going on that would force a broadcast.
+  session.handleClientMessage(viewer, { type: "text", value: "a" });
+  await settle(session);
+  assert.equal(session.oia.keyboardLocked, false, "the keyboard starts open");
+  const before = viewer.messages.length;
+
+  session.handleClientMessage(viewer, { type: "action", action: "Enter" });
+  await waitUntil(() => session.oia.keyboardLocked, "the keyboard to lock");
+
+  const pushed = viewer.messages
+    .slice(before)
+    .filter((message) => message.type === "status");
+  assert.ok(
+    pushed.length > 0,
+    "a lock the browser has to wait on must be a status, not only a drawn OIA",
+  );
+  const last = pushed.at(-1);
+  assert.equal(
+    last?.type === "status" && keyboardLocked(last.lock),
+    true,
+    "and it must carry the lock the browser derives from",
   );
 });
 
@@ -432,7 +430,7 @@ test("a session survives its viewers leaving and rejoining", async (t) => {
   const rejoined = collectingViewer("rejoined");
   session.attach(rejoined);
   assert.ok(
-    rejoined.screen[0]?.includes("_____"),
+    rejoined.grid.rowText(0).includes("_____"),
     "the same screen must come straight back",
   );
 });
@@ -455,12 +453,11 @@ test("changing the model resizes the grid and tells every viewer before repainti
   );
 
   for (const viewer of [controller, observer]) {
-    const at = viewer.events.findIndex(
-      (event) => event.kind === "message" && event.message.type === "screen",
+    const at = viewer.messages.findIndex(
+      (message) => message.type === "screen",
     );
     assert.notEqual(at, -1, `${viewer.id} must be told the new size`);
-    const event = viewer.events[at];
-    assert.deepEqual(event?.kind === "message" ? event.message : null, {
+    assert.deepEqual(viewer.messages[at], {
       type: "screen",
       model: 2,
       rows: 24,
@@ -468,10 +465,10 @@ test("changing the model resizes the grid and tells every viewer before repainti
       oversize: "",
     });
 
-    // A repaint is meaningless to a viewer still holding a 43-row terminal.
-    const next = viewer.events[at + 1];
+    // A repaint is meaningless to a viewer still holding a 43-row grid.
+    const next = viewer.messages[at + 1];
     assert.ok(
-      next?.kind === "screen" && next.bytes.startsWith(INIT_SEQUENCE),
+      next?.type === "paint" && next.full,
       `${viewer.id} must be repainted immediately after being resized`,
     );
   }
@@ -496,37 +493,31 @@ test("a host that only ever erases the default screen shrinks the grid to match"
     "the grid to grow to the model 4 size",
   );
 
-  const before = viewer.events.length;
+  const before = viewer.messages.length;
   session.handleIndication({
     kind: "erase",
     body: { "logical-rows": 24, "logical-columns": 80 },
   });
 
-  const at = viewer.events.findIndex(
-    (event, i) =>
-      i >= before &&
-      event.kind === "message" &&
-      event.message.type === "screen",
+  const at = viewer.messages.findIndex(
+    (message, i) => i >= before && message.type === "screen",
   );
   assert.notEqual(
     at,
     -1,
     "the viewer must be told the grid shrank to what the host actually uses",
   );
-  assert.deepEqual(
-    viewer.events[at]?.kind === "message" ? viewer.events[at].message : null,
-    {
-      type: "screen",
-      model: 4,
-      rows: 24,
-      cols: 80,
-      oversize: "",
-    },
-  );
+  assert.deepEqual(viewer.messages[at], {
+    type: "screen",
+    model: 4,
+    rows: 24,
+    cols: 80,
+    oversize: "",
+  });
 
-  const next = viewer.events[at + 1];
+  const next = viewer.messages[at + 1];
   assert.ok(
-    next?.kind === "screen" && next.bytes.startsWith(INIT_SEQUENCE),
+    next?.type === "paint" && next.full,
     "the viewer must be repainted immediately after being resized",
   );
 });
@@ -599,17 +590,20 @@ test("a refresh repaints only the viewer who asked, even an observer", async (t)
   session.attach(observer);
   assert.equal(observer.role, "observer");
 
-  const before = controller.screen.length;
+  const before = controller.paints.length;
   session.handleClientMessage(observer, { type: "refresh" });
 
   assert.equal(
-    controller.screen.length,
+    controller.paints.length,
     before,
     "nobody else may be disturbed",
   );
-  const last = observer.screen.at(-1) ?? "";
-  assert.ok(last.startsWith(INIT_SEQUENCE), "the asker gets a full repaint");
-  assert.ok(last.includes("_____"), "and it is the host screen, not an error");
+  const last = observer.paints.at(-1);
+  assert.equal(last?.full, true, "the asker gets a full repaint");
+  assert.ok(
+    observer.grid.rowText(0).includes("_____"),
+    "and it is the host screen, not an error",
+  );
   assert.ok(
     observer.messages.every((message) => message.type !== "error"),
     "an observer asking for its own screen back is not an input",
@@ -1043,22 +1037,17 @@ test("fitting the screen to the window grows it while disconnected, and off puts
   );
   assert.equal(session.screen.cols, 120);
 
-  const at = controller.events.findIndex(
-    (event) => event.kind === "message" && event.message.type === "screen",
+  const at = controller.messages.findIndex(
+    (message) => message.type === "screen",
   );
   assert.notEqual(at, -1, "the viewer must be told the new size");
-  assert.deepEqual(
-    controller.events[at]?.kind === "message"
-      ? controller.events[at].message
-      : null,
-    {
-      type: "screen",
-      model: 4,
-      rows: 50,
-      cols: 120,
-      oversize: "120x50",
-    },
-  );
+  assert.deepEqual(controller.messages[at], {
+    type: "screen",
+    model: 4,
+    rows: 50,
+    cols: 120,
+    oversize: "120x50",
+  });
 
   session.handleClientMessage(controller, { type: "oversize", value: "" });
   await waitUntil(
@@ -1160,46 +1149,32 @@ test("a closed session removes itself from the registry", async () => {
   assert.equal(registry.list().length, 0);
 });
 
-test("a viewer that asked for a field colour gets the typeable fields tinted with it", async (t) => {
+test("the field map is read on every session, and rides the paint as a flag", async (t) => {
   const fixture = await startTracedSession("test/traces/reverse.trc");
   t.after(() => fixture.close());
   const { session } = fixture;
 
-  const viewer = collectingViewer("tinted");
-  viewer.fieldColor = "#123456";
+  const viewer = collectingViewer("viewer");
   session.attach(viewer);
 
+  // Nobody asks for this: Backspace needs it on every session, tint or no tint.
   await waitUntil(
     () => session.screen.cells.some((cell) => cell.editable),
     "the field map to be read",
   );
   await settle(session);
 
+  const editable = viewer.paints
+    .flatMap((paint) => paint.rows)
+    .flatMap((row) => row.runs)
+    .filter((run) => run.editable === true);
   assert.ok(
-    viewer.screen.join("").includes("48;2;18;52;86"),
-    "the viewer should have been sent its own tint as a background",
+    editable.length > 0,
+    "the browser tints the fields now, so it has to be told which they are",
   );
-});
-
-test("a viewer that asked for no field colour is sent none, even though the field map is still read", async (t) => {
-  const fixture = await startTracedSession("test/traces/reverse.trc");
-  t.after(() => fixture.close());
-  const { session } = fixture;
-
-  const viewer = collectingViewer("plain");
-  session.attach(viewer);
-
-  // The field map is read regardless: Backspace needs it on every session.
-  await waitUntil(
-    () => session.screen.cells.some((cell) => cell.editable),
-    "the field map to be read",
-  );
-  await settle(session);
-
-  assert.equal(
-    viewer.screen.join("").includes("48;2;"),
-    false,
-    "nobody asked for a tint, so none was sent",
+  assert.ok(
+    editable.every((run) => run.bg === undefined),
+    "a tint is the browser's to choose; the server names only what the host said",
   );
 });
 

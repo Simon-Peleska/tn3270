@@ -322,21 +322,32 @@ action outside it is refused with `E4002` and never reaches the emulator.
 
 One WebSocket at `/ws/<session-id>`.
 
-**Server → browser.** Binary frames are VT bytes, written straight to the
-terminal. Text frames are JSON:
+**Server → browser.** Text frames only, each an object with a `type`:
 
 ```jsonc
 {"type":"hello","sessionId":"…","rows":43,"cols":80,"model":4,"oversize":"","models":[{"model":2,"rows":24,"columns":80}],"role":"controller","viewers":1,"idleTimeoutMs":300000}
 {"type":"screen","model":2,"rows":24,"cols":80,"oversize":""}
-{"type":"status","connection":"connected-tn3270e","host":"mainframe:23","locked":false,"role":"controller","viewers":2}
+{"type":"paint","full":false,"color":true,"rows":[{"row":1,"runs":[{"col":3,"text":"____","fg":"red","gr":"underline","editable":true}]}],"cursor":{"row":1,"col":8,"on":true}}
+{"type":"status","connection":"connected-tn3270e","host":"mainframe:23","lock":"system","insert":false,"typeahead":false,"role":"controller","viewers":2}
 {"type":"error","code":"E3006","message":"This session is being controlled by someone else."}
 ```
+
+`paint` carries only the rows that changed, unless `full`, which also clears
+every cell it does not mention and carries `defaultFg`/`defaultBg`. Colours are
+b3270's own names and `gr` its own rendition string, passed through untouched:
+what they look like is the browser's business, so a theme change costs no round
+trip. `color: false` is a 3278 reporting no colour at all — monochrome green,
+and no colour is invented.
+
+`status` carries the operator information area as fields rather than as a
+rendered line, because the buttons sharing that row are the browser's own and
+only the browser knows where they sit.
 
 `screen` is sent whenever the grid changes size, always immediately before the
 repaint that assumes the new size. `oversize` is the fitted screen in force,
 `<cols>x<rows>`, or empty when the model is at its own size. One ordered
-WebSocket keeps them in that order, which is what stops a viewer writing
-new-sized bytes into an old-sized terminal.
+WebSocket keeps them in that order, which is what stops a viewer applying a
+paint to a grid of the wrong size.
 
 `hello` carries `idleTimeoutMs`, the server's own hold time for a viewer-less
 session (`0` when reaping is off), so a page whose socket drops knows how long
@@ -361,7 +372,6 @@ reconnecting to it is worth trying.
 | `POST` | `/api/sessions`             | Creates a session → `201 {id, rows, cols, model}`, after b3270 has reported its real geometry |
 | `GET`  | `/api/sessions`             | Lists sessions → `{sessions:[{id, viewers, connection, host}], defaultHost}`                  |
 | `GET`  | `/api/sessions/<id>/3270/…` | Forwarded to that session's emulator; see REST below                                          |
-| `GET`  | `/vendor/…`                 | ghostty-web, served from `node_modules`                                                       |
 | `GET`  | anything else               | Static files from `public/`                                                                   |
 
 Errors are JSON: `{"code":"E6001","message":"…"}` with a matching status.

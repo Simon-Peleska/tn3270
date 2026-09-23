@@ -4,11 +4,95 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>TN3270 Terminal</title>
-    <link rel="stylesheet" href="./style.css" />
+
+    <!-- Every module and every font, asked for before anything runs so they
+         arrive in one wave instead of a round trip per import layer. A new
+         module belongs on this list; test/server.test.js holds it against the
+         real import graph, so a forgotten one fails the suite rather than
+         quietly costing a round trip. -->
+    <link rel="modulepreload" href="./app.js" />
+    <link rel="modulepreload" href="./canvas.js" />
+    <link rel="modulepreload" href="./colors.js" />
+    <link rel="modulepreload" href="./fitfont.js" />
+    <link rel="modulepreload" href="./grid.js" />
+    <link rel="modulepreload" href="./keymap.js" />
+    <link rel="modulepreload" href="./keymap-format.js" />
+    <link rel="modulepreload" href="./keymap-page.js" />
+    <link rel="modulepreload" href="./macros.js" />
+    <link rel="modulepreload" href="./macro-xml.js" />
+    <link rel="modulepreload" href="./menu.js" />
+    <link rel="modulepreload" href="./oia.js" />
+    <link rel="modulepreload" href="./panel.js" />
+    <link rel="modulepreload" href="./reconnect.js" />
+    <link rel="modulepreload" href="./recorder.js" />
+    <link rel="modulepreload" href="./sessions.js" />
+    <link rel="modulepreload" href="./settings.js" />
+    <link rel="modulepreload" href="./store.js" />
+
+    <!-- Which font is wanted is a stored setting, so all three are asked for:
+         the fit cannot start until one has loaded. -->
+    <link
+      rel="preload"
+      href="./fonts/3270-Regular.ttf"
+      as="font"
+      type="font/ttf"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="./fonts/FiraMono-Regular.ttf"
+      as="font"
+      type="font/ttf"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="./fonts/IBMPlexMono-Regular.ttf"
+      as="font"
+      type="font/ttf"
+      crossorigin
+    />
+
+    <style>
+      /* Vendored so any browser gets them. See public/fonts/NOTICE. */
+      @font-face {
+        font-family: "IBM 3270";
+        src: url("./fonts/3270-Regular.ttf") format("truetype");
+        font-display: block;
+      }
+      @font-face {
+        font-family: "Fira Mono";
+        src: url("./fonts/FiraMono-Regular.ttf") format("truetype");
+        font-display: block;
+      }
+      @font-face {
+        font-family: "IBM Plex Mono";
+        src: url("./fonts/IBMPlexMono-Regular.ttf") format("truetype");
+        font-display: block;
+      }
+
+      /* Everything visible is drawn on the canvas, so this is the whole of the
+         page's styling: give the canvas a box to be measured against, and stop
+         a briefly too-large one from growing the page it is measured against. */
+      body {
+        margin: 0;
+        height: 100dvh;
+        overflow: hidden;
+        background: #000;
+      }
+      #screen {
+        height: 100%;
+        overflow: hidden;
+        outline: none;
+      }
+      #canvas {
+        display: block;
+      }
+    </style>
   </head>
   <body>
     <!-- Errors show in place on the status line; a redirect would drop the session. -->
-    <main id="screen" class="screen" tabindex="0"></main>
+    <main id="screen" tabindex="0"><canvas id="canvas"></canvas></main>
 
     <script type="module" src="./app.js"></script>
   </body>

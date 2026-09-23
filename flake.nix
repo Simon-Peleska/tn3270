@@ -1,5 +1,5 @@
 {
-  description = "Web TN3270 terminal: b3270 backend, ghostty-web frontend";
+  description = "Web TN3270 terminal: b3270 backend, canvas frontend";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 

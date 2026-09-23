@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   MAX_SESSIONS,
   SessionPrefix,
-  paneAreas,
+  paneShares,
   parseSessionHash,
   sessionHash,
   switcherText,
@@ -118,25 +118,43 @@ test("a shifted digit lays the screen out instead of switching to a session", ()
   );
 });
 
-test("each layout fills the same two-by-two grid", () => {
-  assert.equal(paneAreas(1).length, 1);
-  assert.equal(paneAreas(2).length, 2);
-  assert.equal(paneAreas(3).length, 3);
-  assert.equal(paneAreas(4).length, 4);
+test("each layout covers the whole page and no pane overlaps another", () => {
+  for (let count = 1; count <= 4; count++) {
+    const shares = paneShares(count);
+    assert.equal(shares.length, count);
 
-  assert.equal(paneAreas(1)[0], "1 / 1 / 3 / 3");
-  assert.deepEqual([...paneAreas(2)], ["1 / 1 / 3 / 2", "1 / 2 / 3 / 3"]);
+    const area = shares.reduce((sum, s) => sum + s.width * s.height, 0);
+    assert.equal(area, 1, `${count} panes should tile the page exactly`);
+
+    for (const [index, a] of shares.entries())
+      for (const b of shares.slice(index + 1))
+        assert.ok(
+          a.x + a.width <= b.x ||
+            b.x + b.width <= a.x ||
+            a.y + a.height <= b.y ||
+            b.y + b.height <= a.y,
+          `${count} panes: ${JSON.stringify(a)} overlaps ${JSON.stringify(b)}`,
+        );
+  }
+
+  assert.deepEqual([...paneShares(1)], [{ x: 0, y: 0, width: 1, height: 1 }]);
 
   // Three is one full-height pane on the left and two stacked on the right.
-  const three = paneAreas(3);
-  assert.equal(three[0], "1 / 1 / 3 / 2");
-  assert.equal(three[1], "1 / 2 / 2 / 3");
-  assert.equal(three[2], "2 / 2 / 3 / 3");
+  const three = paneShares(3);
+  assert.deepEqual(three[0], { x: 0, y: 0, width: 0.5, height: 1 });
+  assert.deepEqual(three[1], { x: 0.5, y: 0, width: 0.5, height: 0.5 });
+  assert.deepEqual(three[2], { x: 0.5, y: 0.5, width: 0.5, height: 0.5 });
 
   // Four is quarters: 1 and 2 on the left, 3 and 4 on the right.
+  const four = paneShares(4);
   assert.deepEqual(
-    [...paneAreas(4)],
-    ["1 / 1 / 2 / 2", "2 / 1 / 3 / 2", "1 / 2 / 2 / 3", "2 / 2 / 3 / 3"],
+    four.map((s) => [s.x, s.y]),
+    [
+      [0, 0],
+      [0, 0.5],
+      [0.5, 0],
+      [0.5, 0.5],
+    ],
   );
 });
 

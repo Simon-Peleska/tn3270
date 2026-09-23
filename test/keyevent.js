@@ -1,3 +1,4 @@
+import { Grid } from "../public/grid.js";
 import {
   DEFAULT_BINDINGS,
   buildLookup,
@@ -57,3 +58,37 @@ export function keymapDeps(bindings) {
 }
 
 export const defaultKeymapDeps = keymapDeps(DEFAULT_BINDINGS);
+
+/**
+ * The panel never draws itself: it asks the page to draw the whole pane, which
+ * hands it a grid back. Here that is this, on demand.
+ *
+ * @param {{ drawInto: (grid: Grid) => void }} page
+ * @returns {Grid} 80x25, the overlay of a model 2 pane
+ */
+export function drawn(page) {
+  const grid = new Grid(25, 80, null);
+  page.drawInto(grid);
+  return grid;
+}
+
+/**
+ * The grid cuts anything past the last column rather than wrapping it, so an
+ * overrun is silent. This catches it where it is written instead of where it
+ * lands, by recording every `put` the page makes.
+ *
+ * @param {{ drawInto: (grid: Grid) => void }} page
+ * @returns {{ col: number, text: string }[]}
+ */
+export function recordedPuts(page) {
+  /** @type {{ col: number, text: string }[]} */
+  const puts = [];
+  const grid = new Grid(25, 80, null);
+  const put = grid.put.bind(grid);
+  grid.put = (row, col, text, style) => {
+    puts.push({ col, text });
+    put(row, col, text, style);
+  };
+  page.drawInto(grid);
+  return puts;
+}

@@ -45,6 +45,8 @@ export class ScreenModel {
     this.fieldsFormatted = false;
     /** @type {Set<number>} */
     this.dirtyRows = new Set();
+    /** @type {boolean} A cursor move touches no row, so it is tracked apart. */
+    this.cursorMoved = false;
 
     this.resize(rows, cols);
   }
@@ -59,7 +61,7 @@ export class ScreenModel {
     this.cols = cols;
     this.cells = new Array(rows * cols);
     for (let i = 0; i < this.cells.length; i++) this.cells[i] = blankCell();
-    this.cursor = { row: 0, col: 0, enabled: this.cursor.enabled };
+    this.moveCursor(0, 0, this.cursor.enabled);
     this.fieldsFormatted = false;
     this.markAllDirty();
   }
@@ -67,6 +69,19 @@ export class ScreenModel {
   /** @returns {void} */
   markAllDirty() {
     for (let row = 0; row < this.rows; row++) this.dirtyRows.add(row);
+  }
+
+  /**
+   * @param {number} row 0-based
+   * @param {number} col 0-based
+   * @param {boolean} enabled
+   * @returns {void}
+   */
+  moveCursor(row, col, enabled) {
+    const at = this.cursor;
+    if (at.row === row && at.col === col && at.enabled === enabled) return;
+    this.cursor = { row, col, enabled };
+    this.cursorMoved = true;
   }
 
   /**
@@ -108,7 +123,7 @@ export class ScreenModel {
       cell.editable = false;
     }
     this.fieldsFormatted = false;
-    this.cursor = { row: 0, col: 0, enabled: this.cursor.enabled };
+    this.moveCursor(0, 0, this.cursor.enabled);
     this.markAllDirty();
   }
 
@@ -177,11 +192,11 @@ export class ScreenModel {
     if (screen.cursor) {
       const { enabled, row, column } = screen.cursor;
       const previous = this.cursor;
-      this.cursor = {
-        row: typeof row === "number" ? row - 1 : previous.row,
-        col: typeof column === "number" ? column - 1 : previous.col,
-        enabled: typeof enabled === "boolean" ? enabled : previous.enabled,
-      };
+      this.moveCursor(
+        typeof row === "number" ? row - 1 : previous.row,
+        typeof column === "number" ? column - 1 : previous.col,
+        typeof enabled === "boolean" ? enabled : previous.enabled,
+      );
     }
   }
 
@@ -192,6 +207,15 @@ export class ScreenModel {
     const rows = [...this.dirtyRows].sort((a, b) => a - b);
     this.dirtyRows.clear();
     return rows;
+  }
+
+  /**
+   * @returns {boolean} whether the cursor moved; the flag is then cleared
+   */
+  takeCursorMoved() {
+    const moved = this.cursorMoved;
+    this.cursorMoved = false;
+    return moved;
   }
 
   /**

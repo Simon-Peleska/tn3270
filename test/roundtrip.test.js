@@ -1,73 +1,58 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fullRepaint, delta } from "../server/vt.js";
-import {
-  ansiColorIndex,
-  DEFAULT_FOREGROUND_ANSI,
-  DEFAULT_BACKGROUND_ANSI,
-} from "../server/colors.js";
-import { loadGhostty, render } from "./ghostty.js";
+import { fullPaint, paintDelta } from "../server/paint.js";
+import { Grid } from "../public/grid.js";
 import { startTracedSession, waitUntil, settle } from "./helpers.js";
 
-// Host colours are indexed, so the palette here is sixteen distinct values and
-// the checks are on which slot each cell resolved through, not on any RGB.
-
-const ghostty = await loadGhostty();
-
-/** @type {number[]} packed 0xRRGGBB, one distinct value per ANSI slot */
-const TEST_PALETTE = Array.from(
-  { length: 16 },
-  (_, index) => (index + 1) * 0x101010,
-);
-
-/**
- * @param {number} index 0-15
- * @returns {[number, number, number]}
- */
-function paletteRgb(index) {
-  const packed = TEST_PALETTE[index] ?? 0;
-  return [(packed >> 16) & 0xff, (packed >> 8) & 0xff, packed & 0xff];
-}
+// The load-bearing test of the paint protocol: real b3270 output, encoded by the
+// server and decoded by the same Grid the browser runs, compared cell for cell
+// against the model. Nothing here knows what a colour looks like — the names go
+// out and the same names must come back.
 
 /**
  * @param {import('../server/screen.js').ScreenModel} screen
- * @param {ReturnType<typeof render>} rendered
+ * @param {Grid} grid
  * @returns {void}
  */
-function assertGridMatches(screen, rendered) {
-  for (let row = 0; row < screen.rows; row++) {
-    const expected = screen.rowText(row);
-    assert.equal(rendered.text[row], expected, `row ${row + 1} differs`);
-  }
+function assertGridMatches(screen, grid) {
+  assert.equal(grid.rows, screen.rows);
+  assert.equal(grid.cols, screen.cols);
 
   for (let row = 0; row < screen.rows; row++) {
     for (let col = 0; col < screen.cols; col++) {
       const cell = screen.cellAt(row, col);
-      if (cell.ch === " " || cell.ch === "") continue;
-      const fg = paletteRgb(
-        ansiColorIndex(cell.fg ?? screen.defaultFg, DEFAULT_FOREGROUND_ANSI),
-      );
-      const bg = paletteRgb(
-        ansiColorIndex(cell.bg ?? screen.defaultBg, DEFAULT_BACKGROUND_ANSI),
-      );
-      const actual = rendered.cell(row, col);
       assert.deepEqual(
-        [
-          actual.fg_r,
-          actual.fg_g,
-          actual.fg_b,
-          actual.bg_r,
-          actual.bg_g,
-          actual.bg_b,
-        ],
-        [fg[0], fg[1], fg[2], bg[0], bg[1], bg[2]],
-        `colours at row ${row + 1} col ${col + 1} differ`,
+        grid.cellAt(row, col),
+        {
+          ch: cell.ch === "" ? " " : cell.ch,
+          fg: cell.fg,
+          bg: cell.bg,
+          gr: cell.gr,
+          editable: cell.editable,
+        },
+        `row ${row + 1} col ${col + 1} differs`,
       );
     }
   }
+
+  assert.deepEqual(grid.cursor, {
+    row: screen.cursor.row,
+    col: screen.cursor.col,
+    visible: screen.cursor.enabled,
+  });
 }
 
-test("a full repaint of a real screen round-trips through ghostty unchanged", async (t) => {
+/**
+ * @param {import('../server/screen.js').ScreenModel} screen
+ * @returns {Grid}
+ */
+function paintedGrid(screen) {
+  const grid = new Grid(1, 1);
+  grid.applyPaint(fullPaint(screen));
+  return grid;
+}
+
+test("a full paint of a real screen arrives in the browser's grid unchanged", async (t) => {
   const fixture = await startTracedSession("test/traces/reverse.trc");
   t.after(() => fixture.close());
 
@@ -77,24 +62,110 @@ test("a full repaint of a real screen round-trips through ghostty unchanged", as
     "the screen to be drawn",
   );
 
-  const oiaText = "X Not Connected".padEnd(screen.cols, " ");
-  const rendered = render(
-    ghostty,
-    screen.cols,
-    screen.rows + 1,
-    fullRepaint(screen, oiaText),
-    TEST_PALETTE,
+  const grid = paintedGrid(screen);
+
+  assertGridMatches(screen, grid);
+  assert.equal(grid.color, screen.color);
+  assert.equal(grid.defaultFg, screen.defaultFg);
+  assert.equal(grid.defaultBg, screen.defaultBg);
+});
+
+test("the host's colours cross the wire as its own words", async (t) => {
+  const fixture = await startTracedSession("test/traces/reverse.trc");
+  t.after(() => fixture.close());
+
+  const { screen } = fixture.session;
+  await waitUntil(
+    () => screen.rowText(0).includes("_____"),
+    "the screen to be drawn",
   );
 
-  assertGridMatches(screen, rendered);
+  const runs = fullPaint(screen).rows.flatMap((row) => row.runs);
+
+  // Without this the cell-for-cell check above could be comparing nulls to nulls.
+  assert.ok(
+    runs.some((run) => run.fg === "red"),
+    "this trace paints in red, so a run must say so",
+  );
+  assert.ok(
+    runs.some((run) => run.bg !== undefined),
+    "this trace reverses a field, so a run must name a background",
+  );
+  for (const run of runs) {
+    if (run.fg !== undefined) assert.match(run.fg, /^[a-zA-Z]+$/);
+    if (run.bg !== undefined) assert.match(run.bg, /^[a-zA-Z]+$/);
+  }
+});
+
+test("a rendition of several words crosses the wire whole", async (t) => {
+  const fixture = await startTracedSession("test/traces/fields.trc");
+  t.after(() => fixture.close());
+
+  const { screen } = fixture.session;
+  await waitUntil(() => screen.fieldsFormatted, "the field map to arrive");
+
+  const combined = fullPaint(screen)
+    .rows.flatMap((row) => row.runs.map((run) => ({ row: row.row, run })))
+    .find((found) => found.run.gr?.includes(",") === true);
+  assert.ok(
+    combined,
+    "this trace combines renditions, which is what a bitmask would have flattened",
+  );
+  assert.ok((combined.run.gr?.split(",").length ?? 0) >= 2);
+  for (const word of combined.run.gr?.split(",") ?? [])
+    assert.match(word, /^[a-z]+$/, "b3270's own word, not a number");
+
+  const grid = paintedGrid(screen);
   assert.equal(
-    rendered.text[screen.rows],
-    oiaText,
-    "the OIA row should sit below the screen",
+    grid.cellAt(combined.row, combined.run.col)?.gr,
+    combined.run.gr,
   );
 });
 
-test("a delta applied on top of a repaint agrees with the model", async (t) => {
+test("every row is sent whole, so a run never has to say what it leaves behind", async (t) => {
+  const fixture = await startTracedSession("test/traces/fields.trc");
+  t.after(() => fixture.close());
+
+  const { screen } = fixture.session;
+  await waitUntil(() => screen.fieldsFormatted, "the field map to arrive");
+
+  for (const row of fullPaint(screen).rows) {
+    assert.equal(
+      row.runs[0]?.col,
+      0,
+      `row ${row.row + 1} must start at column 0`,
+    );
+    let col = 0;
+    for (const run of row.runs) {
+      assert.equal(
+        run.col,
+        col,
+        `row ${row.row + 1} has a gap before ${run.col}`,
+      );
+      col += run.text.length;
+    }
+    assert.equal(col, screen.cols, `row ${row.row + 1} stops short`);
+  }
+});
+
+test("an editable field is marked as one all the way to the grid", async (t) => {
+  const fixture = await startTracedSession("test/traces/fields.trc");
+  t.after(() => fixture.close());
+
+  const { screen } = fixture.session;
+  await waitUntil(() => screen.fieldsFormatted, "the field map to arrive");
+
+  const grid = paintedGrid(screen);
+  let editable = 0;
+  for (let row = 0; row < grid.rows; row++)
+    for (let col = 0; col < grid.cols; col++)
+      if (grid.cellAt(row, col)?.editable === true) editable += 1;
+
+  assert.ok(editable > 0, "this trace has input fields");
+  assertGridMatches(screen, grid);
+});
+
+test("a delta on top of a full paint keeps the grid agreeing with the model", async (t) => {
   const fixture = await startTracedSession("test/traces/reverse.trc");
   t.after(() => fixture.close());
 
@@ -104,40 +175,26 @@ test("a delta applied on top of a repaint agrees with the model", async (t) => {
     "the screen to be drawn",
   );
 
-  const blankOia = "".padEnd(screen.cols, " ");
-  const terminal = ghostty.createTerminal(screen.cols, screen.rows + 1, {
-    palette: TEST_PALETTE,
-  });
-  terminal.write(fullRepaint(screen, blankOia));
+  const grid = paintedGrid(screen);
+  const untouched = grid.rowText(0);
 
   const changed = 4;
   for (let col = 0; col < 5; col++) {
     const cell = screen.cellAt(changed, col);
     cell.ch = "ABCDE"[col] ?? " ";
     cell.fg = "turquoise";
+    cell.gr = null;
   }
-  terminal.write(delta(screen, [changed], blankOia, false));
+  grid.applyPaint(paintDelta(screen, [changed]));
 
-  for (let row = 0; row < screen.rows; row++) {
-    const line = terminal.getLine(row) ?? [];
-    let text = "";
-    for (let col = 0; col < screen.cols; col++) {
-      const codepoint = line[col]?.codepoint ?? 0;
-      text += codepoint === 0 ? " " : String.fromCodePoint(codepoint);
-    }
-    assert.equal(
-      text,
-      screen.rowText(row),
-      `row ${row + 1} differs after the delta`,
-    );
-  }
-
-  const turquoise = paletteRgb(
-    ansiColorIndex("turquoise", DEFAULT_FOREGROUND_ANSI),
+  assertGridMatches(screen, grid);
+  assert.equal(grid.rowText(changed).slice(0, 5), "ABCDE");
+  assert.equal(grid.cellAt(changed, 0)?.fg, "turquoise");
+  assert.equal(
+    grid.rowText(0),
+    untouched,
+    "a delta must not disturb other rows",
   );
-  const painted = terminal.getLine(changed)?.[0];
-  assert.ok(painted, "the changed row should have been repainted");
-  assert.deepEqual([painted.fg_r, painted.fg_g, painted.fg_b], turquoise);
 });
 
 test("a keystroke moves the cursor and the delta carries it", async (t) => {
@@ -148,6 +205,7 @@ test("a keystroke moves the cursor and the delta carries it", async (t) => {
   const { screen } = session;
   await settle(session);
 
+  const grid = paintedGrid(screen);
   const before = screen.cursor.col;
   // The field in this trace is nondisplay, so the advancing cursor is the whole effect.
   session.b3270.runActions([{ action: "String", args: ["hello"] }]);
@@ -158,60 +216,25 @@ test("a keystroke moves the cursor and the delta carries it", async (t) => {
     "five characters should advance the cursor five columns",
   );
 
-  const bytes = delta(screen, screen.takeDirtyRows(), "", false);
-  const { cursor } = render(
-    ghostty,
-    screen.cols,
-    screen.rows + 1,
-    fullRepaint(screen, "") + bytes,
-  );
-  assert.equal(cursor.y, screen.cursor.row);
-  assert.equal(cursor.x, screen.cursor.col);
+  grid.applyPaint(paintDelta(screen, screen.takeDirtyRows()));
+
+  assert.equal(grid.cursor?.row, screen.cursor.row);
+  assert.equal(grid.cursor?.col, screen.cursor.col);
 });
 
-test("writing the last cell of the last row does not scroll the screen", async (t) => {
+test("a cursor off the end of the screen is clamped onto it", async (t) => {
   const fixture = await startTracedSession("test/traces/reverse.trc");
   t.after(() => fixture.close());
 
   const { screen } = fixture.session;
-  await waitUntil(
-    () => screen.rowText(0).includes("_____"),
-    "the screen to be drawn",
-  );
+  await settle(fixture.session);
 
-  // Only autowrap being off keeps this from scrolling the whole screen up by one.
-  const bottom = screen.rows - 1;
-  screen.cellAt(bottom, screen.cols - 1).ch = "Z";
-  screen.cellAt(0, 0).ch = "A";
+  screen.cursor.row = screen.rows + 5;
+  screen.cursor.col = -3;
 
-  const rendered = render(
-    ghostty,
-    screen.cols,
-    screen.rows + 1,
-    fullRepaint(screen, ""),
-  );
-
-  assert.equal(
-    rendered.text[0]?.[0],
-    "A",
-    "the top row must still be the top row",
-  );
-  assert.equal(rendered.text[bottom]?.[screen.cols - 1], "Z");
-});
-
-test("the cursor lands where the model says it is", async (t) => {
-  const fixture = await startTracedSession("test/traces/reverse.trc");
-  t.after(() => fixture.close());
-
-  const { screen } = fixture.session;
-  await waitUntil(() => screen.cursor.enabled, "the cursor to be enabled");
-
-  const rendered = render(
-    ghostty,
-    screen.cols,
-    screen.rows + 1,
-    fullRepaint(screen, ""),
-  );
-  assert.equal(rendered.cursor.y, screen.cursor.row);
-  assert.equal(rendered.cursor.x, screen.cursor.col);
+  assert.deepEqual(fullPaint(screen).cursor, {
+    row: screen.rows - 1,
+    col: 0,
+    on: screen.cursor.enabled,
+  });
 });

@@ -48,6 +48,7 @@ const ERRORS = Object.freeze({
   E6004: "Server could not start",
   E6005: "Log file could not be opened",
   E6006: "Log file could not be written or rolled over",
+  // E6007-E6009 were the page inliner's, which is gone. Retired, not free.
 
   // E7001 is spent.
   E7002: "REST is not available for this session",

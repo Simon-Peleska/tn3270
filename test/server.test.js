@@ -3,11 +3,11 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { writeFile, rm } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { WebSocket } from "ws";
-import { INIT_SEQUENCE } from "../server/vt.js";
 import { FakeHost } from "./fakehost.js";
 import { testConfig, waitUntil } from "./helpers.js";
+import { Grid } from "../public/grid.js";
 
 /** @returns {Promise<number>} a port that was free a moment ago */
 function freePort() {
@@ -83,26 +83,29 @@ async function startServer(logLevel = "warn", trustProxyHeaders = false) {
 /**
  * @param {string} url
  * @param {Record<string, string>} [headers]
- * @returns {Promise<{ socket: WebSocket, screen: string[], messages: Record<string, unknown>[] }>}
+ * @returns {Promise<{ socket: WebSocket, messages: Record<string, unknown>[], paints: Record<string, unknown>[], grid: Grid }>}
  */
 async function openViewer(url, headers = {}) {
   const socket = new WebSocket(url, { headers });
-  /** @type {string[]} */
-  const screen = [];
   /** @type {Record<string, unknown>[]} */
   const messages = [];
+  /** @type {Record<string, unknown>[]} */
+  const paints = [];
+  const grid = new Grid(1, 1);
 
-  socket.on("message", (data, isBinary) => {
-    if (isBinary)
-      screen.push(Buffer.from(/** @type {Buffer} */ (data)).toString("utf8"));
-    else messages.push(JSON.parse(String(data)));
+  socket.on("message", (data) => {
+    const message = JSON.parse(String(data));
+    messages.push(message);
+    if (message["type"] !== "paint") return;
+    paints.push(message);
+    grid.applyPaint(message);
   });
 
   await new Promise((resolve, reject) => {
     socket.once("open", resolve);
     socket.once("error", reject);
   });
-  return { socket, screen, messages };
+  return { socket, messages, paints, grid };
 }
 
 test("two browsers share one session over the real server", async (t) => {
@@ -126,8 +129,8 @@ test("two browsers share one session over the real server", async (t) => {
   await waitUntil(() => first.messages.length > 0, "the hello message");
   assert.equal(first.messages[0]?.["type"], "hello");
   assert.equal(first.messages[0]?.["role"], "controller");
-  await waitUntil(() => first.screen.length > 0, "the initial repaint");
-  assert.ok(first.screen[0]?.startsWith(INIT_SEQUENCE));
+  await waitUntil(() => first.paints.length > 0, "the initial repaint");
+  assert.equal(first.paints[0]?.["full"], true);
 
   first.socket.send(
     JSON.stringify({ type: "connect", host: `127.0.0.1:${host.port}` }),
@@ -135,7 +138,7 @@ test("two browsers share one session over the real server", async (t) => {
   await host.waitForConnection();
   await host.sendRecords(1);
   await waitUntil(
-    () => first.screen.join("").includes("_____"),
+    () => first.grid.rowText(0).includes("_____"),
     "the host screen to arrive",
   );
 
@@ -143,11 +146,11 @@ test("two browsers share one session over the real server", async (t) => {
     `ws://127.0.0.1:${server.port}/ws/${created.id}`,
   );
   t.after(() => second.socket.close());
-  await waitUntil(() => second.screen.length > 0, "the late viewer repaint");
+  await waitUntil(() => second.paints.length > 0, "the late viewer repaint");
 
   assert.equal(second.messages[0]?.["role"], "observer");
   assert.ok(
-    second.screen[0]?.includes("_____"),
+    second.grid.rowText(0).includes("_____"),
     "the late viewer must see the current screen",
   );
 
@@ -192,15 +195,93 @@ test("static files and the session list are served", async (t) => {
   assert.equal(page.status, 200);
   assert.match(await page.text(), /<title>TN3270 Terminal<\/title>/);
 
-  const bundle = await fetch(`${base}/vendor/dist/ghostty-web.js`);
-  assert.equal(bundle.status, 200);
+  const module = await fetch(`${base}/canvas.js`);
+  assert.equal(module.status, 200);
   assert.equal(
-    bundle.headers.get("content-type"),
+    module.headers.get("content-type"),
     "text/javascript; charset=utf-8",
   );
 
   const list = await (await fetch(`${base}/api/sessions`)).json();
   assert.ok(Array.isArray(list.sessions));
+});
+
+test("static files are compressed, revalidated, and fonts cached forever", async (t) => {
+  const server = await startServer();
+  t.after(() => server.stop());
+  const base = `http://127.0.0.1:${server.port}`;
+
+  const first = await fetch(`${base}/app.js`);
+  const source = readFileSync("public/app.js", "utf8");
+  assert.equal(first.status, 200);
+  assert.equal(first.headers.get("content-encoding"), "gzip");
+  assert.equal(first.headers.get("cache-control"), "no-cache");
+  assert.equal(await first.text(), source);
+  const onTheWire = Number(first.headers.get("content-length"));
+  assert.ok(
+    onTheWire > 0 && onTheWire < source.length / 2,
+    `gzip should more than halve ${source.length} bytes, sent ${onTheWire}`,
+  );
+
+  const etag = first.headers.get("etag") ?? "";
+  assert.match(etag, /^"[\w-]+"$/);
+  const again = await fetch(`${base}/app.js`, {
+    headers: { "if-none-match": etag },
+  });
+  assert.equal(again.status, 304);
+  assert.equal(await again.text(), "");
+
+  // A reload is the page's own reconnect path, so a changed file must win over
+  // the ETag the browser still holds.
+  const stale = await fetch(`${base}/app.js`, {
+    headers: { "if-none-match": '"not-the-one"' },
+  });
+  assert.equal(stale.status, 200);
+
+  const font = await fetch(`${base}/fonts/3270-Regular.ttf`);
+  assert.equal(font.status, 200);
+  assert.equal(
+    font.headers.get("cache-control"),
+    "public, max-age=31536000, immutable",
+  );
+  assert.equal(font.headers.get("content-encoding"), "gzip");
+  assert.ok(
+    Number(font.headers.get("content-length")) <
+      readFileSync("public/fonts/3270-Regular.ttf").byteLength / 2,
+    "raw TrueType should more than halve",
+  );
+});
+
+test("the page preloads every module it imports, and every font", async (t) => {
+  const server = await startServer();
+  t.after(() => server.stop());
+  const html = await (await fetch(`http://127.0.0.1:${server.port}/`)).text();
+
+  /** @type {Set<string>} */
+  const imported = new Set();
+  /** @param {string} file @returns {void} */
+  const walk = (file) => {
+    if (imported.has(file)) return;
+    imported.add(file);
+    const source = readFileSync(`public/${file}`, "utf8");
+    for (const [, target] of source.matchAll(/from "\.\/([\w.-]+)"/g))
+      walk(String(target));
+  };
+  walk("app.js");
+
+  for (const file of imported)
+    assert.ok(
+      html.includes(`<link rel="modulepreload" href="./${file}" />`),
+      `${file} is imported but never preloaded — add it to public/index.html`,
+    );
+
+  for (const font of readdirSync("public/fonts").filter((f) =>
+    f.endsWith(".ttf"),
+  ))
+    assert.ok(
+      html.includes(`href="./fonts/${font}"`),
+      `${font} is served but never preloaded`,
+    );
 });
 
 test("a path that tries to escape the public directory is refused", async (t) => {
@@ -210,7 +291,7 @@ test("a path that tries to escape the public directory is refused", async (t) =>
   // Percent-encoded, or fetch normalises the traversal away before the server sees it.
   for (const path of [
     "/%2e%2e%2fconfig.jsonc",
-    "/vendor/%2e%2e%2f%2e%2e%2fconfig.jsonc",
+    "/fonts/%2e%2e%2f%2e%2e%2fconfig.jsonc",
   ]) {
     const response = await fetch(`http://127.0.0.1:${server.port}${path}`);
     const body = await response.json();

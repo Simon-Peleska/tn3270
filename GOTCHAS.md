@@ -63,13 +63,6 @@ they agree from the start on model 2, whose alternate size _is_ 24×80. The
 proxy's comparison test therefore runs both sides at model 2, so that a
 difference in the answer is a difference we caused.
 
-## Autowrap must be turned off
-
-`ESC[?7l`, once, before anything is painted (`INIT_SEQUENCE` in `server/vt.js`).
-With autowrap on, writing a character into the last column of the last row wraps
-and scrolls the whole screen, so every absolute cursor address after it is off by
-a row. The failure looks like a rendering bug anywhere _except_ where it is.
-
 ## Building b3270 without X11
 
 `--enable-b3270` alone is not enough: suite3270's configure enables every
@@ -82,24 +75,20 @@ comparison test. Its install target installs `pr3287` and `x3270if` a second
 time, though, and two `install -c` runs racing over one path fail outright —
 hence `enableParallelInstalling = false`. See `nix/b3270.nix`.
 
-## ghostty-web in Node
+## `actualBoundingBoxAscent` is per string, not per font
 
-- The bundle is built for the browser and touches `self` while loading, so
-  `globalThis.self = globalThis` is needed before importing it headlessly
-  (`test/ghostty.js`).
-- The wasm is inlined as a base64 data URL in the ESM bundle, so no wasm path
-  needs resolving in tests.
-- The package's `exports` map does not expose `./dist/...`, so it must be
-  imported as `'ghostty-web'`, not by subpath.
-- The cell API is `getLine(y)` → array of cells, `getCursor()`, `getDimensions()`.
-  There is no `readCell`, whatever the `GhosttyCell` typedef suggests.
+Measuring a cell's height off `actualBoundingBox*` gives the ink of whatever
+string was passed, so a row of `.` and a row of `Ag` measure different heights
+and the baseline walks. `Screen.measure()` in `public/canvas.js` uses
+`fontBoundingBoxAscent`/`Descent`, which describe the face and not the sample.
 
-## ghostty-web 0.4.0 blurs the canvas after every font-size change
+## Setting `canvas.width` in CSS pixels throws away the backing store
 
-`handleFontChange()` sets `canvas.width/height` in CSS pixels, throwing away the
-device-pixel backing store `renderer.resize()` had just set up. On a HiDPI screen
-every glyph goes soft. `fitFontSize()` in `public/app.js` calls
-`renderer.resize()` and `renderer.render()` again afterwards to put it back.
+Any assignment to `canvas.width`/`height` resets the drawing surface — so a
+device-pixel-sized store, set up once for the DPR, is silently replaced by a
+CSS-pixel one and every glyph goes soft on a HiDPI screen. `Screen.layout()` is
+the only place in `public/canvas.js` that touches either, and it always
+multiplies by the DPR. Nothing else may set them.
 
 ## Browser measurements taken from CDP can disagree with the screenshot
 
@@ -134,18 +123,14 @@ Node 22 treats the argument as a file path. Use the glob: `node --test
 `tsc` only picks up `tsconfig.json` automatically. The type gate is
 `tsc -p jsconfig.json`.
 
-## `#000000` in a theme means "unset" to ghostty-web
+## A cell's colour is a name or a `#rrggbb`, and the `#` is the only tell
 
-`parseColorToHex()` packs a colour into `0xRRGGBB` and the WASM terminal reads 0
-as "not set", so pure black — background, foreground or any of the sixteen
-slots — silently becomes ghostty's own default instead. A black-background theme
-comes up grey (`#1d1f21`) everywhere the host left the colour alone, and a
-reverse-video cell over a black foreground gets ghostty's light grey. Every
-theme is therefore passed through `terminalColors()`, which hands ghostty
-`#010101` where the theme says black. Separately, the renderer skips its fill for
-a `(0, 0, 0)` cell background, taking it for the cleared canvas, which would
-leave the bars this page paints itself see-through on a light theme — `paint()`
-shifts a pure black background by the same one bit.
+`Cell.fg` holds either one of b3270's colour names off the wire (`red`,
+`neutralWhite`) or a literal `#rrggbb` a panel picked for itself. `styleOf()` in
+`public/canvas.js` branches on the `#`: a literal is used as it stands, a name
+goes through `ansiColorIndex()` into the theme's sixteen slots. Put a bare
+`"red"` in a theme, or a `#rrggbb` in a paint run, and it will resolve as the
+other kind without complaining.
 
 ## Typing into `reverse.trc` shows nothing
 
@@ -161,8 +146,7 @@ covered pixels do not add up to one opaque one: the background shows through as
 a one-pixel seam wherever the colour spans more than a cell — a status bar, a
 field, a reverse-video block. `Math.round`-ing every fill's edges to the device
 pixel grid gives neighbouring cells the exact same boundary and the seams go.
-Done in `patches/ghostty-web+0.4.0.patch` (`snapToDevicePixels`/`fillCells`, used
-by `renderLine` and `renderCellBackground`) and, because this app replaces that
-method outright, again in `public/cursor-glyph.js`. It is invisible at dpr 1 or
-2, so test it by setting `renderer.devicePixelRatio` by hand — and pick a cell
+That is `snap()` in `public/canvas.js`, and **every** fill edge goes through it —
+backgrounds, the selection wash, the cursor block. One that does not is a seam.
+It is invisible at dpr 1 or 2, so test it at 140% browser zoom, and pick a cell
 size that is actually fractional once multiplied, or the bug hides.

@@ -1,12 +1,13 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize, resolve } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { gzipSync } from "node:zlib";
 import { WebSocketServer } from "ws";
 import { loadConfig } from "./config.js";
 import { setLogFile, setLogLevel, logger } from "./log.js";
 import { SessionRegistry } from "./session.js";
-import { HEX_COLOR, parseClientMessage } from "./protocol.js";
+import { parseClientMessage } from "./protocol.js";
 import { AppError, describeError } from "./errors.js";
 import { proxyRestRequest } from "./restproxy.js";
 
@@ -19,21 +20,32 @@ const registry = new SessionRegistry(config);
 
 const ROOT = resolve(".");
 const PUBLIC_DIR = join(ROOT, "public");
-// Served out of node_modules so its wasm resolves relative to the module URL.
-const VENDOR_DIR = join(ROOT, "node_modules", "ghostty-web");
 
 /** @type {Readonly<Record<string, string>>} */
 const CONTENT_TYPES = Object.freeze({
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
-  ".wasm": "application/wasm",
-  ".map": "application/json; charset=utf-8",
   ".ico": "image/x-icon",
   ".ttf": "font/ttf",
   ".woff2": "font/woff2",
 });
+
+/** Vendored fonts, three quarters of the page's weight, and never edited. */
+const IMMUTABLE = new Set([".ttf", ".woff2"]);
+
+/** Raw TrueType is not compressed; it halves. A `.woff2` already is, so it is not here. */
+const COMPRESSIBLE = new Set([".html", ".js", ".json", ".ttf"]);
+
+/**
+ * `public/` does not change while the process runs — the page's own recovery
+ * path is a reload, and new code means a restarted server — so every file is
+ * read, hashed and compressed once and then answered from here. Lazily, so
+ * startup stays instant and nothing is paid for a file nobody asks for.
+ *
+ * @type {Map<string, { content: Buffer, gzipped: Buffer | null, headers: Record<string, string> }>}
+ */
+const STATIC_CACHE = new Map();
 
 /** @type {Readonly<Record<string, number>>} Anything not named here is a 500. */
 const ERROR_STATUS = Object.freeze({
@@ -55,12 +67,13 @@ function sendJson(res, status, body) {
 }
 
 /**
+ * @param {import('node:http').IncomingMessage} req
  * @param {import('node:http').ServerResponse} res
  * @param {string} dir
  * @param {string} relative
  * @returns {Promise<void>}
  */
-async function sendFile(res, dir, relative) {
+async function sendFile(req, res, dir, relative) {
   // Decode first: a percent-encoded `..` is still a traversal attempt.
   /** @type {string} */
   let decoded;
@@ -73,19 +86,54 @@ async function sendFile(res, dir, relative) {
   const file = join(dir, normalize(decoded));
   if (!file.startsWith(dir)) throw new AppError("E6001", relative);
 
-  /** @type {Buffer} */
-  let content;
-  try {
-    content = await readFile(file);
-  } catch (cause) {
-    throw new AppError("E6001", relative, cause);
+  let entry = STATIC_CACHE.get(file);
+  if (entry === undefined) {
+    /** @type {Buffer} */
+    let content;
+    try {
+      content = await readFile(file);
+    } catch (cause) {
+      throw new AppError("E6001", relative, cause);
+    }
+
+    const ext = extname(file);
+    entry = {
+      content,
+      gzipped: COMPRESSIBLE.has(ext) ? gzipSync(content) : null,
+      headers: {
+        "content-type": CONTENT_TYPES[ext] ?? "application/octet-stream",
+        "cache-control": IMMUTABLE.has(ext)
+          ? "public, max-age=31536000, immutable"
+          : "no-cache",
+        etag: `"${createHash("sha1").update(content).digest("base64url")}"`,
+      },
+    };
+    STATIC_CACHE.set(file, entry);
   }
 
-  res.writeHead(200, {
-    "content-type": CONTENT_TYPES[extname(file)] ?? "application/octet-stream",
-    "cache-control": "no-cache",
-  });
-  res.end(content);
+  // The page reloads itself after every reconnect, so the commonest request by
+  // far is a reload asking whether anything changed.
+  if (req.headers["if-none-match"] === entry.headers["etag"]) {
+    res.writeHead(304, entry.headers);
+    res.end();
+    return;
+  }
+
+  /** @type {Record<string, string>} */
+  const headers = { ...entry.headers };
+  let body = entry.content;
+  if (entry.gzipped !== null) {
+    // Told even when this client took the plain copy: a cache in between must
+    // not hand the compressed one to a client that cannot read it.
+    headers["vary"] = "accept-encoding";
+    if (String(req.headers["accept-encoding"] ?? "").includes("gzip")) {
+      body = entry.gzipped;
+      headers["content-encoding"] = "gzip";
+    }
+  }
+  headers["content-length"] = String(body.byteLength);
+  res.writeHead(200, headers);
+  res.end(body);
 }
 
 /**
@@ -169,12 +217,7 @@ async function handleRequest(req, res) {
     return;
   }
 
-  if (path.startsWith("/vendor/")) {
-    await sendFile(res, VENDOR_DIR, path.slice("/vendor/".length));
-    return;
-  }
-
-  await sendFile(res, PUBLIC_DIR, path === "/" ? "index.html" : path);
+  await sendFile(req, res, PUBLIC_DIR, path === "/" ? "index.html" : path);
 }
 
 const server = createServer((req, res) => {
@@ -222,38 +265,24 @@ server.on("upgrade", (req, socket, head) => {
     return;
   }
 
-  // Read before the first repaint, or it flashes host colours for a frame.
-  const hostColors = url.searchParams.get("hostColors") !== "0";
-  const requested = url.searchParams.get("fieldColor");
-  const fieldColor =
-    requested !== null && HEX_COLOR.test(requested) ? requested : null;
-
   wss.handleUpgrade(req, socket, head, (ws) =>
-    attachViewer(session, ws, hostColors, fieldColor, client),
+    attachViewer(session, ws, client),
   );
 });
 
 /**
  * @param {import('./session.js').Session} session
  * @param {import('ws').WebSocket} ws
- * @param {boolean} hostColors
- * @param {string | null} fieldColor
  * @param {{ ip: string, user: string }} client
  * @returns {void}
  */
-function attachViewer(session, ws, hostColors, fieldColor, client) {
+function attachViewer(session, ws, client) {
   /** @type {import('./session.js').Viewer} */
   const viewer = {
     id: randomUUID().slice(0, 8),
     role: "observer",
-    hostColors,
-    fieldColor,
     ip: client.ip,
     user: client.user,
-    sendScreen(bytes) {
-      if (ws.readyState === ws.OPEN)
-        ws.send(Buffer.from(bytes, "utf8"), { binary: true });
-    },
     sendMessage(message) {
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(message));
     },

@@ -20,25 +20,42 @@ Status as of 2026-09-20.
       flattening, tagged action submission, clean stop via stdin EOF.
 - [x] **Screen model** — `server/screen.js`: incremental `screen` application
       with per-cell attribute retention, `erase`, `screen-mode`, dirty-row
-      tracking. `server/colors.js` for the x3270 palette and `gr` → SGR.
-- [x] **OIA** — `server/oia.js`: lock, insert, typeahead, LU and connection state
-      laid out across the full screen width.
-- [x] **VT encoder** — `server/vt.js`: autowrap off, run-grouped rows, truecolor
-      SGR, OIA row, cursor last; `fullRepaint()` and `delta()`.
+      tracking.
+- [x] **OIA** — `server/oia.js`: lock, insert, typeahead, LU and connection
+      state, sent to the browser as fields for `public/oia.js` to lay out.
+- [x] **Paint encoder** — `server/paint.js`: run-grouped rows carrying b3270's
+      own colour names and `gr` string; `fullPaint()` and `paintDelta()`.
 - [x] **Fake host** — `test/fakehost.js`, a JS port of x3270's `playback.py`,
       plus four vendored traces and a `NOTICE`.
 - [x] **Sessions** — `server/session.js`: `Session`, `Viewer`, `SessionRegistry`,
       attach/detach, controller promotion, burst coalescing, idle reaping.
 - [x] **Server** — `server/main.js`: HTTP, static files, `/api/sessions`,
       WebSocket upgrade, graceful shutdown.
+- [x] **Static delivery** — no bundler, no build step: gzip, an ETag on every
+      file, and a year of `immutable` on the vendored fonts, with a preload list
+      written out in `index.html` so every module and every font arrives in one
+      wave. 777 KB of files reach a cold browser as 320 KB; a reconnect's reload
+      costs a few `304`s.
 - [x] **REST** — `server/restproxy.js`: each session's b3270 runs its own
       `-httpd` on a loopback port guarded by a per-session cookie, and
       `/api/sessions/<id>/3270/…` is forwarded to it untouched. s3270's REST
       interface, because it _is_ s3270's REST interface — verified byte for byte
       against a real `s3270 -httpd`.
-- [x] **Frontend** — `public/index.html`, `app.js`, `keymap.js`, `style.css`:
-      ghostty-web renderer, binary frames → `write()`, text frames → status and
-      in-place errors, capture-phase keymap.
+- [x] **Frontend** — `public/index.html`, `app.js`, `keymap.js`: one ordered
+      text channel, paints into a `Grid`, status and in-place errors,
+      capture-phase keymap. The markup is a `<canvas>` in a box and four CSS
+      rules inlined beside it, and no code ever changes it.
+- [x] **Renderer** — `public/canvas.js` and `public/grid.js`: the page has one
+      `Screen`, one canvas, and every pane is a `Pane` on it — pure data, two
+      grids each, host and overlay. `Screen.layout()` hands each pane its share
+      of the page and the font size that fits it; a frame clears the canvas edge
+      to edge and redraws every pane, so nothing can be left behind. Backgrounds
+      then glyphs, every fill edge snapped to the device pixel grid,
+      rectangular selection, a cursor that leaves the character under it
+      legible, and `paneAt()` routing a click to the pane it landed in. 992
+      lines with `grid.js`, `colors.js`, `oia.js` and `fitfont.js` in place of a
+      682 KB bundle and a 423 KB wasm VT parser, which a fixed grid of
+      single-width cells never needed.
 - [x] **Model picker** — the grid size is chooseable from the toolbar. The list
       is b3270's own `models` indication; the change goes server-side via
       `Set(model, N)`, and the new geometry reaches every viewer as a `screen`
@@ -64,10 +81,10 @@ Status as of 2026-09-20.
       `security.trustProxyHeaders` on, those two come from `X-Forwarded-For`
       and `X-Remote-User` — where an NTLM handshake terminated at a proxy would
       hand its result over.
-- [x] **Tests** — 225, all passing:
+- [x] **Tests** — 317, all passing:
   - the `testRender.py` assertions ported onto our model (`render.test.js`)
-  - the WASM round-trip: our VT → ghostty's own parser → grid equals the model
-    (`roundtrip.test.js`)
+  - the round-trip: our paints → the browser's own `Grid` equals the model,
+    over real traced b3270 output (`roundtrip.test.js`, `grid.test.js`)
   - screen-indication semantics and the OIA (`screen.test.js`)
   - JSONC parsing, validation, the action allow-list (`config.test.js`)
   - multi-viewer behaviour against a real b3270, including a model change
@@ -78,8 +95,13 @@ Status as of 2026-09-20.
   - the reconnect arithmetic and idle reaping (`reconnect.test.js`,
     `session.test.js`)
   - the font fit against a brute-force search over every size (`fitfont.test.js`)
+  - mouse selection against a recording 2D context, so what a click leaves on
+    the screen is asserted rather than looked at (`canvas.test.js`)
   - log rollover, and the session id, address and user on the lines, forwarded
     or not (`log.test.js`, `server.test.js`)
+  - what a browser is actually sent: gzip, the ETag and its `304`, the fonts'
+    `immutable` year, and the preload list held against the real import graph
+    (`server.test.js`)
 - [x] **Type gate** — `tsc -p jsconfig.json` with `checkJs` and `strict`, clean.
       No `any` anywhere.
 - [x] **Docs** — `ARCHITECTURE.md`, `SPECIFICATION.md`, `GOTCHAS.md`, this file.
@@ -98,7 +120,7 @@ Status as of 2026-09-20.
 nix develop
 npm install
 npm run typecheck    # clean
-npm test             # 204 passing
+npm test             # 317 passing
 npm start            # http://127.0.0.1:8017
 ```
 
@@ -133,11 +155,67 @@ The picker and the auto-fit were walked through the same way on 2026-09-07:
 9. A model change made by the controller resizes the observer's grid too, and
    updates its (disabled) picker.
 
+The renderer was walked through the same way on 2026-09-23, against the fake
+host:
+
+10. The screen, the field tint, the block cursor with the character under it
+    still legible, and `Alt+Space` into the menu, the settings panel and back.
+11. `Ctrl-B` into two and four panes: each pane its own screen, its own status
+    line, refitted to its width.
+12. All sixteen themes and all nine fonts cycled with Left/Right: every theme
+    repainted in its own colours, every font re-measured and re-fitted to its
+    own cell.
+13. A box selection across a field boundary, `Ctrl-C`, and paste back into the
+    screen: the copy is rectangular and trimmed per row.
+14. Enter with no host to answer it locks the keyboard and Reset clears it —
+    each of the two reaching the viewer as its own `status`, which is what
+    `waitForUnlock()` and macro playback wait on.
+15. Killing the host: `connection`, `connected` and `lock` all change, the
+    status line says so, and the pane opens its settings over the session.
+16. Two tabs on one session URL: identical screens, the second refused in place
+    with `E3006`, and it tracks the first live.
+
+The one-canvas rewrite was walked through the same way on 2026-09-23, against
+the fake host, reading the canvas back rather than trusting the screenshots:
+
+17. One canvas the size of the screen box, with all of 1, 2, 3 and 4 panes tiled
+    onto it, each fitted to its own share — two side by side get exactly half the
+    width each, centred in it.
+18. A click routes to the pane it lands in, in every pane of a three-pane split,
+    and one above a pane's first row is ignored rather than clamped onto it.
+19. Panels, error bars and the status line stay scoped to their pane; the other
+    panes are untouched by them.
+20. A drag highlights in its own pane, and the click that follows takes the
+    highlight off and leaves one cursor with its character still legible — the
+    bug that started this.
+21. Shrinking the screen box refits and redraws every pane in one frame.
+22. A pane whose screen cannot shrink past `MIN_FONT_SIZE` is cut off at its own
+    edge and not at its neighbour's, which the `overflow: hidden` on the old
+    per-pane `<div>` used to do and `Screen.renderPane()`'s clip does now.
+
+The delivery was measured in a real browser on 2026-09-23, from the Resource
+Timing entries rather than from the server's side of it:
+
+23. 22 requests, no duplicate — a font asked for twice would mean the
+    `crossorigin` on its preload was missing. All eighteen modules start
+    together and are done inside one wave; the fonts start with them instead of
+    waiting for `app.js` to run.
+24. A reload — which is what a reconnect does — transfers about 6 KB: a `304`
+    per module and no font traffic at all.
+25. A gzipped TrueType arrives as 108,596 bytes, decodes to the full 255,248,
+    and `new FontFace(...)` parses it, so halving the fonts costs nothing at
+    the other end.
+
+The seams a fractional device-pixel ratio used to leave were looked for by
+reading the canvas back rather than by eye, with `devicePixelRatio` forced to
+1.4 and a cell of 15.4 × 33.6 device pixels: no full-height dark column across
+the reverse-video status row, and none across a five-row selection either way.
+
 ## Not done, deliberately
 
-- **DBCS / `wide` graphic rendition.** The model records the flag; `vt.js` passes
-  the character through unadorned. Double-width cells would need the encoder to
-  reason about cell widths.
+- **DBCS / `wide` graphic rendition.** The model records the flag; `paint.js`
+  passes the character through unadorned. Double-width cells would need both
+  the grid and the renderer to reason about cell widths.
 - **File transfer (IND$FILE) and printer sessions.** `pr3287` is built by the
   flake but unused.
 - **Authentication.** The server binds to `127.0.0.1` by default and has no
@@ -153,4 +231,3 @@ The picker and the auto-fit were walked through the same way on 2026-09-07:
 - A per-viewer cursor overlay so people can see where the others are looking.
 - Reconnect currently redraws from scratch. That is correct but wasteful on a
   slow link; a sequence number per delta would let a viewer resume.
-- Copy and paste: ghostty-web has a selection manager that is currently unused.

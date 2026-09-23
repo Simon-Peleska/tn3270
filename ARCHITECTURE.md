@@ -1,14 +1,14 @@
 # Architecture
 
 A web page that behaves like an IBM 3270 terminal. A Node server drives one
-`b3270` process per session; the browser renders with `ghostty-web`.
+`b3270` process per session; the browser renders onto a canvas of its own.
 
 ```
 browser                          node server                        host
 ┌──────────────────────┐      ┌───────────────────────────┐      ┌──────┐
-│ ghostty-web Terminal │◀─bin─┤  vt.js ◀── ScreenModel    │◀─────┤ b3270│◀─TN3270─▶ mainframe
-│  (renderer only)     │      │        (authoritative)    │NDJSON└──────┘
-│ keymap.js            │──txt─▶ Session ──▶ b3270 stdin   │
+│ canvas.js ◀── grid.js│◀─────┤  paint.js ◀── ScreenModel │◀─────┤ b3270│◀─TN3270─▶ mainframe
+│  (renderer only)     │ JSON │           (authoritative) │NDJSON└──────┘
+│ keymap.js            │──────▶ Session ──▶ b3270 stdin   │
 └──────────────────────┘  WS  └───────────────────────────┘
                                      │ broadcast
                               ┌──────┴──────┐
@@ -42,24 +42,23 @@ Two properties of that format decide everything else:
   an incremental update to what is already displayed"_
 - _"if a particular screen attribute is not specified, then it stays the same"_
 
-`ghostty-web`, meanwhile, consumes an **ANSI/VT byte stream** (`term.write()`).
-
-So somebody has to hold the whole screen and translate model → VT.
+So somebody has to hold the whole screen, or an update that says "row 1 column 3
+went red" means nothing.
 
 **That somebody is the server.** `server/screen.js` holds the authoritative
-`ScreenModel`; `server/vt.js` renders it, either as a delta (changed rows only)
+`ScreenModel`; `server/paint.js` ships it, either as a delta (changed rows only)
 or as a complete repaint.
 
 This single decision is also what makes multiple viewers work. Because the
 server already owns the full screen, a browser that joins an hour into a session
 is handed a repaint and is instantly correct, and every attached browser gets the
-same delta bytes. Had the translation lived in the browser, each viewer would
-need its own shadow buffer fed from the beginning of time, and joining late would
-be impossible.
+same delta. Had the accumulation lived in the browser, each viewer would need its
+own shadow buffer fed from the beginning of time, and joining late would be
+impossible.
 
 The cost, accepted deliberately: **there is no local echo.** A keystroke travels
-browser → server → b3270 → screen indication → VT → browser. On localhost or a
-LAN this is a few milliseconds. It is also _required_ for a coherent shared
+browser → server → b3270 → screen indication → paint → browser. On localhost or
+a LAN this is a few milliseconds. It is also _required_ for a coherent shared
 session — one authoritative screen, one ordered input stream.
 
 ## Transport: why WebSocket, not SSE
@@ -69,27 +68,24 @@ Both were evaluated.
 SSE plus a `POST` per keystroke does work, and `EventSource` reconnects for free.
 Against it:
 
-- `EventSource` is downstream-only and **text-only**, so screen bytes would need
-  base64 or an escaping scheme.
+- `EventSource` is downstream-only, so input needs a second channel anyway.
 - Every keystroke costs a full HTTP request.
 - The deciding point: **two independent channels give no ordering guarantee
   between input events.** Our deltas are incremental against a shared shadow
   buffer, and our inputs must reach b3270's single stdin in the order typed. A
   transport that can reorder them is the wrong transport.
 
-WebSocket gives ordered, full-duplex, binary-capable framing over one connection
-at 2–6 bytes of overhead per message. Polling was excluded by requirement and
-would have been wrong here regardless. WebTransport was considered and rejected:
-mandatory TLS and certificates, weaker support, no benefit at this scale.
+WebSocket gives ordered, full-duplex framing over one connection at 2–6 bytes of
+overhead per message. Polling was excluded by requirement and would have been
+wrong here regardless. WebTransport was considered and rejected: mandatory TLS
+and certificates, weaker support, no benefit at this scale.
 
-A useful side effect of binary framing:
-
-| Frame type | Carries                                                                                                          |
-| ---------- | ---------------------------------------------------------------------------------------------------------------- |
-| **binary** | VT bytes for the terminal                                                                                        |
-| **text**   | JSON control messages (`hello`, `screen`, `status`, `error`; `action`, `text`, `connect`, `disconnect`, `model`) |
-
-The frame type _is_ the discriminator, so neither direction needs an envelope.
+Everything travels as **one ordered text channel**: `paint` alongside `hello`,
+`screen`, `status`, `error`, `hints` one way, `action`, `text`, `connect`,
+`disconnect`, `model` the other, each an object with a `type`. Screen updates
+used to be binary frames, which made the frame type the discriminator and cost a
+separate "did the geometry message arrive before the repaint that assumes it"
+worry. One channel with one envelope answers that by construction.
 
 ## Sessions and viewers
 
@@ -99,8 +95,8 @@ browser reload, a dropped connection and a second person opening the same URL ar
 all just `attach` and `detach`; the host connection is never disturbed. A session
 with no viewers is reaped after `sessions.idleTimeoutMs`.
 
-- **attach** → assign a role, send `hello`, send `fullRepaint()` as one binary frame.
-- **screen indication** → apply to the model, mark rows dirty, `delta()` → broadcast.
+- **attach** → assign a role, send `hello`, send `fullPaint()`.
+- **screen indication** → apply to the model, mark rows dirty, `paintDelta()` → broadcast.
 - **input** → only if `viewer.role === 'controller'` → translate to a b3270 action → stdin.
 - **detach** → if the controller left, promote another viewer, so the session
   never becomes permanently read-only.
@@ -118,9 +114,10 @@ attaches to the same sessions. The reload hangs off the `hello` and not the
 socket opening, because an attach the server refuses (E3007) opens a socket too
 and would otherwise reload forever.
 
-A `Viewer` is just `{ id, role, sendScreen, sendMessage }`. Nothing about it
-knows what a WebSocket is, which is why the tests attach a plain collector object
-and exercise the real broadcast path with nothing mocked.
+A `Viewer` is just `{ id, role, sendMessage }`. Nothing about it knows what a
+WebSocket is, which is why the tests attach a plain collector object and
+exercise the real broadcast path with nothing mocked. One paint object serves
+every viewer, because nothing in it depends on who is looking.
 
 Indications arrive in bursts; `scheduleFlush()` coalesces a burst with
 `setImmediate` so viewers never see a half-applied screen and the wire stays
@@ -202,56 +199,110 @@ so it walks down until the grid fits and then up while the next size still does.
 A `ResizeObserver` on the screen box refits — coalesced into one animation frame,
 since dragging a window edge fires it continuously.
 
-## VT encoding: the details that bite
+## The paint protocol
 
-- **`ESC[?7l` (autowrap off), once, before anything is painted.** With autowrap
-  on, writing a character into the last column of the last row wraps and scrolls
-  the entire screen, corrupting every absolute cursor address after it. This is
-  the easiest way to get this feature subtly and confusingly wrong.
-- The terminal is `rows + 1` tall. The extra bottom line is the **OIA**, the
-  status line a real 3270 draws: connection state, the `X SYSTEM` keyboard lock,
-  and the cursor position. Without it a user cannot tell _why_ typing does
-  nothing.
-- Each row is painted by grouping contiguous cells with identical attributes into
-  runs: one `ESC[{row};{col}H`, one SGR, then the text.
-- Every SGR starts with a `0` reset, so a run never inherits attributes from
-  whatever the terminal happened to be in. Colours are truecolor
-  (`38;2;r;g;b` / `48;2;r;g;b`) taken from x3270's own palette in `colors.js`;
-  `gr` maps `highlight→1`, `underline→4`, `blink→5`, `reverse→7`.
-- Cursor last: `ESC[{row};{col}H` then `ESC[?25h` or `ESC[?25l`.
-- A `screen-mode` with `"color": false` means the host reports **no colour at
-  all**. Render monochrome green; do not invent colours.
+`server/paint.js` walks each dirty row and starts a new run wherever the style
+breaks. A run says where it goes, what it says, and **b3270's own words for how
+it looks**:
+
+```jsonc
+{
+  "type": "paint",
+  "full": true, // true clears every cell not mentioned
+  "color": true, // false = a 3278: mono green, do not invent colours
+  "defaultFg": "green", // on a full paint only; what an omitted fg means
+  "defaultBg": "neutralBlack",
+  "rows": [
+    {
+      "row": 0,
+      "runs": [
+        {
+          "col": 3,
+          "text": "____",
+          "fg": "red",
+          "gr": "underline",
+          "editable": true,
+        },
+        { "col": 7, "text": "Field:" },
+      ],
+    },
+  ],
+  "cursor": { "row": 1, "col": 8, "on": true },
+}
+```
+
+- `fg`/`bg` are the colour names straight off a `Cell` (`server/screen.js`) —
+  `red`, `deepBlue`, `neutralWhite` — and `gr` is b3270's comma-separated
+  rendition string, `"underline,highlight"`, passed through untouched. The
+  server does no colour work at all; the name → RGB table is
+  `public/colors.js`, and the browser is where a theme is applied.
+- Omitting a key means the screen default, or `false` for `editable`. That
+  keeps a run readable in a log without a decoder ring.
+- `editable` comes off the field map the session already tracks. The tint that
+  marks a typeable field is a theme colour, so it is the renderer that puts it
+  on — and a host that named its own background keeps it.
+
+`public/grid.js` is the browser's half: `applyPaint()` and nothing else in the
+way. `test/roundtrip.test.js` drives a real traced session and asserts the
+`Grid` and the `ScreenModel` agree cell for cell, which is what keeps the two
+halves honest.
+
+A pane is `rows + 1` tall. The extra bottom line is the **OIA**, the status
+line a real 3270 draws: connection state, the `X SYSTEM` keyboard lock, and the
+cursor position. Without it a user cannot tell _why_ typing does nothing. It is
+sent as fields — `StatusMessage` carries `connection`, `host`, b3270's raw
+`lock` word, `insert` and `typeahead` — and `public/oia.js` composes the
+line, because the buttons sharing that row are the browser's too. A server that
+rendered the string would have to be told how many columns to leave for them.
 
 ## Keyboard
 
-Ghostty is a **renderer only**. `term.onData` is deliberately unused: it would
-VT-encode the keypress and force us to decode it back, which is lossy, and 3270
-keys — PA1, Clear, Attn, Reset, EraseEOF — have no VT equivalent at all.
+`public/canvas.js` is a **renderer only** — it knows how to draw a grid and
+nothing about what put it there. 3270 keys (PA1, Clear, Attn, Reset, EraseEOF)
+have no character to encode anyway.
 
-Instead `public/keymap.js` puts a capture-phase `keydown` listener on the
+`public/keymap.js` puts a capture-phase `keydown` listener on the
 container and maps `KeyboardEvent` → 3270 action, with printable characters
 becoming `String("…")`. The bindings follow PCOMM's default 3270 keyboard
 layout rather than x3270's. The map is small and self-contained, so it can be
 made configurable later without touching the transport.
 
-## All UI lives inside the terminal
+## All UI lives inside the screen
 
-`public/index.html` is just a `<div id="screen">` around the ghostty-web
-canvas. **Every piece of chrome — the panels, the error banner, the buttons on
-the OIA line — is drawn as VT bytes into that same `Terminal`, never as native
-HTML/DOM/CSS.** `settings.js` explains why at its own top: a second focus model,
-a second keybinding set, and a second fit-to-window problem are exactly the
-complexity this rule avoids. One renderer, one input path, one thing to keep
-sized and focused.
+`public/index.html` is a `<main id="screen">` around a `<canvas>`, with its
+handful of CSS rules inlined, and that is the entire markup of the application.
+Nothing ever adds, moves or removes an element — the two `createElement` calls
+in `app.js` are the browser's download and file-picker APIs, which take an
+element or nothing at all, and neither one is ever visible. **Every piece of
+chrome — the panels, the error banner, the buttons on the OIA line — is drawn
+as cells into that same canvas, never as native HTML/DOM/CSS.**
+`settings.js` explains why at its own top: a second focus model, a second
+keybinding set, and a second fit-to-window problem are exactly the complexity
+this rule avoids. One renderer, one input path, one thing to keep sized and
+focused.
 
-The pattern (see `errorOverlayBytes()` and `buttonBytes()` in
-`public/app.js`): build a string of VT escapes, wrap the cursor move in
-`ESC 7` / `ESC 8` (save/restore) so painting chrome never steals the real 3270
-cursor, and re-write it after every host update so it survives the next
-repaint or delta. Mouse hit-testing works the same way in reverse:
-`terminal.renderer`'s public `getCanvas()` / `charWidth` / `charHeight` turn a
-click's pixel coordinates back into a `{row, col}` cell to compare against
-where the chrome was drawn.
+There is **one** canvas on the page, and it is the whole of the page's drawing
+surface: every pane, in every layout, is drawn onto it. A `Pane` is not a canvas
+and not an element — it is two `Grid`s plus the rectangle it occupies, pure data
+with no DOM in it. `Screen` owns the canvas: `layout()` gives each pane its
+share of the page (`paneShares()` in `sessions.js`) and the font size that fits
+it, and `render()` clears the canvas edge to edge and redraws every pane from
+its grids. Nothing paints a region on its own, so nothing can be left behind —
+the previous frame is gone before the new one starts. `redraw()` in
+`public/app.js` is the only path to a frame, and every state change goes through
+it; every geometry change goes through `applyLayout()`, which fits and then
+redraws.
+
+The two grids are `host`, what the server painted, and `overlay`, what this page
+drew on top. An overlay cell wins wherever its character is not `null`, colours
+and all, so a panel never inherits the field tint underneath it and taking the
+overlay off puts the host's screen back with no round trip. `drawChrome()` in
+`public/app.js` is the single place that composes a pane's overlay — clear, then
+the panel or the status row, then the switcher, an error and the hint letters —
+so there is exactly one ordering to reason about and no bookkeeping of what was
+drawn where. Mouse hit-testing runs the same way in reverse: one `click`
+listener on the one canvas, and `screen.paneAt(clientX, clientY)` turns the
+point into a `{pane, row, col}` to compare against where the chrome was drawn.
 
 ## Panels
 
@@ -334,8 +385,9 @@ No browser driver and no mainframe are needed.
    a `.trc` trace as a TN3270 host, and does the timing-mark handshake.
 2. A **real** `b3270` connects to it, and a **real** `Session` consumes the
    indications.
-3. `test/ghostty.js` loads ghostty-web's WASM parser headlessly in Node, so our
-   VT bytes are checked against _the exact parser the browser runs_.
+3. `public/grid.js` has no DOM in it, so `test/roundtrip.test.js` imports _the
+   exact decoder the browser runs_ and compares it against the `ScreenModel`
+   the paints came from, cell for cell, over real b3270 output.
 4. `test/server.test.js` spawns the real HTTP server and drives it over real
    WebSockets, including the two-browsers-one-session case.
 
@@ -343,6 +395,33 @@ Waiting is always on a condition, never a duration. Where b3270's own timing is
 involved, `settle()` submits an action and waits for its `run-result`: because
 b3270's stdout is a single ordered stream, that reply proves every earlier
 indication has already been applied.
+
+## Serving the page
+
+There is no bundler and no build step. The frontend is eighteen ES modules
+served as eighteen files — the same files `node --test` imports and the same
+ones a browser gets opening `index.html` off disk. What a bundle would have
+bought is bought in `sendFile()` (`server/main.js`) instead, without anything
+standing between the source and what runs.
+
+- **Everything is preloaded**, by a list written out in `index.html`: a
+  `modulepreload` per module and a `preload` per font. Without it a browser
+  discovers the modules one import layer at a time, a round trip each; with it
+  they all start at once. The fonts go in the same wave because the fit cannot
+  start until one has loaded, and which font is wanted is a stored setting the
+  server never sees. The list is in the file rather than generated, so the page
+  is what it says it is; `test/server.test.js` walks the real import graph and
+  fails if one is missing.
+- **gzip**, on anything that is text and on the raw TrueType, which halves.
+- **An ETag on everything**, because the page reloads itself after every
+  reconnect — that reload is the common request, and it costs a `304` per file
+  and no bodies.
+- **Fonts are immutable** for a year. They are vendored and never edited, they
+  are three quarters of the page's weight, and they are the one thing a
+  reconnect should never fetch twice.
+
+777 KB of files reach a cold browser as 320 KB in one wave; a reconnect's
+reload transfers about 6 KB and no font traffic at all.
 
 ## Layout
 
@@ -352,38 +431,42 @@ config.jsonc                settings (hand-parsed JSONC, no dependency)
 jsconfig.json               checkJs + strict → the "no any" gate
 
 server/
-  main.js       http, static files, /api/sessions, ws upgrade
+  main.js       http, static files (gzip, ETag, cache), /api/sessions, ws upgrade
   config.js     JSONC → validated Config
   errors.js     the stable error-code table
   log.js        structured logging to stderr and a rolling file
   b3270.js      spawn, NDJSON framing, action submission
   screen.js     ScreenModel: the authoritative shadow buffer
-  colors.js     3270 colour name → RGB, gr → SGR
-  vt.js         ScreenModel → VT bytes (delta and fullRepaint)
-  oia.js        OIA field state → status line
+  paint.js      ScreenModel → paint messages (paintDelta and fullPaint)
+  oia.js        OIA field state, as fields
   session.js    Session, Viewer, SessionRegistry
   protocol.js   wire typedefs and the action allow-list
   restproxy.js  forwards /3270/ to the session's own b3270 httpd
 
 public/
-  index.html    a div around the canvas, and nothing else
+  index.html    the canvas, the inlined CSS, the preloads, and nothing else
   app.js        sessions, panes, the panel registry, clipboard and clicks
+  grid.js       the cell buffer: applyPaint, put, rectangular text
+  canvas.js     Pane: two grids and a rectangle; Screen: the page's one canvas
+  colors.js     3270 colour name → ANSI slot, gr → flags
+  oia.js        the status line, composed from the last status and cursor
   keymap.js     KeyboardEvent → 3270 action
   panel.js      the ISPF panel frame and the Panel base class
   menu.js       the primary option menu and the help panel
   settings.js   macros.js  recorder.js  keymap-page.js   the panels
-  reconnect.js  fitfont.js  store.js  style.css
-test/           fakehost.js, ghostty.js, helpers.js, traces/, *.test.js
+  sessions.js   the Ctrl-B prefix, the URL fragment, and how panes split the page
+  reconnect.js  fitfont.js  store.js
+test/           fakehost.js, helpers.js, traces/, *.test.js
 ```
 
 ## Dependencies
 
-Two runtime dependencies, both agreed before adding:
+One runtime dependency:
 
 - **`ws`** — WebSocket server. Node has no built-in one.
-- **`ghostty-web`** — the renderer, served straight out of `node_modules` at
-  `/vendor/` so its wasm resolves against its own module URL. No bundler.
 
-`typescript` comes from the flake devShell, not `package.json`: it is a dev tool,
-not a project dependency. `@types/node` and `@types/ws` are devDependencies with
-zero runtime code, needed only to make the strict type gate meaningful.
+The frontend is plain ESM served straight out of `public/`, imported by URL,
+with no bundler and no build step. `typescript` comes from the flake devShell,
+not `package.json`: it is a dev tool, not a project dependency. `@types/node`
+and `@types/ws` are devDependencies with zero runtime code, needed only to make
+the strict type gate meaningful.

@@ -96,6 +96,21 @@ test("cursor fields are individually optional and fall back to the previous valu
   assert.deepEqual(screen.cursor, { row: 4, col: 9, enabled: false });
 });
 
+test("a cursor move is reported on its own, and standing still is not one", () => {
+  const screen = new ScreenModel(24, 80);
+  screen.takeDirtyRows();
+  screen.takeCursorMoved();
+
+  // A Tab is the whole of what some keys do, so it has to travel by itself.
+  screen.applyScreen({ cursor: { enabled: true, row: 3, column: 7 } });
+  assert.deepEqual(screen.takeDirtyRows(), [], "a cursor move touches no row");
+  assert.equal(screen.takeCursorMoved(), true);
+  assert.equal(screen.takeCursorMoved(), false, "and is reported only once");
+
+  screen.applyScreen({ cursor: { enabled: true, row: 3, column: 7 } });
+  assert.equal(screen.takeCursorMoved(), false);
+});
+
 test("erase blanks everything, adopts the new defaults and homes the cursor", () => {
   const screen = new ScreenModel(24, 80);
   screen.applyScreen({
@@ -160,42 +175,6 @@ test("reading outside the screen is a stable error, not undefined", () => {
   );
 });
 
-test("the OIA line is exactly as wide as the screen and shows the lock", () => {
-  const oia = new OiaModel();
-  oia.applyOia({ field: "lock", value: "system" });
-  const text = oia.render(80, { row: 4, col: 9, enabled: true });
-
-  assert.equal(text.length, 80);
-  assert.ok(
-    text.includes("X SYSTEM"),
-    `expected a lock indicator in ${JSON.stringify(text)}`,
-  );
-  assert.ok(
-    text.trimEnd().endsWith("05/010"),
-    `expected the cursor position in ${JSON.stringify(text)}`,
-  );
-  assert.equal(oia.keyboardLocked, true);
-});
-
-test("the OIA leaves the browser its columns at the right, however full it is", () => {
-  const oia = new OiaModel();
-  oia.applyConnection({
-    state: "connected-tn3270e",
-    host: "a-very-long-hostname.example.com:992",
-  });
-  oia.applyOia({ field: "lock", value: "system" });
-  oia.applyOia({ field: "insert", value: true });
-  oia.applyOia({ field: "typeahead", value: true });
-
-  // app.js paints '[Reset] [Settings]' flush right, 18 columns the server must leave alone.
-  const text = oia.render(80, { row: 23, col: 79, enabled: true });
-  assert.equal(
-    text.slice(-19),
-    " ".repeat(19),
-    `the OIA wrote into the buttons: ${JSON.stringify(text)}`,
-  );
-});
-
 test("the OIA reflects the connection state", () => {
   const oia = new OiaModel();
   assert.equal(oia.connected, false);
@@ -203,9 +182,5 @@ test("the OIA reflects the connection state", () => {
   oia.applyConnection({ state: "connected-tn3270e", host: "mainframe:23" });
   assert.equal(oia.connected, true);
   assert.equal(oia.host, "mainframe:23");
-  assert.ok(
-    oia
-      .render(80, { row: 0, col: 0, enabled: true })
-      .startsWith("mainframe:23"),
-  );
+  assert.equal(oia.connectionState, "connected-tn3270e");
 });

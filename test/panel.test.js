@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   BODY_TOP,
-  ESC,
   OPTION_LEFT,
   PANELS,
   Panel,
@@ -19,7 +18,14 @@ import { MacrosPage } from "../public/macros.js";
 import { RecorderPage } from "../public/recorder.js";
 import { KeymapPage } from "../public/keymap-page.js";
 import { DEFAULT_BINDINGS } from "../public/keymap.js";
-import { key, enterKey, defaultKeymapDeps, keymapDeps } from "./keyevent.js";
+import {
+  key,
+  enterKey,
+  defaultKeymapDeps,
+  keymapDeps,
+  drawn,
+  recordedPuts,
+} from "./keyevent.js";
 
 /** @extends {Panel<import('../public/panel.js').PanelDeps>} */
 class ListPanel extends Panel {
@@ -90,17 +96,24 @@ class ListPanel extends Panel {
   }
 }
 
-/** @param {number} [count] */
+/**
+ * A panel never draws itself: it asks the page to draw the whole pane, which
+ * hands it a grid back. Here nobody is listening, so the tests that care about
+ * pixels call `drawn()` themselves.
+ *
+ * @param {number} [count]
+ */
 function fixture(count = 4) {
   const calls = {
-    /** @type {string[]} */ written: [],
+    /** @type {number} */ redraws: 0,
     /** @type {number} */ ends: 0,
     /** @type {string[]} */ went: [],
   };
   const deps = {
     ...defaultKeymapDeps,
-    write: (/** @type {string} */ bytes) => calls.written.push(bytes),
-    geometry: () => ({ cols: 80, rows: 25 }),
+    redraw: () => {
+      calls.redraws += 1;
+    },
     theme: () => THEMES[0],
     end: () => {
       calls.ends += 1;
@@ -140,13 +153,14 @@ test("every panel can be reached by typing its name, whichever one you are on", 
   }
 });
 
-test("a panel starts at the top with its own title: nothing is drawn above it", () => {
-  const { page, calls } = fixture();
+test("a panel starts at the top with its own title, centred on the first row", () => {
+  const { page } = fixture();
   page.show();
   const title = "A Test Panel";
-  const left = Math.floor((80 - title.length) / 2) + 1;
-  const first = /\x1b\[(\d+);(\d+)H/.exec(calls.written.at(-1) ?? "");
-  assert.deepEqual(first?.slice(1), ["1", String(left)]);
+  const left = Math.floor((80 - title.length) / 2);
+
+  const grid = drawn(page);
+  assert.equal(grid.rowText(0).trimEnd(), " ".repeat(left) + title);
 });
 
 test("a dot leader fills the label out to the width, and a long label is cut to it", () => {
@@ -313,8 +327,11 @@ test("a word the panel knows is its own, and one it does not is refused", () => 
 });
 
 test("a list longer than the body scrolls, and says which way there is more", () => {
-  const { page, calls } = fixture(40);
+  const { page } = fixture(40);
   page.show();
+  // A panel pages by the grid it was last drawn on, and the app draws it as
+  // soon as it opens, so a page key always follows a draw.
+  drawn(page);
   const height = bodyHeight(25);
 
   page.handleKey(key({ key: "F8" }));
@@ -323,7 +340,7 @@ test("a list longer than the body scrolls, and says which way there is more", ()
     height,
     "a page down from the top lands a body deeper in",
   );
-  assert.match(calls.written.at(-1) ?? "", /More: -\+/);
+  assert.match(drawn(page).rowText(ROW_COMMAND - 1), /More: -\+/);
 
   page.handleKey(key({ key: "F7" }));
   assert.equal(
@@ -331,7 +348,7 @@ test("a list longer than the body scrolls, and says which way there is more", ()
     1,
     "and a page back lands on the first line again",
   );
-  assert.match(calls.written.at(-1) ?? "", /More: {2}\+/);
+  assert.match(drawn(page).rowText(ROW_COMMAND - 1), /More: {2}\+/);
 });
 
 test("a click lands where it was aimed: the command line, or a line", () => {
@@ -374,26 +391,21 @@ test("an open panel swallows keys, but leaves the browser its own", () => {
 });
 
 test("nothing a panel draws runs off the right edge", () => {
-  // Autowrap is off, so a line wider than the screen is silently cut, not wrapped.
-  const { page, calls } = fixture(40);
+  // The grid cuts anything past the last column rather than wrapping it, so an
+  // overrun is silent: catch it where it is written instead of where it lands.
+  const { page } = fixture(40);
   page.show();
   page.say("a message about something");
 
-  const drawn = calls.written.at(-1) ?? "";
-  for (const move of drawn.matchAll(
-    /\x1b\[\d+;(\d+)H((?:\x1b\[[0-9;]*m)*)([^\x1b]*)/g,
-  )) {
-    const column = Number(move[1]);
-    const text = move[3] ?? "";
+  for (const { col, text } of recordedPuts(page))
     assert.ok(
-      column + text.length - 1 <= 80,
-      `"${text}" starts at column ${column} and does not fit in 80`,
+      col + text.length <= 80,
+      `"${text}" starts at column ${col} and does not fit in 80`,
     );
-  }
 });
 
 test("nothing any panel writes is wider than an 80-column screen", () => {
-  // Autowrap is off and the text starts in column 2, so anything longer is cut.
+  // The grid cuts anything past the last column, so an overlong line loses its tail.
   const deps = {
     ...fixture().deps,
     dispatch: () => {},
@@ -471,24 +483,25 @@ test("the menu is point-and-shoot: the cursor rests on the option and lights not
   const { deps, calls } = fixture();
   const menu = new MenuPage(deps);
   menu.show();
-  /** @param {string} bytes */
-  const painted = (bytes) => bytes.replace(/\x1b\[\d+;\d+H\x1b\[\?25h$/, "");
 
   menu.handleKey(key({ key: "Tab" }));
-  const onSettings = calls.written.at(-1) ?? "";
-  assert.ok(
-    onSettings.endsWith(`${ESC}[${BODY_TOP};${OPTION_LEFT + 1}H${ESC}[?25h`),
+  const onSettings = drawn(menu);
+  assert.deepEqual(
+    onSettings.cursor,
+    { row: BODY_TOP - 1, col: OPTION_LEFT, visible: true },
     "the cursor sits on the option itself, as it does on a 3270 panel",
   );
 
   menu.handleKey(key({ key: "Tab" }));
-  const onMacros = calls.written.at(-1) ?? "";
-  assert.ok(
-    onMacros.endsWith(`${ESC}[${BODY_TOP + 1};${OPTION_LEFT + 1}H${ESC}[?25h`),
-  );
-  assert.equal(
-    painted(onMacros),
-    painted(onSettings),
+  const onMacros = drawn(menu);
+  assert.deepEqual(onMacros.cursor, {
+    row: BODY_TOP,
+    col: OPTION_LEFT,
+    visible: true,
+  });
+  assert.deepEqual(
+    onMacros.cells,
+    onSettings.cells,
     "moving down the list changes nothing on the panel but the cursor",
   );
 

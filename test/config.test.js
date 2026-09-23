@@ -49,8 +49,8 @@ test("a brace inside a string does not make the comma before it trailing", () =>
   assert.deepEqual(parseJsonc('["a", "}"]'), ["a", "}"]);
 });
 
-test("the shipped config.jsonc parses and validates", () => {
-  const config = loadConfig("config.jsonc");
+test("the shipped config.example.jsonc parses and validates", () => {
+  const config = loadConfig("config.example.jsonc");
   assert.equal(typeof config.server.port, "number");
   assert.ok(config.b3270.model >= 2 && config.b3270.model <= 5);
 });

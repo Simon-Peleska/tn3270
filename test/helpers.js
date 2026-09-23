@@ -1,6 +1,7 @@
 import { validateConfig } from "../server/config.js";
 import { Session } from "../server/session.js";
 import { FakeHost } from "./fakehost.js";
+import { Grid } from "../public/grid.js";
 
 /**
  * @param {Record<string, unknown>} [overrides]
@@ -18,38 +19,28 @@ export function testConfig(overrides = {}) {
 }
 
 /**
- * @typedef {{ kind: 'screen', bytes: string }
- *   | { kind: 'message', message: import('../server/protocol.js').ServerMessage }} ViewerEvent
- */
-
-/**
- * `events` interleaves both kinds, so a test can check a resize arrives before
- * the bytes that assume it.
+ * `messages` is the whole ordered stream, paints included, so a test can check
+ * that a resize arrives before the paint that assumes it. `grid` is the same
+ * decoder the browser runs, fed every paint as it arrives.
  *
  * @param {string} id
- * @returns {import('../server/session.js').Viewer & { screen: string[], messages: import('../server/protocol.js').ServerMessage[], events: ViewerEvent[] }}
+ * @returns {import('../server/session.js').Viewer & { messages: import('../server/protocol.js').ServerMessage[], paints: import('../server/protocol.js').PaintMessage[], grid: Grid }}
  */
 export function collectingViewer(id) {
   return {
     id,
     role: "observer",
-    hostColors: true,
-    /** @type {string | null} */
-    fieldColor: null,
     ip: "127.0.0.1",
-    /** @type {string[]} */
-    screen: [],
     /** @type {import('../server/protocol.js').ServerMessage[]} */
     messages: [],
-    /** @type {ViewerEvent[]} */
-    events: [],
-    sendScreen(bytes) {
-      this.screen.push(bytes);
-      this.events.push({ kind: "screen", bytes });
-    },
+    /** @type {import('../server/protocol.js').PaintMessage[]} */
+    paints: [],
+    grid: new Grid(1, 1),
     sendMessage(message) {
       this.messages.push(message);
-      this.events.push({ kind: "message", message });
+      if (message.type !== "paint") return;
+      this.paints.push(message);
+      this.grid.applyPaint(message);
     },
   };
 }

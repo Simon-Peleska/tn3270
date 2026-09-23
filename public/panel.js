@@ -7,8 +7,6 @@
 
 /** @typedef {import('./settings.js').Theme} Theme */
 
-export const ESC = "\x1b";
-
 /**
  * Every panel, in the order their numbers run. The menu has no number of its
  * own: you get back to it with F4, or by naming it. The command is the keymap
@@ -103,41 +101,16 @@ function mix(from, to, amount) {
 }
 
 /**
- * @param {number} row 1-based
- * @param {number} col 1-based
- * @returns {string}
- */
-function at(row, col) {
-  return `${ESC}[${row};${col}H`;
-}
-
-/**
- * ghostty-web reads 0x000000 as "not set" and falls back to grey.
+ * The page names its own colours outright, where the host names one of sixteen
+ * slots; the renderer tells the two apart by the `#`.
  *
- * @param {Theme} theme
- * @returns {Record<string, string>}
- */
-export function terminalColors(theme) {
-  /** @type {Record<string, string>} */
-  const colors = {};
-  for (const [key, value] of Object.entries(theme.colors)) {
-    colors[key] = value.toLowerCase() === "#000000" ? "#010101" : value;
-  }
-  return colors;
-}
-
-/**
  * @param {string} fg `#rrggbb`
  * @param {string} bg `#rrggbb`
  * @param {boolean} [bold]
- * @returns {string}
+ * @returns {import('./grid.js').Style}
  */
 export function paint(fg, bg, bold = false) {
-  const [fr, fg2, fb] = rgb(fg);
-  let [br, bg2, bb] = rgb(bg);
-  // The renderer skips a (0, 0, 0) fill, taking it for the cleared canvas.
-  if (br === 0 && bg2 === 0 && bb === 0) [br, bg2, bb] = [1, 1, 1];
-  return `${ESC}[0${bold ? ";1" : ""};38;2;${fr};${fg2};${fb};48;2;${br};${bg2};${bb}m`;
+  return { fg, bg, gr: bold ? "highlight" : null };
 }
 
 /**
@@ -217,8 +190,8 @@ export function dotted(label, width) {
 
 /**
  * @typedef {object} PanelView
- * @property {(bytes: string) => void} write
- * @property {() => { cols: number, rows: number }} geometry
+ * @property {import('./grid.js').Grid} grid where the panel draws itself, its own
+ *   size: the whole display, status row included
  * @property {Theme} theme
  * @property {string} title
  * @property {string} [prompt] `Option ===> ` on a menu, `Command ===> ` elsewhere
@@ -238,7 +211,9 @@ export function dotted(label, width) {
  * @returns {void}
  */
 function drawPanel(view) {
-  const { cols, rows } = view.geometry();
+  const grid = view.grid;
+  const cols = grid.cols;
+  const rows = grid.rows;
   const { background, foreground, dim, field, chosen, warn } = panelColors(
     view.theme,
   );
@@ -247,19 +222,23 @@ function drawPanel(view) {
   const first = view.first ?? 0;
   const total = view.total ?? view.body.length;
 
-  /** @type {string[]} */
-  const out = [paint(foreground, background), `${ESC}[2J`];
   /**
-   * Autowrap is off, so anything past the last column is cut, not wrapped.
+   * Rows and columns are 1-based here, as a 3270 panel counts them; the grid is
+   * 0-based, and clips anything past the last column rather than wrapping it.
+   *
    * @param {number} row
    * @param {number} col
-   * @param {string} style
+   * @param {import('./grid.js').Style} style
    * @param {string} text
    */
   const place = (row, col, style, text) => {
-    if (row < 1 || row > rows || col > cols) return;
-    out.push(at(row, col), style, text.slice(0, cols - col + 1));
+    grid.put(row - 1, col - 1, text, style);
   };
+
+  // The panel hides the screen behind it, so every cell of it is drawn.
+  const blank = " ".repeat(cols);
+  for (let row = 1; row <= rows; row++)
+    place(row, 1, paint(foreground, background), blank);
 
   const title = view.title.slice(0, cols - 4);
   place(
@@ -339,8 +318,8 @@ function drawPanel(view) {
 
   place(rows, 2, paint(dim, background), view.keys.join("  "));
 
-  // The cursor is the panel's, and it has to be put back after the paint or it
-  // sits wherever the last write left it.
+  // The overlay's cursor is the panel's for as long as it is open: it sits over
+  // the host's, and comes off with the rest of the overlay.
   const onIndex = view.body.findIndex((line) => line.selected === true);
   const onLine = view.body[onIndex];
   const cursorRow = view.onCommand ? ROW_COMMAND : BODY_TOP + onIndex;
@@ -352,15 +331,11 @@ function drawPanel(view) {
     : onLine?.point === true
       ? OPTION_LEFT + 1
       : TEXT_LEFT + labelWidth + 2 + (onLine?.cursor ?? 0);
-  out.push(
-    at(
-      Math.max(1, Math.min(rows, cursorRow)),
-      Math.max(1, Math.min(cols, cursorCol)),
-    ),
-    `${ESC}[?25h`,
-  );
-
-  view.write(out.join(""));
+  grid.cursor = {
+    row: Math.max(1, Math.min(rows, cursorRow)) - 1,
+    col: Math.max(1, Math.min(cols, cursorCol)) - 1,
+    visible: true,
+  };
 }
 
 /**
@@ -439,8 +414,8 @@ export function parseCommand(input) {
 
 /**
  * @typedef {object} PanelDeps
- * @property {(bytes: string) => void} write
- * @property {() => { cols: number, rows: number }} geometry
+ * @property {() => void} redraw something on this panel changed: draw the pane
+ *   again, which is what calls `drawInto` back
  * @property {() => Theme} [theme] the panel's own theme wins where a page has one
  * @property {() => void} end this panel is finished: back where it was opened from
  * @property {(id: string) => void} go open another panel
@@ -507,6 +482,8 @@ export class Panel {
     this.selected = 0;
     /** @type {number} index of the first line on screen */
     this.scroll = 0;
+    /** @type {number} body lines the last `drawInto` had room for; 0 until then */
+    this.pageHeight = 0;
     /** @type {string} the short message shown against the title */
     this.message = "";
   }
@@ -676,7 +653,10 @@ export class Panel {
    * @returns {void}
    */
   scrollBy(step) {
-    const height = bodyHeight(this.deps.geometry().rows);
+    // A page is as tall as the grid it was last drawn on, so paging and drawing
+    // cannot disagree. Nothing drawn yet is nothing to page through.
+    const height = this.pageHeight;
+    if (height === 0) return;
     const last = Math.max(0, this.lines().length - height);
     this.scroll = Math.max(0, Math.min(this.scroll + step * height, last));
     const first = this.stops().find(
@@ -850,10 +830,19 @@ export class Panel {
     this.draw();
   }
 
-  /** @returns {void} */
+  /** @returns {void} Ask for the whole pane again: the panel is only part of it. */
   draw() {
+    this.deps.redraw();
+  }
+
+  /**
+   * @param {import('./grid.js').Grid} grid
+   * @returns {void}
+   */
+  drawInto(grid) {
     const lines = this.lines();
-    const height = bodyHeight(this.deps.geometry().rows);
+    const height = bodyHeight(grid.rows);
+    this.pageHeight = height;
     if (this.selected < this.scroll) this.scroll = this.selected;
     if (this.selected >= this.scroll + height)
       this.scroll = this.selected - height + 1;
@@ -870,8 +859,7 @@ export class Panel {
       }));
 
     drawPanel({
-      write: this.deps.write,
-      geometry: this.deps.geometry,
+      grid,
       theme: this.panelTheme(),
       title: this.title(),
       prompt: this.prompt(),

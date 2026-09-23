@@ -1,10 +1,7 @@
 import { AppError } from "./errors.js";
 
-export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
-
 /**
- * Wire format: VT bytes in binary frames, JSON control traffic in text frames.
- * The frame type tells them apart, so neither needs an envelope.
+ * Wire format: one ordered channel of JSON messages, screen paints among them.
  *
  * @typedef {{ type: 'action', action: string, args?: string[] }} ActionMessage
  * @typedef {{ type: 'text', value: string }} TextMessage
@@ -14,14 +11,12 @@ export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
  * @typedef {{ type: 'model', model: number }} ModelMessage
  * @typedef {{ type: 'oversize', value: string }} OversizeMessage `<cols>x<rows>`, or '' for the model's own size
  * @typedef {{ type: 'refresh' }} RefreshMessage
- * @typedef {{ type: 'hostColors', enabled: boolean }} HostColorsMessage
  * @typedef {{ type: 'copyField' }} CopyFieldMessage
- * @typedef {{ type: 'fieldColor', color: string | null }} FieldColorMessage
  * @typedef {{ type: 'sharing', allowView: boolean, allowEdit: boolean }} SharingMessage
  * @typedef {{ type: 'automation', allowed: boolean }} AutomationMessage whether REST over the proxy may drive this session
  * @typedef {{ type: 'recorder', action: 'start' | 'stop' }} RecorderMessage
  * @typedef {{ type: 'hints' }} HintsRequestMessage
- * @typedef {ActionMessage | TextMessage | PasteMessage | ConnectMessage | DisconnectMessage | ModelMessage | OversizeMessage | RefreshMessage | HostColorsMessage | CopyFieldMessage | FieldColorMessage | SharingMessage | AutomationMessage | RecorderMessage | HintsRequestMessage} ClientMessage
+ * @typedef {ActionMessage | TextMessage | PasteMessage | ConnectMessage | DisconnectMessage | ModelMessage | OversizeMessage | RefreshMessage | CopyFieldMessage | SharingMessage | AutomationMessage | RecorderMessage | HintsRequestMessage} ClientMessage
  *
  * @typedef {object} HelloMessage
  * @property {'hello'} type
@@ -55,13 +50,44 @@ export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
  * @property {boolean} connected what that word means
  * @property {boolean} touched whether any viewer has ever aimed input at this session
  * @property {string | null} host
- * @property {boolean} locked
+ * @property {string} lock b3270's own word for why the keyboard is locked;
+ *   'unlocked' when it is not, '' before b3270 has said either way
  * @property {boolean} insert
+ * @property {boolean} typeahead
  * @property {'controller' | 'observer'} role
  * @property {number} viewers
  * @property {boolean} allowSharing
  * @property {boolean} allowSharedEditing
  * @property {boolean} allowAutomation
+ *
+ * A run of cells sharing one style. Colours are b3270's own names — `red`,
+ * `deepBlue`, `neutralWhite` — and `gr` is its own comma-separated rendition
+ * string, both passed through untouched: the browser owns what they look like.
+ * An omitted key means the screen default, or false for `editable`.
+ *
+ * @typedef {object} PaintRun
+ * @property {number} col 0-based
+ * @property {string} text
+ * @property {string} [fg]
+ * @property {string} [bg]
+ * @property {string} [gr]
+ * @property {boolean} [editable]
+ *
+ * @typedef {object} PaintRow
+ * @property {number} row 0-based
+ * @property {PaintRun[]} runs
+ *
+ * @typedef {object} PaintMessage
+ * @property {'paint'} type
+ * @property {boolean} full whether every cell not mentioned is now blank
+ * @property {boolean} color false for a 3278: mono green, invent no colours
+ * @property {{ rows: number, cols: number }} [size] sent on a full paint only:
+ *   the screen it fills, so the paint needs nothing else to be applied
+ *   (`rows` above is the rows it carries, which is not the same question)
+ * @property {string} [defaultFg] sent on a full paint only; what an omitted fg means
+ * @property {string} [defaultBg]
+ * @property {PaintRow[]} rows only the rows that changed, unless `full`
+ * @property {{ row: number, col: number, on: boolean }} cursor
  *
  * @typedef {object} ErrorMessage
  * @property {'error'} type
@@ -86,7 +112,7 @@ export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
  * @property {'hints'} type
  * @property {{ row: number, col: number, letter: string }[]} hints
  *
- * @typedef {HelloMessage | ScreenMessage | StatusMessage | ErrorMessage | FieldContentMessage | RecorderStepMessage | HintsMessage} ServerMessage
+ * @typedef {HelloMessage | ScreenMessage | PaintMessage | StatusMessage | ErrorMessage | FieldContentMessage | RecorderStepMessage | HintsMessage} ServerMessage
  */
 
 /**
@@ -197,27 +223,6 @@ export function parseClientMessage(raw) {
   }
 
   if (type === "disconnect") return { type: "disconnect" };
-
-  if (type === "hostColors") {
-    const enabled = message["enabled"];
-    if (typeof enabled !== "boolean")
-      throw new AppError("E4002", "hostColors.enabled must be a boolean");
-    return { type: "hostColors", enabled };
-  }
-
-  // Echoed into VT bytes every other viewer receives, so the shape is checked, not trusted.
-  if (type === "fieldColor") {
-    const color = message["color"];
-    if (color === null || color === undefined)
-      return { type: "fieldColor", color: null };
-    if (typeof color !== "string" || !HEX_COLOR.test(color)) {
-      throw new AppError(
-        "E4002",
-        `fieldColor.color must be #rrggbb, got ${String(color)}`,
-      );
-    }
-    return { type: "fieldColor", color };
-  }
 
   if (type === "refresh") return { type: "refresh" };
 

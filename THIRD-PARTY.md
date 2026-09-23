@@ -2,46 +2,12 @@
 
 tn3270 itself is MIT (`LICENSE`). It ships or runs against the software below,
 each under its own licence. Everything else in `node_modules` is development
-tooling — `typescript`, `patch-package`, `@types/*` and their trees — which is
-never redistributed and needs no notice here.
+tooling — `typescript`, `@types/*` and their trees — which is never
+redistributed and needs no notice here.
 
 Two more notices live next to the files they cover: `public/fonts/NOTICE` for
 the three vendored fonts (SIL Open Font License 1.1) and `test/traces/NOTICE`
 for the recorded host traces taken from x3270's test suite.
-
-## ghostty-web
-
-The terminal renderer, served to the browser out of `node_modules` at
-`/vendor/`. It is patched in place by `patches/ghostty-web+0.4.0.patch`, which
-fixes a font-measurement call, stops a selection from taking over the
-clipboard, and snaps every cell fill to the device pixel grid; the licence
-below covers the modified copy as well.
-
-<https://www.npmjs.com/package/ghostty-web>
-
-```
-MIT License
-
-Copyright (c) 2025 Coder
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
 
 ## ws
 
@@ -75,7 +41,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 The emulator this project drives, one process per session. It is a separate
 program, not linked into anything here: `nix/b3270.nix` builds it from the
 suite3270 source tarball, and without Nix it is installed by hand. The same
-licence covers the traces in `test/traces/`.
+licence covers the traces in `test/traces/` and the host colour table in
+`public/colors.js`, which follows x3270's own naming.
 
 <https://x3270.bgp.nu/>
 

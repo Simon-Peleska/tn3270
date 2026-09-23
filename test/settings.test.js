@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { SettingsPage, THEMES, FONTS } from "../public/settings.js";
-import { key, enterKey, defaultKeymapDeps } from "./keyevent.js";
+import {
+  key,
+  enterKey,
+  defaultKeymapDeps,
+  drawn,
+  recordedPuts,
+} from "./keyevent.js";
 
 /**
  * A fixed-pixel window whose cells grow with the text, as a monospace font's do.
@@ -31,7 +37,7 @@ function fieldKeys(page) {
 /** @param {(fontSize: number) => { cols: number, rows: number } | null} [fit] */
 function fixture(fit = () => ({ cols: 158, rows: 60 })) {
   const calls = {
-    /** @type {string[]} */ written: [],
+    /** @type {number} */ redraws: 0,
     /** @type {string[]} */ themes: [],
     /** @type {string[]} */ fonts: [],
     /** @type {number[]} */ models: [],
@@ -46,8 +52,9 @@ function fixture(fit = () => ({ cols: 158, rows: 60 })) {
   };
   const page = new SettingsPage({
     ...defaultKeymapDeps,
-    write: (bytes) => calls.written.push(bytes),
-    geometry: () => ({ cols: 80, rows: 25 }),
+    redraw: () => {
+      calls.redraws += 1;
+    },
     applyTheme: (theme) => calls.themes.push(theme.name),
     applyFont: (font) => calls.fonts.push(font.name),
     applyModel: (model) => calls.models.push(model),
@@ -93,7 +100,7 @@ test("opening draws the panel, and F3 closes it and asks for the screen back", (
 
   page.show();
   assert.equal(page.open, true);
-  assert.ok(calls.written.length > 0, "the panel must have been drawn");
+  assert.ok(calls.redraws > 0, "the panel must have asked to be drawn");
 
   assert.equal(page.handleKey(key({ key: "F3" })), true);
   assert.equal(page.open, false);
@@ -342,9 +349,9 @@ test("a screen size change waits for Enter and warns what it costs", () => {
 
   assert.equal(page.pendingModel, 5);
   assert.deepEqual(calls.models, [], "nothing may happen before Enter");
-  const drawn = calls.written.at(-1) ?? "";
-  assert.match(drawn, /Model 5 - 27x132/);
-  assert.match(drawn, /The host connection is dropped and reopened/);
+  const text = drawn(page).text(0, 0, 24, 79);
+  assert.match(text, /Model 5 - 27x132/);
+  assert.match(text, /The host connection is dropped and reopened/);
 
   page.handleKey(enterKey());
   assert.deepEqual(calls.models, [5]);
@@ -418,9 +425,9 @@ test("fit to window asks for the screen the browser measured, on Enter", () => {
 
   assert.equal(page.pendingOversize, "158x60");
   assert.deepEqual(calls.oversizes, [], "nothing may happen before Enter");
-  const drawn = calls.written.at(-1) ?? "";
-  assert.match(drawn, /158x60/);
-  assert.match(drawn, /The host connection is dropped and reopened/);
+  const text = drawn(page).text(0, 0, 24, 79);
+  assert.match(text, /158x60/);
+  assert.match(text, /The host connection is dropped and reopened/);
 
   page.handleKey(enterKey());
   assert.deepEqual(calls.oversizes, ["158x60"]);
@@ -596,27 +603,21 @@ test("a size from a version that never saved one is left to the server", () => {
 });
 
 test("nothing the page draws runs off the right edge", () => {
-  // Autowrap is off, so a line wider than the screen is silently cut, not wrapped.
-  const { page, calls } = fixture();
+  // The grid cuts anything past the last column rather than wrapping it, so an
+  // overrun is silent: catch it where it is written instead of where it lands.
+  const { page } = fixture();
   page.setModel(2);
   page.connected = true;
   page.show();
   focus(page, "model");
   page.pendingModel = 5;
   page.pendingOversize = "166x40";
-  page.draw();
 
-  const drawn = calls.written.at(-1) ?? "";
-  for (const move of drawn.matchAll(
-    /\x1b\[\d+;(\d+)H((?:\x1b\[[0-9;]*m)*)([^\x1b]*)/g,
-  )) {
-    const column = Number(move[1]);
-    const text = move[3] ?? "";
+  for (const { col, text } of recordedPuts(page))
     assert.ok(
-      column + text.length - 1 <= 80,
-      `"${text}" starts at column ${column} and does not fit in 80`,
+      col + text.length <= 80,
+      `"${text}" starts at column ${col} and does not fit in 80`,
     );
-  }
 });
 
 test("cancel leaves the screen size exactly as it was", () => {

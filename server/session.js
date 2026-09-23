@@ -6,7 +6,7 @@ import { editableSnapshot, changedRuns } from "./history.js";
 import { computeHints } from "./hints.js";
 import { ScreenModel } from "./screen.js";
 import { OiaModel } from "./oia.js";
-import { fullRepaint, delta } from "./vt.js";
+import { fullPaint, paintDelta } from "./paint.js";
 import { AppError, describeError } from "./errors.js";
 import { isHostAllowed } from "./protocol.js";
 import { reserveRestEndpoint } from "./restproxy.js";
@@ -16,11 +16,8 @@ import { logger } from "./log.js";
  * @typedef {object} Viewer
  * @property {string} id
  * @property {'controller' | 'observer'} role
- * @property {boolean} hostColors Per-viewer, not shared with host or others.
- * @property {string | null} fieldColor `#rrggbb` tint for editable fields.
  * @property {string} [ip]
  * @property {string} [user]
- * @property {(bytes: string) => void} sendScreen
  * @property {(message: import('./protocol.js').ServerMessage) => void} sendMessage
  */
 
@@ -87,10 +84,6 @@ export class Session {
     /** @type {string} What b3270 was told, not always what was asked for. */
     this.b3270Oversize = this.oversize;
 
-    /** @type {string} */
-    this.oiaText = "";
-    /** @type {boolean} */
-    this.oiaDirty = true;
     /** @type {boolean} */
     this.flushScheduled = false;
     /** @type {boolean} */
@@ -303,12 +296,18 @@ export class Session {
       return;
     }
     if (kind === "oia") {
-      const wasInsert = this.oia.insert;
+      const { insert, lock, typeahead } = this.oia;
       this.oia.applyOia(
         /** @type {import('./b3270.js').OiaIndication} */ (body),
       );
-      // Insert mode shows only as a cursor shape, so it needs its own push.
-      if (this.oia.insert !== wasInsert) this.broadcastStatus();
+      // None of these reach a browser any other way: the lock is what macro
+      // playback waits on, and insert mode shows only as a cursor shape.
+      if (
+        this.oia.insert !== insert ||
+        this.oia.lock !== lock ||
+        this.oia.typeahead !== typeahead
+      )
+        this.broadcastStatus();
       this.scheduleFlush();
       return;
     }
@@ -435,31 +434,13 @@ export class Session {
 
     this.recordHistory();
 
-    const nextOia = this.oia.render(this.screen.cols, this.screen.cursor);
-    const oiaChanged = nextOia !== this.oiaText;
-    this.oiaText = nextOia;
-
     const dirtyRows = this.screen.takeDirtyRows();
-    if (dirtyRows.length === 0 && !oiaChanged) return;
+    // A cursor move touches no row, and it is the whole of what a Left or a Tab
+    // does, so it has to be asked about separately.
+    const cursorMoved = this.screen.takeCursorMoved();
+    if (dirtyRows.length === 0 && !cursorMoved) return;
 
-    /** @type {Map<string, string>} */
-    const encoded = new Map();
-    for (const viewer of this.viewers) {
-      const key = `${viewer.hostColors}|${viewer.fieldColor ?? ""}`;
-      let bytes = encoded.get(key);
-      if (bytes === undefined) {
-        bytes = delta(
-          this.screen,
-          dirtyRows,
-          this.oiaText,
-          oiaChanged,
-          viewer.hostColors,
-          viewer.fieldColor,
-        );
-        encoded.set(key, bytes);
-      }
-      viewer.sendScreen(bytes);
-    }
+    this.sendToAll(paintDelta(this.screen, dirtyRows));
   }
 
   /**
@@ -652,6 +633,7 @@ export class Session {
   repaintAll() {
     // Pending deltas are about to be painted over, and are against the old size.
     this.screen.takeDirtyRows();
+    this.screen.takeCursorMoved();
     for (const viewer of this.viewers) this.repaint(viewer);
   }
 
@@ -660,15 +642,7 @@ export class Session {
    * @returns {void}
    */
   repaint(viewer) {
-    this.oiaText = this.oia.render(this.screen.cols, this.screen.cursor);
-    viewer.sendScreen(
-      fullRepaint(
-        this.screen,
-        this.oiaText,
-        viewer.hostColors,
-        viewer.fieldColor,
-      ),
-    );
+    viewer.sendMessage(fullPaint(this.screen));
   }
 
   /**
@@ -767,23 +741,9 @@ export class Session {
    * @returns {void}
    */
   handleClientMessage(viewer, message) {
-    // Observers may send these three: they change only this viewer's own picture.
+    // An observer may ask for this one: it changes only this viewer's own picture.
     if (message.type === "refresh") {
       this.repaint(viewer);
-      return;
-    }
-
-    if (message.type === "hostColors") {
-      viewer.hostColors = message.enabled;
-      this.repaint(viewer);
-      return;
-    }
-
-    if (message.type === "fieldColor") {
-      viewer.fieldColor = message.color;
-      this.fieldsStale = true;
-      this.repaint(viewer);
-      this.scheduleFlush();
       return;
     }
 
@@ -987,8 +947,9 @@ export class Session {
         connected: this.oia.connected,
         touched: this.touched,
         host: this.oia.host,
-        locked: this.oia.keyboardLocked,
+        lock: this.oia.lock,
         insert: this.oia.insert,
+        typeahead: this.oia.typeahead,
         role: viewer.role,
         viewers: this.viewers.size,
         allowSharing: this.allowSharing,

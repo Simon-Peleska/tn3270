@@ -1,7 +1,7 @@
 {
   "name": "tn3270",
   "version": "0.1.0",
-  "description": "Web TN3270 terminal: b3270 backend, ghostty-web frontend",
+  "description": "Web TN3270 terminal: b3270 backend, canvas frontend",
   "type": "module",
   "private": true,
   "license": "MIT",
@@ -13,11 +13,9 @@
     "typecheck": "tsc -p jsconfig.json",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "postinstall": "patch-package"
+    "format:check": "prettier --check ."
   },
   "dependencies": {
-    "ghostty-web": "^0.4.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
@@ -26,7 +24,6 @@
     "@types/ws": "^8.18.1",
     "eslint": "^10.11.0",
     "globals": "^17.12.0",
-    "patch-package": "^8.0.1",
     "prettier": "3.9.8"
   }
 }

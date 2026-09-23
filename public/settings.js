@@ -1,4 +1,4 @@
-// The settings panel, drawn as VT bytes into the terminal itself rather than HTML.
+// The settings panel, drawn as cells into the screen itself rather than HTML.
 
 import { Panel, cycle, keyLegend } from "./panel.js";
 
@@ -6,10 +6,10 @@ import { Panel, cycle, keyLegend } from "./panel.js";
  * @typedef {object} Theme
  * @property {string} name
  * @property {{ background: string, foreground: string, field: string } & Record<string, string>} colors
- *   ghostty's chrome and ANSI slots, plus `field`, the tint of a typeable
- *   field; ghostty ignores that extra key. The three named here are the ones
- *   this page and the bars draw with, so a theme that leaves one out is a type
- *   error rather than a silent default.
+ *   the chrome and the sixteen ANSI slots a host colour name resolves into,
+ *   plus `field`, the tint of a typeable field. The three named here are the
+ *   ones this page and the bars draw with, so a theme that leaves one out is a
+ *   type error rather than a silent default.
  */
 
 /** @type {readonly Theme[]} */

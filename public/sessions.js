@@ -115,20 +115,35 @@ export function switcherText(ids, active) {
 }
 
 /**
- * Always a 2x2 grid, so a layout change only moves panes instead of rebuilding them.
- * @type {readonly (readonly string[])[]}
+ * Always halves of a 2x2, as fractions of the page: the renderer draws every
+ * pane onto one canvas, so the split is arithmetic rather than CSS.
+ *
+ * @typedef {{ x: number, y: number, width: number, height: number }} Share
+ * @type {readonly (readonly Share[])[]}
  */
-const PANE_AREAS = [
-  ["1 / 1 / 3 / 3"],
-  ["1 / 1 / 3 / 2", "1 / 2 / 3 / 3"],
-  ["1 / 1 / 3 / 2", "1 / 2 / 2 / 3", "2 / 2 / 3 / 3"],
-  ["1 / 1 / 2 / 2", "2 / 1 / 3 / 2", "1 / 2 / 2 / 3", "2 / 2 / 3 / 3"],
+const PANE_SHARES = [
+  [{ x: 0, y: 0, width: 1, height: 1 }],
+  [
+    { x: 0, y: 0, width: 0.5, height: 1 },
+    { x: 0.5, y: 0, width: 0.5, height: 1 },
+  ],
+  [
+    { x: 0, y: 0, width: 0.5, height: 1 },
+    { x: 0.5, y: 0, width: 0.5, height: 0.5 },
+    { x: 0.5, y: 0.5, width: 0.5, height: 0.5 },
+  ],
+  [
+    { x: 0, y: 0, width: 0.5, height: 0.5 },
+    { x: 0, y: 0.5, width: 0.5, height: 0.5 },
+    { x: 0.5, y: 0, width: 0.5, height: 0.5 },
+    { x: 0.5, y: 0.5, width: 0.5, height: 0.5 },
+  ],
 ];
 
 /**
  * @param {number} panes
- * @returns {readonly string[]} one `grid-area` per pane, in session order
+ * @returns {readonly Share[]} one share of the page per pane, in session order
  */
-export function paneAreas(panes) {
-  return PANE_AREAS[Math.min(Math.max(panes, 1), MAX_SESSIONS) - 1];
+export function paneShares(panes) {
+  return PANE_SHARES[Math.min(Math.max(panes, 1), MAX_SESSIONS) - 1];
 }

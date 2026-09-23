@@ -1,8 +1,9 @@
 # tn3270
 
 An IBM 3270 terminal in a browser tab. A Node server drives one real `b3270`
-process per session; the page renders the screen with `ghostty-web` on a canvas.
-Share the URL and the other person sees the same screen live.
+process per session; the page draws the screen onto a canvas of its own, with no
+bundler and one runtime dependency. Share the URL and the other person sees the
+same screen live.
 
 ```
 browser ──WS── node ──NDJSON── b3270 ──TN3270── mainframe
@@ -59,6 +60,6 @@ one.
 | File               | What is in it                                                                                                                                |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `SPECIFICATION.md` | What it does, from the outside: sessions, roles, the screen, the keyboard, the panels, the wire protocol, the config table, every error code |
-| `ARCHITECTURE.md`  | Why it is built this way: who owns the screen, why the server renders the VT bytes, why all the UI lives inside the terminal                 |
+| `ARCHITECTURE.md`  | Why it is built this way: who owns the screen, what the paint protocol carries, why all the UI lives inside the screen                       |
 | `GOTCHAS.md`       | Things that cost time once and should not cost it twice                                                                                      |
 | `TASKS.md`         | What is done and what is not                                                                                                                 |
