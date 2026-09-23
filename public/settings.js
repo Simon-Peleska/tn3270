@@ -5,15 +5,52 @@ import { Panel, cycle, keyLegend } from "./panel.js";
 /**
  * @typedef {object} Theme
  * @property {string} name
- * @property {{ background: string, foreground: string, field: string } & Record<string, string>} colors
+ * @property {{ background: string, foreground: string, field: string, statusForeground: string, statusBackground: string } & Record<string, string>} colors
  *   the chrome and the sixteen ANSI slots a host colour name resolves into,
- *   plus `field`, the tint of a typeable field. The three named here are the
- *   ones this page and the bars draw with, so a theme that leaves one out is a
- *   type error rather than a silent default.
+ *   plus `field`, the tint of a typeable field, and the status row's own pair.
+ *   The five named here are the ones this page and the bars draw with, so a
+ *   theme that leaves one out is a type error rather than a silent default.
+ *
+ *   A status row is reverse video on the hardware, so most themes set the pair
+ *   to their background and foreground swapped; naming it per theme is what
+ *   lets one opt out.
  */
 
 /** @type {readonly Theme[]} */
 export const THEMES = Object.freeze([
+  // IBM Host On-Demand's default, and ours: its blue really is this dark, left
+  // uncorrected. The status row is the one place a theme opts out of reverse
+  // video.
+  {
+    name: "Host On-Demand",
+    colors: {
+      background: "#000000",
+      foreground: "#00ff00",
+      cursor: "#00ff00",
+      cursorAccent: "#000000",
+      selectionBackground: "#ffffff",
+      selectionForeground: "#000000",
+      field: "#1c1c1c",
+      statusForeground: "#ffffff",
+      statusBackground: "#000000",
+      black: "#000000",
+      red: "#ff0000",
+      green: "#00ff00",
+      yellow: "#ffff00",
+      blue: "#0000b3",
+      magenta: "#c000ff",
+      cyan: "#00ffff",
+      white: "#ffffff",
+      brightBlack: "#808080",
+      brightRed: "#ff8000",
+      brightGreen: "#80ff80",
+      brightYellow: "#ffff80",
+      brightBlue: "#0000ff",
+      brightMagenta: "#ff00ff",
+      brightCyan: "#80ffff",
+      brightWhite: "#ffffff",
+    },
+  },
   {
     name: "3270 Green",
     colors: {
@@ -24,6 +61,8 @@ export const THEMES = Object.freeze([
       selectionBackground: "#00ff00",
       selectionForeground: "#000000",
       field: "#003300",
+      statusForeground: "#000000",
+      statusBackground: "#00ff00",
       black: "#000000",
       red: "#00cc00",
       green: "#00ff00",
@@ -52,6 +91,8 @@ export const THEMES = Object.freeze([
       selectionBackground: "#ffb000",
       selectionForeground: "#100c00",
       field: "#2b1f00",
+      statusForeground: "#100c00",
+      statusBackground: "#ffb000",
       black: "#000000",
       red: "#cc8400",
       green: "#cc8400",
@@ -70,35 +111,6 @@ export const THEMES = Object.freeze([
       brightWhite: "#ffb000",
     },
   },
-  // IBM Host On-Demand's default; its blue really is this dark, left uncorrected.
-  {
-    name: "Host On-Demand",
-    colors: {
-      background: "#000000",
-      foreground: "#00ff00",
-      cursor: "#00ff00",
-      cursorAccent: "#000000",
-      selectionBackground: "#ffffff",
-      selectionForeground: "#000000",
-      field: "#1c1c1c",
-      black: "#000000",
-      red: "#ff0000",
-      green: "#00ff00",
-      yellow: "#ffff00",
-      blue: "#0000b3",
-      magenta: "#c000ff",
-      cyan: "#00ffff",
-      white: "#ffffff",
-      brightBlack: "#808080",
-      brightRed: "#ff8000",
-      brightGreen: "#80ff80",
-      brightYellow: "#ffff80",
-      brightBlue: "#0000ff",
-      brightMagenta: "#ff00ff",
-      brightCyan: "#80ffff",
-      brightWhite: "#ffffff",
-    },
-  },
   // The same emulator on white: black and white swap roles, as they do above.
   {
     name: "Host On-Demand White",
@@ -110,6 +122,8 @@ export const THEMES = Object.freeze([
       selectionBackground: "#000000",
       selectionForeground: "#ffffff",
       field: "#e6e6e6",
+      statusForeground: "#ffffff",
+      statusBackground: "#000000",
       black: "#ffffff",
       red: "#cc0000",
       green: "#008000",
@@ -138,6 +152,8 @@ export const THEMES = Object.freeze([
       selectionBackground: "#d4d4d4",
       selectionForeground: "#1e1e1e",
       field: "#2d2d2d",
+      statusForeground: "#1e1e1e",
+      statusBackground: "#d4d4d4",
       black: "#000000",
       red: "#cd3131",
       green: "#0dbc79",
@@ -167,6 +183,8 @@ export const THEMES = Object.freeze([
       selectionBackground: "#93a1a1",
       selectionForeground: "#002b36",
       field: "#0f4a58",
+      statusForeground: "#002b36",
+      statusBackground: "#93a1a1",
       black: "#073642",
       red: "#dc322f",
       green: "#859900",
@@ -195,6 +213,8 @@ export const THEMES = Object.freeze([
       selectionBackground: "#1a1a1a",
       selectionForeground: "#f5f2e8",
       field: "#e8e2d0",
+      statusForeground: "#f5f2e8",
+      statusBackground: "#1a1a1a",
       black: "#1a1a1a",
       red: "#c0341d",
       green: "#4c7a1f",
@@ -224,6 +244,8 @@ export const THEMES = Object.freeze([
       selectionBackground: "#ebdbb2",
       selectionForeground: "#282828",
       field: "#3c3836",
+      statusForeground: "#282828",
+      statusBackground: "#ebdbb2",
       black: "#282828",
       red: "#fb4934",
       green: "#b8bb26",
@@ -252,6 +274,8 @@ export const THEMES = Object.freeze([
       selectionBackground: "#ebdbb2",
       selectionForeground: "#1d2021",
       field: "#282828",
+      statusForeground: "#1d2021",
+      statusBackground: "#ebdbb2",
       black: "#1d2021",
       red: "#fb4934",
       green: "#b8bb26",
@@ -280,6 +304,8 @@ export const THEMES = Object.freeze([
       selectionBackground: "#3c3836",
       selectionForeground: "#fbf1c7",
       field: "#ebdbb2",
+      statusForeground: "#fbf1c7",
+      statusBackground: "#3c3836",
       black: "#fbf1c7",
       red: "#cc241d",
       green: "#98971a",
@@ -308,6 +334,8 @@ export const THEMES = Object.freeze([
       selectionBackground: "#f8f8f2",
       selectionForeground: "#282a36",
       field: "#44475a",
+      statusForeground: "#282a36",
+      statusBackground: "#f8f8f2",
       black: "#21222c",
       red: "#ff5555",
       green: "#50fa7b",
@@ -336,6 +364,8 @@ export const THEMES = Object.freeze([
       selectionBackground: "#d8dee9",
       selectionForeground: "#2e3440",
       field: "#434c5e",
+      statusForeground: "#2e3440",
+      statusBackground: "#d8dee9",
       black: "#3b4252",
       red: "#bf616a",
       green: "#a3be8c",
@@ -364,6 +394,8 @@ export const THEMES = Object.freeze([
       selectionBackground: "#cdd6f4",
       selectionForeground: "#1e1e2e",
       field: "#585b70",
+      statusForeground: "#1e1e2e",
+      statusBackground: "#cdd6f4",
       black: "#45475a",
       red: "#f38ba8",
       green: "#a6e3a1",
@@ -392,6 +424,8 @@ export const THEMES = Object.freeze([
       selectionBackground: "#abb2bf",
       selectionForeground: "#282c34",
       field: "#3e4451",
+      statusForeground: "#282c34",
+      statusBackground: "#abb2bf",
       black: "#282c34",
       red: "#e06c75",
       green: "#98c379",
@@ -420,6 +454,8 @@ export const THEMES = Object.freeze([
       selectionBackground: "#a9b1d6",
       selectionForeground: "#1a1b26",
       field: "#292e42",
+      statusForeground: "#1a1b26",
+      statusBackground: "#a9b1d6",
       black: "#15161e",
       red: "#f7768e",
       green: "#9ece6a",
@@ -448,6 +484,8 @@ export const THEMES = Object.freeze([
       selectionBackground: "#f8f8f2",
       selectionForeground: "#272822",
       field: "#3e3d32",
+      statusForeground: "#272822",
+      statusBackground: "#f8f8f2",
       black: "#272822",
       red: "#f92672",
       green: "#a6e22e",
@@ -473,8 +511,8 @@ export const THEMES = Object.freeze([
  * @type {readonly { name: string, family: string }[]}
  */
 export const FONTS = Object.freeze([
-  { name: "IBM 3270", family: '"IBM 3270", monospace' },
   { name: "Fira Mono", family: '"Fira Mono", monospace' },
+  { name: "IBM 3270", family: '"IBM 3270", monospace' },
   { name: "IBM Plex Mono", family: '"IBM Plex Mono", monospace' },
   {
     name: "System monospace",
@@ -531,9 +569,8 @@ const VALUE_WIDTH = 24;
  *   applyModel: (model: number) => void,
  *   applyOversize: (value: string) => void,
  *   windowFit: (fontSize: number) => { cols: number, rows: number } | null,
- *   applyHostColors: (enabled: boolean) => void,
+ *   applyFieldBackground: (enabled: boolean) => void,
  *   applySharing: (allowView: boolean, allowEdit: boolean) => void,
- *   applyAutomation: (allowed: boolean) => void,
  *   connect: (host: string | null) => void,
  *   persist: (settings: import('./store.js').StoredSettings) => void,
  * }} SettingsDeps
@@ -576,8 +613,8 @@ export class SettingsPage extends Panel {
     this.models = [];
     /** @type {boolean} */
     this.connected = false;
-    /** @type {boolean} */
-    this.hostColors = true;
+    /** @type {boolean} Whether a typeable field is tinted to show where it is. */
+    this.fieldBackground = true;
     /** @type {string} */
     this.host = "";
     /** @type {boolean} Host comes from the server's config: not editable here. */
@@ -588,10 +625,6 @@ export class SettingsPage extends Panel {
     this.allowSharing = true;
     /** @type {boolean} */
     this.allowSharedEditing = false;
-    /** @type {boolean} Whether REST over the proxy may drive this session. */
-    this.allowAutomation = false;
-    /** @type {boolean} Ctrl-B field hints: local only, so no deps.applyX(). */
-    this.hints = false;
   }
 
   /**
@@ -650,17 +683,15 @@ export class SettingsPage extends Panel {
       value: "",
       gap: true,
     });
-    rows.push(this.toggleRow("hostColors", "Host colors", this.hostColors));
-    rows.push(this.toggleRow("hints", "Field hints (Ctrl-B)", this.hints));
+    rows.push(
+      this.toggleRow(
+        "fieldBackground",
+        "Field background",
+        this.fieldBackground,
+      ),
+    );
     // Only the controller's call: it is their screen being shared and driven.
     if (this.role === "controller") {
-      rows.push(
-        this.toggleRow(
-          "allowAutomation",
-          "Allow automation",
-          this.allowAutomation,
-        ),
-      );
       rows.push(
         this.toggleRow("allowSharing", "Allow sharing", this.allowSharing),
       );
@@ -726,15 +757,6 @@ export class SettingsPage extends Panel {
     if (this.open) this.draw();
   }
 
-  /**
-   * @param {boolean} allowAutomation
-   * @returns {void}
-   */
-  setAutomation(allowAutomation) {
-    this.allowAutomation = allowAutomation;
-    if (this.open) this.draw();
-  }
-
   /** @returns {Theme} */
   theme() {
     return THEMES[this.themeIndex] ?? THEMES[0];
@@ -756,9 +778,8 @@ export class SettingsPage extends Panel {
     if (theme !== -1) this.themeIndex = theme;
     const font = FONTS.findIndex((entry) => entry.name === saved.font);
     if (font !== -1) this.fontIndex = font;
-    if (typeof saved.hostColors === "boolean")
-      this.hostColors = saved.hostColors;
-    if (typeof saved.hints === "boolean") this.hints = saved.hints;
+    if (typeof saved.fieldBackground === "boolean")
+      this.fieldBackground = saved.fieldBackground;
     if (typeof saved.model === "number") this.savedModel = saved.model;
     if (
       saved.screenSize === "model" ||
@@ -782,9 +803,8 @@ export class SettingsPage extends Panel {
       font: this.font().name,
       model: this.savedModel,
       screenSize: this.savedSize,
-      hostColors: this.hostColors,
       fitFontSize: this.fitFontSize,
-      hints: this.hints,
+      fieldBackground: this.fieldBackground,
     });
   }
 
@@ -990,12 +1010,9 @@ export class SettingsPage extends Panel {
       );
       this.pendingOversize = this.fitToWindow();
       this.save();
-    } else if (key === "hostColors") {
-      this.hostColors = !this.hostColors;
-      this.deps.applyHostColors(this.hostColors);
-      this.save();
-    } else if (key === "hints") {
-      this.hints = !this.hints;
+    } else if (key === "fieldBackground") {
+      this.fieldBackground = !this.fieldBackground;
+      this.deps.applyFieldBackground(this.fieldBackground);
       this.save();
     } else if (key === "allowSharing") {
       this.allowSharing = !this.allowSharing;
@@ -1005,9 +1022,6 @@ export class SettingsPage extends Panel {
     } else if (key === "allowSharedEditing") {
       this.allowSharedEditing = !this.allowSharedEditing;
       this.deps.applySharing(this.allowSharing, this.allowSharedEditing);
-    } else if (key === "allowAutomation") {
-      this.allowAutomation = !this.allowAutomation;
-      this.deps.applyAutomation(this.allowAutomation);
     }
   }
 

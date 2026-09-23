@@ -333,64 +333,6 @@ test("hello and status report the session's sharing settings", async (t) => {
   assert.equal(status?.type === "status" ? status.allowSharing : null, false);
 });
 
-test("only the controller can allow or deny automation, and every viewer is told", async (t) => {
-  const session = new Session(testConfig());
-  t.after(() => session.close());
-  await session.ready;
-
-  const controller = collectingViewer("controller");
-  const observer = collectingViewer("observer");
-  session.attach(controller);
-  session.attach(observer);
-
-  const hello = controller.messages[0];
-  assert.equal(
-    hello?.type === "hello" ? hello.allowAutomation : null,
-    false,
-    "automation is off unless config says otherwise",
-  );
-
-  session.handleClientMessage(observer, { type: "automation", allowed: true });
-  assert.equal(session.allowAutomation, false, "an observer cannot touch it");
-  const refusal = observer.messages.at(-1);
-  assert.equal(refusal?.type === "error" ? refusal.code : "", "E3006");
-
-  session.handleClientMessage(controller, {
-    type: "automation",
-    allowed: true,
-  });
-  assert.equal(
-    session.allowAutomation,
-    true,
-    "the config is where a session starts, not a ceiling",
-  );
-  for (const viewer of [controller, observer]) {
-    const status = viewer.messages.at(-1);
-    assert.equal(status?.type, "status");
-    assert.equal(
-      status?.type === "status" ? status.allowAutomation : null,
-      true,
-      `${viewer.id} must be told`,
-    );
-  }
-
-  session.handleClientMessage(controller, {
-    type: "automation",
-    allowed: false,
-  });
-  assert.equal(session.allowAutomation, false, "and it closes again");
-});
-
-test("a config with automation on starts every session open to it, for automation with no browser on it", async (t) => {
-  const session = new Session(
-    testConfig({ sessions: { allowAutomation: true, idleTimeoutMs: 0 } }),
-  );
-  t.after(() => session.close());
-  await session.ready;
-
-  assert.equal(session.allowAutomation, true);
-});
-
 test("the viewer ceiling is enforced", async (t) => {
   const session = new Session(
     testConfig({ sessions: { maxViewersPerSession: 1, idleTimeoutMs: 0 } }),

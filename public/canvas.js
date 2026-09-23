@@ -198,14 +198,15 @@ export class Pane {
  */
 export class Screen {
   /**
-   * @param {{ canvas: HTMLCanvasElement, theme: Theme, hostColors: boolean }} options
+   * @param {{ canvas: HTMLCanvasElement, theme: Theme, fieldBackground: boolean }} options
    *   the canvas is the one in `index.html`; the page's markup is fixed.
    */
   constructor(options) {
     /** @type {Theme} */
     this.theme = options.theme;
-    /** @type {boolean} false leaves every host cell to the theme's own colours. */
-    this.hostColors = options.hostColors;
+    /** @type {boolean} false leaves a typeable field the background it would
+     * otherwise have had, so only its contents mark it out. */
+    this.fieldBackground = options.fieldBackground;
 
     /** @type {Pane[]} the panes on screen, in pane order */
     this.panes = [];
@@ -340,9 +341,6 @@ export class Screen {
       // The page's own chrome names its colours outright, and means them.
       fg = cell.fg;
       bg = cell.bg ?? background;
-    } else if (!this.hostColors) {
-      fg = this.theme["foreground"] ?? "#00ff00";
-      bg = background;
     } else if (!pane.host.color) {
       // A 3278 reports no colour, so it is the green-on-black terminal it is.
       fg = MONO_FOREGROUND;
@@ -354,7 +352,7 @@ export class Screen {
 
     // The tint that shows where a field may be typed into, but never over a
     // colour the host named for itself.
-    const tint = this.theme["field"] ?? "";
+    const tint = this.fieldBackground ? (this.theme["field"] ?? "") : "";
     if (tint.startsWith("#") && cell.editable && cell.bg === null) bg = tint;
 
     if (reverse) [fg, bg] = [bg, fg];
@@ -434,6 +432,11 @@ export class Screen {
     for (let row = 0; row < rows; row++) {
       const top = rowEdge[row];
       const bottom = rowEdge[row + 1];
+      // Snapped like every other fill edge: an underline runs the width of a
+      // field, so an edge of it between two device pixels is a seam the length
+      // of the field.
+      const underlineBottom = this.snap(bottom - 1);
+      const underlineTop = this.snap(bottom - underlineThickness - 1);
       const rowSelected = box !== null && row >= box.top && row <= box.bottom;
 
       // Decoded once per row: the backgrounds and the glyphs want the same
@@ -445,29 +448,40 @@ export class Screen {
       }
 
       // Backgrounds first, whole row, so a glyph that overhangs its cell is not
-      // clipped by the next cell's fill.
-      let fill = "";
-      for (let col = 0; col < pane.cols; col++) {
+      // clipped by the next cell's fill. Neighbours of one colour are filled as
+      // one rectangle rather than one each: an edge inside a run is an edge the
+      // canvas can antialias into a hairline seam at a fractional
+      // devicePixelRatio, and an edge never drawn cannot. One column past the
+      // last closes whatever run is open.
+      let runFill = "";
+      let runStart = 0;
+      for (let col = 0; col <= pane.cols; col++) {
         const style = styles[col];
-        if (style === undefined || style === null) continue;
         const selected =
           rowSelected && box !== null && col >= box.left && col <= box.right;
-        const wanted = selected ? selectedFill : style.bg;
-        if (!selected && wanted === background) continue;
-        if (wanted !== fill) {
-          this.ctx.fillStyle = wanted;
-          fill = wanted;
+        let wanted = "";
+        if (style !== undefined && style !== null)
+          wanted = selected ? selectedFill : style.bg;
+        // The pane was cleared to the theme's background, so a cell asking for
+        // it again is a cell with nothing to draw.
+        if (!selected && wanted === background) wanted = "";
+        if (wanted === runFill) continue;
+
+        if (runFill !== "") {
+          this.ctx.fillStyle = runFill;
+          this.ctx.fillRect(
+            colEdge[runStart],
+            top,
+            colEdge[col] - colEdge[runStart],
+            bottom - top,
+          );
         }
-        this.ctx.fillRect(
-          colEdge[col],
-          top,
-          colEdge[col + 1] - colEdge[col],
-          bottom - top,
-        );
+        runFill = wanted;
+        runStart = col;
       }
 
       let font = "";
-      fill = "";
+      let fill = "";
       for (let col = 0; col < pane.cols; col++) {
         const cell = cells[col];
         const style = styles[col];
@@ -490,9 +504,9 @@ export class Screen {
         if (style.underline)
           this.ctx.fillRect(
             colEdge[col],
-            bottom - underlineThickness - 1,
+            underlineTop,
             colEdge[col + 1] - colEdge[col],
-            underlineThickness,
+            underlineBottom - underlineTop,
           );
       }
     }
@@ -521,7 +535,8 @@ export class Screen {
 
     if (pane.cursorStyle === "underline") {
       const thickness = Math.max(2, Math.floor(height * 0.15));
-      this.ctx.fillRect(left, bottom - thickness, right - left, thickness);
+      const barTop = this.snap(bottom - thickness);
+      this.ctx.fillRect(left, barTop, right - left, bottom - barTop);
       return;
     }
 

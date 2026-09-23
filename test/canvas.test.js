@@ -198,7 +198,7 @@ function pageOf(count) {
   const screen = new Screen({
     canvas: fakeCanvas(),
     theme: THEME,
-    hostColors: true,
+    fieldBackground: true,
   });
   const panes = [];
   for (let index = 0; index < count; index++) {
@@ -233,17 +233,152 @@ function mouse(screen, type, pane, row, col) {
 }
 
 /**
+ * The frame opens with `render()` clearing the whole page to the theme's
+ * background. Nothing else is that rectangle, so it is what "the last frame"
+ * starts at — a fill merely as wide as the page is an ordinary row.
+ *
  * @param {Screen} screen
- * @returns {number} cells painted in the selection colour on the last frame
+ * @returns {Fill[]}
  */
-function selectedCells(screen) {
-  const ctx = /** @type {unknown} */ (screen.ctx);
-  const fills = /** @type {FakeContext} */ (ctx).fills;
-  const frameStart = fills.findLastIndex((fill) => fill.w === PAGE.width);
-  return fills
-    .slice(frameStart)
-    .filter((fill) => fill.style === THEME.selectionBackground).length;
+function lastFrame(screen) {
+  const fills = fillsOf(screen);
+  const start = fills.findLastIndex(
+    (fill) =>
+      fill.style === THEME.background &&
+      fill.x === 0 &&
+      fill.y === 0 &&
+      fill.w === PAGE.width &&
+      fill.h === PAGE.height,
+  );
+  return fills.slice(start);
 }
+
+/**
+ * Counted in cells, not in rectangles: neighbours of one colour are filled
+ * together, so four selected cells are one fill four cells wide.
+ *
+ * @param {Screen} screen
+ * @param {Pane} pane the selection is inside
+ * @returns {number} cells washed in the selection colour on the last frame
+ */
+function selectedCells(screen, pane) {
+  return lastFrame(screen)
+    .filter((fill) => fill.style === THEME.selectionBackground)
+    .reduce(
+      (total, fill) => total + Math.round(fill.w / pane.metrics.width),
+      0,
+    );
+}
+
+/**
+ * @param {Screen} screen
+ * @returns {Fill[]} everything filled since the screen was made
+ */
+function fillsOf(screen) {
+  const ctx = /** @type {unknown} */ (screen.ctx);
+  return /** @type {FakeContext} */ (ctx).fills;
+}
+
+/**
+ * @param {boolean} fieldBackground
+ * @param {number} length how wide the typeable field is
+ * @returns {{ screen: Screen, pane: Pane }} one frame drawn
+ */
+function fieldFrame(fieldBackground, length) {
+  const screen = new Screen({
+    canvas: fakeCanvas(),
+    theme: THEME,
+    fieldBackground,
+  });
+  const pane = new Pane(80, 24);
+  pane.host.put(0, 0, "_".repeat(length), {
+    fg: null,
+    bg: null,
+    gr: null,
+    editable: true,
+  });
+  screen.layout([pane], paneShares(1), PAGE, "monospace");
+  screen.render();
+  return { screen, pane };
+}
+
+/**
+ * @param {Screen} screen
+ * @param {number} dpr
+ * @returns {void} asserts every fill's four edges land on a device pixel
+ */
+function assertOnDeviceGrid(screen, dpr) {
+  for (const fill of fillsOf(screen))
+    for (const edge of [fill.x, fill.y, fill.x + fill.w, fill.y + fill.h]) {
+      const device = edge * dpr;
+      assert.ok(
+        Math.abs(device - Math.round(device)) < 1e-6,
+        `a ${fill.style} edge at ${edge} falls between two device pixels`,
+      );
+    }
+}
+
+test("turning the field background off leaves a typeable field untinted", () => {
+  const on = fillsOf(fieldFrame(true, 4).screen);
+  const off = fillsOf(fieldFrame(false, 4).screen);
+  assert.ok(
+    on.filter((fill) => fill.style === THEME.field).length > 0,
+    "the tint is drawn while it is turned on",
+  );
+  assert.equal(off.filter((fill) => fill.style === THEME.field).length, 0);
+});
+
+test("neighbouring cells of one colour are filled as one rectangle, on the device pixel grid", () => {
+  // 1.4 is what 140% display scaling reports, and the ratio the seams show at:
+  // a cell edge lands between two device pixels and both sides of it are drawn
+  // half-covered. An edge that is never drawn cannot do that, so a run of one
+  // colour has to come out as a single fill.
+  const window = Reflect.get(globalThis, "window");
+  window.devicePixelRatio = 1.4;
+  try {
+    const { screen, pane } = fieldFrame(true, 20);
+    const fills = fillsOf(screen);
+
+    const tint = fills.filter((fill) => fill.style === THEME.field);
+    assert.equal(tint.length, 1, "twenty tinted cells, one rectangle");
+    assert.ok(
+      Math.abs((tint[0]?.w ?? 0) - 20 * pane.metrics.width) < 1,
+      "and it spans the whole field",
+    );
+
+    assertOnDeviceGrid(screen, 1.4);
+  } finally {
+    window.devicePixelRatio = 1;
+  }
+});
+
+test("an underline and a cursor land on the device pixel grid too", () => {
+  const window = Reflect.get(globalThis, "window");
+  window.devicePixelRatio = 1.4;
+  try {
+    const screen = new Screen({
+      canvas: fakeCanvas(),
+      theme: THEME,
+      fieldBackground: true,
+    });
+    const pane = new Pane(80, 24);
+    pane.host.put(3, 10, "UNDERLINED", {
+      fg: null,
+      bg: null,
+      gr: "underline",
+    });
+    pane.host.cursor = { row: 3, col: 10, visible: true };
+
+    for (const style of ["block", "underline"]) {
+      pane.cursorStyle = /** @type {'block' | 'underline'} */ (style);
+      screen.layout([pane], paneShares(1), PAGE, "monospace");
+      screen.render();
+      assertOnDeviceGrid(screen, 1.4);
+    }
+  } finally {
+    window.devicePixelRatio = 1;
+  }
+});
 
 test("every pane gets a share of the one canvas, and none overlaps another", () => {
   const { screen, panes } = pageOf(4);
@@ -295,13 +430,13 @@ test("a click on a character leaves no selection behind", () => {
 
   mouse(screen, "mousedown", panes[0], 2, 3);
   assert.equal(
-    selectedCells(screen),
+    selectedCells(screen, panes[0]),
     0,
     "a press is not a selection yet, so nothing is highlighted",
   );
 
   mouse(screen, "mouseup", panes[0], 2, 3);
-  assert.equal(selectedCells(screen), 0);
+  assert.equal(selectedCells(screen, panes[0]), 0);
   assert.equal(panes[0].hasSelection(), false);
   assert.equal(panes[0].getSelection(), "");
 });
@@ -310,7 +445,7 @@ test("a click on a blank cell leaves no selection behind", () => {
   const { screen, panes } = pageOf(1);
 
   mouse(screen, "mousedown", panes[0], 10, 40);
-  assert.equal(selectedCells(screen), 0);
+  assert.equal(selectedCells(screen, panes[0]), 0);
 
   mouse(screen, "mouseup", panes[0], 10, 40);
   assert.equal(panes[0].hasSelection(), false);
@@ -325,7 +460,7 @@ test("a drag of more than one cell is a selection, blank or not", () => {
 
   assert.equal(panes[0].hasSelection(), true);
   assert.equal(panes[0].getSelection(), "PANE");
-  assert.equal(selectedCells(screen), 4);
+  assert.equal(selectedCells(screen, panes[0]), 4);
 
   const blank = pageOf(1);
   mouse(blank.screen, "mousedown", blank.panes[0], 10, 0);
@@ -344,10 +479,10 @@ test("a new press takes the previous selection off the screen", () => {
   mouse(screen, "mousedown", panes[0], 2, 0);
   mouse(screen, "mousemove", panes[0], 2, 3);
   mouse(screen, "mouseup", panes[0], 2, 3);
-  assert.equal(selectedCells(screen), 4);
+  assert.equal(selectedCells(screen, panes[0]), 4);
 
   mouse(screen, "mousedown", panes[0], 8, 8);
-  assert.equal(selectedCells(screen), 0);
+  assert.equal(selectedCells(screen, panes[0]), 0);
 });
 
 test("a selection belongs to one pane, and a press in another clears it", () => {
@@ -365,14 +500,14 @@ test("a selection belongs to one pane, and a press in another clears it", () => 
     false,
     "the other pane's selection came off",
   );
-  assert.equal(selectedCells(screen), 0);
+  assert.equal(selectedCells(screen, panes[0]), 0);
 });
 
 test("a pane too big for its share is cut off at it, not at its neighbour", () => {
   const screen = new Screen({
     canvas: fakeCanvas(),
     theme: THEME,
-    hostColors: true,
+    fieldBackground: true,
   });
   // 60 rows into a quarter of the page: below MIN_FONT_SIZE the fit gives up
   // and the pane is drawn larger than the box it was given.
@@ -389,10 +524,7 @@ test("a pane too big for its share is cut off at it, not at its neighbour", () =
     "the pane really does overflow, or this asserts nothing",
   );
 
-  const fills = /** @type {FakeContext} */ (/** @type {unknown} */ (screen.ctx))
-    .fills;
-  const frameStart = fills.findLastIndex((fill) => fill.w === PAGE.width);
-  for (const fill of fills.slice(frameStart + 1)) {
+  for (const fill of lastFrame(screen).slice(1)) {
     assert.ok(fill.x >= box.x && fill.x + fill.w <= box.x + box.width);
     assert.ok(fill.y >= box.y && fill.y + fill.h <= box.y + box.height);
   }

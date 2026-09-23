@@ -92,6 +92,8 @@ function drawChrome(slot) {
   const colors = settings.theme().colors;
   const background = colors["background"] ?? "#000000";
   const foreground = colors["foreground"] ?? "#00ff00";
+  const statusInk = colors.statusForeground;
+  const statusBar = colors.statusBackground;
   /** @param {string} text */
   const wide = (text) => text.slice(0, canvas.cols).padEnd(canvas.cols, " ");
 
@@ -101,8 +103,7 @@ function drawChrome(slot) {
 
   if (panel !== null) panel.drawInto(overlay);
   else {
-    // Reverse video, as the operator information area is on the hardware.
-    const style = paint(background, foreground);
+    const style = paint(statusInk, statusBar);
     const cursor = canvas.host.cursor ?? { row: 0, col: 0 };
     overlay.put(bottom, 0, wide(""), style);
     overlay.put(
@@ -115,7 +116,7 @@ function drawChrome(slot) {
       bottom,
       buttons.reset,
       BUTTONS,
-      paint(background, foreground, true),
+      paint(statusInk, statusBar, true),
     );
   }
 
@@ -142,7 +143,7 @@ function drawChrome(slot) {
       paint(background, foreground, true),
     );
 
-  if (prefix.armed && settings.hints)
+  if (prefix.armed)
     for (const hint of hints)
       overlay.put(
         hint.row,
@@ -285,7 +286,6 @@ async function liveSessionIds() {
  * @property {'controller' | 'observer'} role
  * @property {boolean} allowSharing
  * @property {boolean} allowSharedEditing
- * @property {boolean} allowAutomation
  */
 
 /** @type {(SessionSlot | null)[]} */
@@ -344,7 +344,6 @@ function newSlot(id, started = false, cols = 0, rows = 0) {
     role: "controller",
     allowSharing: true,
     allowSharedEditing: false,
-    allowAutomation: false,
   };
   return slot;
 }
@@ -470,19 +469,18 @@ const settings = new SettingsPage({
   ...panelIo,
   applyTheme,
   applyFont,
+  applyFieldBackground: (enabled) => {
+    screen.fieldBackground = enabled;
+    redraw();
+  },
   applyModel: (model) => send({ type: "model", model }),
   applyOversize: (value) => send({ type: "oversize", value }),
   windowFit: (fontSize) => {
     const slot = activeSession();
     return slot === null ? null : paneFit(slot, fontSize);
   },
-  applyHostColors: (enabled) => {
-    screen.hostColors = enabled;
-    redraw();
-  },
   applySharing: (allowView, allowEdit) =>
     send({ type: "sharing", allowView, allowEdit }),
-  applyAutomation: (allowed) => send({ type: "automation", allowed }),
   connect: connectHost,
   persist: (values) => {
     saveSettings(values).catch((cause) => {
@@ -904,10 +902,8 @@ function handleServerMessage(slot, message) {
     slot.role = message.role;
     slot.allowSharing = message.allowSharing;
     slot.allowSharedEditing = message.allowSharedEditing;
-    slot.allowAutomation = message.allowAutomation;
     settings.setRole(slot.role);
     settings.setSharing(slot.allowSharing, slot.allowSharedEditing);
-    settings.setAutomation(slot.allowAutomation);
     settings.setHostLocked(message.hostLocked);
     screenEl.focus();
     return;
@@ -947,7 +943,6 @@ function handleServerMessage(slot, message) {
     slot.role = message.role;
     slot.allowSharing = message.allowSharing;
     slot.allowSharedEditing = message.allowSharedEditing;
-    slot.allowAutomation = message.allowAutomation;
     if (!keyboardLocked(slot.lock)) {
       const waiters = unlockWaiters.get(slot);
       if (waiters !== undefined) {
@@ -966,7 +961,6 @@ function handleServerMessage(slot, message) {
     settings.connected = message.connected;
     settings.setRole(slot.role);
     settings.setSharing(slot.allowSharing, slot.allowSharedEditing);
-    settings.setAutomation(slot.allowAutomation);
     // b3270 reports the host without its port, so never overwrite a typed one.
     if (message.host !== null && settings.host === "" && !settings.hostLocked)
       settings.setHost(message.host);
@@ -1042,7 +1036,6 @@ function focusSlot(index) {
   settings.connected = slot.connected === true;
   settings.setRole(slot.role);
   settings.setSharing(slot.allowSharing, slot.allowSharedEditing);
-  settings.setAutomation(slot.allowAutomation);
   applyLayout();
   screenEl.focus();
 
@@ -1149,14 +1142,14 @@ window.addEventListener(
   (event) => {
     const decision = prefix.handleKey(
       event,
-      settings.hints ? hints.map((hint) => hint.letter) : [],
+      hints.map((hint) => hint.letter),
     );
     if (decision.action !== "ignore") {
       event.preventDefault();
       event.stopPropagation();
       if (decision.action === "arm") {
         hints = [];
-        if (settings.hints) send({ type: "hints" });
+        send({ type: "hints" });
         redraw();
         return;
       }
@@ -1353,7 +1346,7 @@ try {
   screen = new Screen({
     canvas: canvasEl,
     theme: settings.theme().colors,
-    hostColors: settings.hostColors,
+    fieldBackground: settings.fieldBackground,
   });
 } catch (cause) {
   showError("E5001", `The renderer failed to start: ${String(cause)}`);

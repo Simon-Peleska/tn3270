@@ -51,7 +51,6 @@ const STATIC_CACHE = new Map();
 const ERROR_STATUS = Object.freeze({
   E3001: 404,
   E6001: 404,
-  E7004: 403,
 });
 
 /**

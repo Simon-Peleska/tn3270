@@ -399,41 +399,36 @@ The emulator's port is bound to loopback and guarded by a per-session
 this server. REST calls ignore the controller/observer rule of section 3: an
 automation client acts whoever else is watching, and watchers see the result.
 
-Because that is a door into a session someone is sitting at, the door starts
-shut: every REST call for a session is refused with `403` and `E7004` until
-**Allow automation** on the settings panel is turned on. Only the controller is
-offered the switch, it works in both directions, and it is live — nothing
-restarts, the emulator's httpd keeps listening either way, and a call already in
-flight is unaffected.
-
-`sessions.allowAutomation` decides which way a new session starts, and `true` is
-what a deployment for **automation with no browser on it** needs: a session
-created over `POST /api/sessions` and driven only over REST has no controller to
-turn the switch on for it.
+Every session takes REST calls from the moment it exists; there is no switch
+over it. That is what a deployment for **automation with no browser on it**
+needs — a session created over `POST /api/sessions` and driven only over REST
+has no controller who could turn one on — but it does mean whoever can reach
+this server can drive any session it is holding, including one someone is
+sitting at. Reaching the server is therefore the boundary, and a deployment that
+needs a narrower one puts authentication in front of it (section 8).
 
 ## 7. Configuration
 
 `config.jsonc`, overridable with the `TN3270_CONFIG` environment variable. JSONC:
 `//` and `/* */` comments and trailing commas are accepted.
 
-| Setting                             | Default          | Meaning                                                                                                                                                                |
-| ----------------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `server.host`                       | `127.0.0.1`      | Listen address                                                                                                                                                         |
-| `server.port`                       | `8017`           | Listen port                                                                                                                                                            |
-| `b3270.path`                        | `b3270`          | Executable, resolved from `PATH`                                                                                                                                       |
-| `b3270.model`                       | `2`              | 3270 model a session starts on, 2–5; changeable from the settings panel                                                                                                |
-| `b3270.defaultHost`                 | `null`           | Connect new sessions here; `null` starts disconnected                                                                                                                  |
-| `b3270.extraArgs`                   | `[]`             | Appended verbatim, e.g. `["-cafile","/path/ca.pem"]`                                                                                                                   |
-| `sessions.maxSessions`              | `16`             | Refuses more with `E3002`                                                                                                                                              |
-| `sessions.maxViewersPerSession`     | `8`              | Refuses more with `E3003`                                                                                                                                              |
-| `sessions.idleTimeoutMs`            | `300000`         | Viewer-less session lifetime; `0` disables reaping                                                                                                                     |
-| `sessions.allowMultipleControllers` | `false`          | Let every viewer type                                                                                                                                                  |
-| `sessions.allowAutomation`          | `false`          | Whether new sessions accept REST calls. Off makes the controller turn it on per session from the settings panel; on is for automation that runs with no browser to ask |
-| `security.allowedHosts`             | `[]`             | Empty = any host. An entry with a port matches exactly; without one, any port on that host                                                                             |
-| `security.trustProxyHeaders`        | `false`          | Take the client's address from `X-Forwarded-For` and their name from `X-Remote-User`. Only with a reverse proxy in front that sets both                                |
-| `logLevel`                          | `info`           | `debug` logs every line exchanged with b3270                                                                                                                           |
-| `logFile`                           | `log/tn3270.log` | Kept as well as stderr, and rolled over to `<logFile>.1`; `""` is stderr only                                                                                          |
-| `logMaxBytes`                       | `10485760`       | Size at which the log rolls over, so the pair is never more than twice this                                                                                            |
+| Setting                             | Default          | Meaning                                                                                                                                 |
+| ----------------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `server.host`                       | `127.0.0.1`      | Listen address                                                                                                                          |
+| `server.port`                       | `8017`           | Listen port                                                                                                                             |
+| `b3270.path`                        | `b3270`          | Executable, resolved from `PATH`                                                                                                        |
+| `b3270.model`                       | `2`              | 3270 model a session starts on, 2–5; changeable from the settings panel                                                                 |
+| `b3270.defaultHost`                 | `null`           | Connect new sessions here; `null` starts disconnected                                                                                   |
+| `b3270.extraArgs`                   | `[]`             | Appended verbatim, e.g. `["-cafile","/path/ca.pem"]`                                                                                    |
+| `sessions.maxSessions`              | `16`             | Refuses more with `E3002`                                                                                                               |
+| `sessions.maxViewersPerSession`     | `8`              | Refuses more with `E3003`                                                                                                               |
+| `sessions.idleTimeoutMs`            | `300000`         | Viewer-less session lifetime; `0` disables reaping                                                                                      |
+| `sessions.allowMultipleControllers` | `false`          | Let every viewer type                                                                                                                   |
+| `security.allowedHosts`             | `[]`             | Empty = any host. An entry with a port matches exactly; without one, any port on that host                                              |
+| `security.trustProxyHeaders`        | `false`          | Take the client's address from `X-Forwarded-For` and their name from `X-Remote-User`. Only with a reverse proxy in front that sets both |
+| `logLevel`                          | `info`           | `debug` logs every line exchanged with b3270                                                                                            |
+| `logFile`                           | `log/tn3270.log` | Kept as well as stderr, and rolled over to `<logFile>.1`; `""` is stderr only                                                           |
+| `logMaxBytes`                       | `10485760`       | Size at which the log rolls over, so the pair is never more than twice this                                                             |
 
 ## 8. Error codes
 
@@ -488,7 +483,6 @@ browser, `E6xxx` server transport, `E7xxx` the REST proxy.
 | `E6006` | Log file could not be written or rolled over           |
 | `E7002` | REST is not available for this session                 |
 | `E7003` | REST request to b3270 failed                           |
-| `E7004` | Automation is turned off for this session              |
 | `E0000` | An error with no code of its own; see the log          |
 
 Errors are shown as a dismissible bar at the top of the page. The page is never

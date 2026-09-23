@@ -415,6 +415,7 @@ test("nothing any panel writes is wider than an 80-column screen", () => {
     importFiles: () => Promise.resolve([]),
     error: () => {},
     applyTheme: () => {},
+    applyFieldBackground: () => {},
     applyFont: () => {},
     applyModel: () => {},
     applyOversize: () => {},

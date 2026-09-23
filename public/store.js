@@ -17,10 +17,9 @@ const KEYMAP_KEY = "keymap";
  *   for, null until one has been chosen here
  * @property {'model' | 'fit' | 'dynamic' | null} screenSize what the model is
  *   stretched to, likewise null until chosen
- * @property {boolean} hostColors
  * @property {number} fitFontSize the size "fit to window" measures from, not
  *   the size on screen
- * @property {boolean} hints
+ * @property {boolean} fieldBackground whether a typeable field is tinted
  */
 
 /** @type {Promise<IDBDatabase> | null} */

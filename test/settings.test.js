@@ -42,13 +42,12 @@ function fixture(fit = () => ({ cols: 158, rows: 60 })) {
     /** @type {string[]} */ fonts: [],
     /** @type {number[]} */ models: [],
     /** @type {string[]} */ oversizes: [],
-    /** @type {boolean[]} */ hostColors: [],
+    /** @type {boolean[]} */ fieldBackgrounds: [],
     /** @type {(string | null)[]} */ hosts: [],
     /** @type {number} */ ends: 0,
     /** @type {string[]} */ went: [],
     /** @type {import('../public/store.js').StoredSettings[]} */ saved: [],
     /** @type {{ allowView: boolean, allowEdit: boolean }[]} */ sharing: [],
-    /** @type {boolean[]} */ automation: [],
   };
   const page = new SettingsPage({
     ...defaultKeymapDeps,
@@ -60,10 +59,9 @@ function fixture(fit = () => ({ cols: 158, rows: 60 })) {
     applyModel: (model) => calls.models.push(model),
     applyOversize: (value) => calls.oversizes.push(value),
     windowFit: fit,
-    applyHostColors: (enabled) => calls.hostColors.push(enabled),
+    applyFieldBackground: (on) => calls.fieldBackgrounds.push(on),
     applySharing: (allowView, allowEdit) =>
       calls.sharing.push({ allowView, allowEdit }),
-    applyAutomation: (allowed) => calls.automation.push(allowed),
     connect: (host) => calls.hosts.push(host),
     end: () => {
       calls.ends += 1;
@@ -186,18 +184,18 @@ test("theme and font apply as you scroll through them and are saved by name", ()
     font: FONTS[1]?.name,
     model: null,
     screenSize: null,
-    hostColors: true,
     fitFontSize: 16,
-    hints: false,
+    fieldBackground: true,
   });
   assert.deepEqual(calls.models, [], "the screen size must not have moved");
 });
 
 test("a saved theme and font are taken up by name, and an unknown one is ignored", () => {
   const { page } = fixture();
-  page.restoreSaved({ theme: "Amber", font: "Fira Mono" });
+  // Neither is the default, so the assertions fail if nothing was restored.
+  page.restoreSaved({ theme: "Amber", font: "IBM 3270" });
   assert.equal(page.theme().name, "Amber");
-  assert.equal(page.font().name, "Fira Mono");
+  assert.equal(page.font().name, "IBM 3270");
 
   page.restoreSaved({ theme: "a theme from a later version" });
   assert.equal(
@@ -205,47 +203,6 @@ test("a saved theme and font are taken up by name, and an unknown one is ignored
     "Amber",
     "a name we no longer know must not reset the choice",
   );
-});
-
-test("host colours default on, and either arrow key flips the saved toggle", () => {
-  const { page, calls } = fixture();
-  assert.equal(page.hostColors, true);
-
-  page.connected = true;
-  page.show();
-  focus(page, "hostColors");
-  page.handleKey(key({ key: "ArrowRight" }));
-
-  assert.equal(page.hostColors, false);
-  assert.deepEqual(calls.hostColors, [false]);
-  assert.deepEqual(calls.saved.at(-1), {
-    theme: THEMES[0]?.name,
-    font: FONTS[0]?.name,
-    model: null,
-    screenSize: null,
-    hostColors: false,
-    fitFontSize: 16,
-    hints: false,
-  });
-
-  page.restoreSaved({ hostColors: false });
-  assert.equal(page.hostColors, false);
-});
-
-test("field hints default off, and either arrow key flips the saved toggle", () => {
-  const { page, calls } = fixture();
-  assert.equal(page.hints, false);
-
-  page.connected = true;
-  page.show();
-  focus(page, "hints");
-  page.handleKey(key({ key: "ArrowRight" }));
-
-  assert.equal(page.hints, true);
-  assert.equal(calls.saved.at(-1)?.hints, true);
-
-  page.restoreSaved({ hints: false });
-  assert.equal(page.hints, false, "a saved off is taken up as-is");
 });
 
 test("the controller can toggle sharing and shared editing, and turning sharing off takes editing with it", () => {
@@ -281,48 +238,32 @@ test("the controller can toggle sharing and shared editing, and turning sharing 
   });
   assert.deepEqual(
     fieldKeys(page),
-    [
-      "theme",
-      "font",
-      "model",
-      "fit",
-      "hostColors",
-      "hints",
-      "allowAutomation",
-      "allowSharing",
-    ],
+    ["theme", "font", "model", "fit", "fieldBackground", "allowSharing"],
     "shared editing is only offered while sharing is on",
   );
 });
 
-test("the controller can allow automation over the REST proxy, and the server is told at once", () => {
+test("the field background can be turned off, and comes back off next time", () => {
   const { page, calls } = fixture();
   page.connected = true;
+  page.setRole("observer");
   page.show();
 
-  focus(page, "allowAutomation");
-  assert.equal(page.rows()[page.selected]?.value, " ", "automation starts off");
+  focus(page, "fieldBackground");
+  page.handleKey(key({ key: "ArrowLeft" }));
+  assert.equal(page.fieldBackground, false);
+  assert.deepEqual(calls.fieldBackgrounds, [false]);
+  assert.equal(calls.saved.at(-1)?.fieldBackground, false);
 
   page.handleKey(key({ key: "ArrowRight" }));
-  assert.equal(page.allowAutomation, true);
-  assert.deepEqual(
-    calls.automation,
-    [true],
-    "no Enter needed: it opens a door that is shut now",
-  );
-  assert.equal(page.rows()[page.selected]?.value, "/");
+  assert.deepEqual(calls.fieldBackgrounds, [false, true]);
 
-  page.handleKey(key({ key: "ArrowLeft" }));
-  assert.equal(page.allowAutomation, false);
-  assert.deepEqual(calls.automation, [true, false]);
-
-  // The server owns the answer: the session may have been started open to it.
-  page.setAutomation(true);
-  assert.equal(page.rows()[page.selected]?.value, "/");
-  assert.deepEqual(calls.automation, [true, false], "being told is not asking");
+  const { page: next } = fixture();
+  next.restoreSaved({ fieldBackground: false });
+  assert.equal(next.fieldBackground, false);
 });
 
-test("an observer is not offered the automation or sharing rows at all — it is not their session to share", () => {
+test("an observer is not offered the sharing rows at all — it is not their session to share", () => {
   const { page } = fixture();
   page.connected = true;
   page.setRole("observer");
@@ -333,8 +274,7 @@ test("an observer is not offered the automation or sharing rows at all — it is
     "font",
     "model",
     "fit",
-    "hostColors",
-    "hints",
+    "fieldBackground",
   ]);
 });
 
@@ -376,9 +316,7 @@ test("the dynamic screen is one more choice after the models, asked for as an ov
       "theme",
       "font",
       "model",
-      "hostColors",
-      "hints",
-      "allowAutomation",
+      "fieldBackground",
       "allowSharing",
       "allowSharedEditing",
     ],
@@ -458,13 +396,13 @@ test("the text size appears with the fit and drives what it measures", () => {
   focus(page, "fit");
   assert.equal(
     fieldKeys(page).length,
-    9,
+    7,
     "the text size is not offered while the fit is off",
   );
 
   page.handleKey(key({ key: "ArrowRight" }));
   assert.equal(page.pendingOversize, "166x40");
-  assert.equal(fieldKeys(page).length, 10);
+  assert.equal(fieldKeys(page).length, 8);
   assert.equal(page.rows()[page.selected + 1]?.key, "fitSize");
   assert.equal(page.rows()[page.selected + 1]?.value, "16 px");
 
@@ -724,4 +662,19 @@ test("every theme's field colour stands out against both backgrounds it is drawn
       `${theme.name}'s field colour is its ANSI black`,
     );
   }
+});
+
+test("every theme's status row is legible, and Host On-Demand's is white", () => {
+  for (const theme of THEMES) {
+    const { statusForeground, statusBackground } = theme.colors;
+    assert.notEqual(
+      statusForeground,
+      statusBackground,
+      `${theme.name}'s status row is its own background`,
+    );
+  }
+
+  assert.equal(THEMES[0]?.name, "Host On-Demand", "the default theme");
+  assert.equal(THEMES[0]?.colors.statusForeground, "#ffffff");
+  assert.equal(THEMES[0]?.colors.statusBackground, "#000000");
 });

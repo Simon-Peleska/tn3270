@@ -57,13 +57,6 @@ export async function proxyRestRequest(
 
   const endpoint = session.b3270.rest;
   if (endpoint === null) throw new AppError("E7002", session.id);
-  if (!session.allowAutomation) {
-    log.warn("REST refused: automation is off for this session", {
-      method,
-      target,
-    });
-    throw new AppError("E7004", session.id);
-  }
 
   log.info("REST proxying", { method, target });
 

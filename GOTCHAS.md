@@ -147,6 +147,18 @@ a one-pixel seam wherever the colour spans more than a cell — a status bar, a
 field, a reverse-video block. `Math.round`-ing every fill's edges to the device
 pixel grid gives neighbouring cells the exact same boundary and the seams go.
 That is `snap()` in `public/canvas.js`, and **every** fill edge goes through it —
-backgrounds, the selection wash, the cursor block. One that does not is a seam.
-It is invisible at dpr 1 or 2, so test it at 140% browser zoom, and pick a cell
-size that is actually fractional once multiplied, or the bug hides.
+backgrounds, the selection wash, the cursor block, the underline under both text
+and cursor. One that does not is a seam.
+
+Snapping alone leaves the seam one rounding bug away, so the edges inside a run
+of one colour are not drawn at all: `renderPane` walks the row, holds the run
+open while the colour stays the same, and fills it as a single rectangle. Twenty
+cells of one field are one fill twenty cells wide, and the nineteen edges down
+the middle of it cannot show anything. Keep it that way — a change that goes
+back to a fill per cell brings the seams back with it.
+
+It is invisible at dpr 1 or 2, so it cannot be seen on most machines here: the
+report that started it was Windows at 140% display scaling. `test/canvas.test.js`
+stubs `devicePixelRatio` to 1.4 and asserts both halves — one fill per run, and
+every fill edge on the device grid — which is the part that can be checked
+without the laptop it happens on.
