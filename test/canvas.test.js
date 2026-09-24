@@ -517,6 +517,22 @@ test("a keyboard selection starts at the cursor, not at the last click", () => {
   assert.equal(pane.getSelection(), "0");
 });
 
+test("a keyboard selection starts over once the cursor has moved away from it", () => {
+  const { panes } = pageOf(1);
+  const pane = panes[0];
+  pane.host.cursor = { row: 2, col: 0, visible: false };
+  pane.stepSelection(0, 3);
+
+  pane.host.cursor = { row: 10, col: 20, visible: false };
+  pane.stepSelection(0, 1);
+  assert.deepEqual(pane.selectionBox(), {
+    top: 10,
+    left: 20,
+    bottom: 10,
+    right: 21,
+  });
+});
+
 test("a keyboard selection stops at the edge of the host's screen", () => {
   const { panes } = pageOf(1);
   const pane = panes[0];
