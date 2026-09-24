@@ -138,10 +138,20 @@ the host.
   `X Protected`, `X Numeric`, `X Operator Error`, and so on. An unrecognised lock
   value is shown verbatim as `X <value>` rather than swallowed.
 
-- The right of the OIA row holds `[Reset] [Menu]`, painted by the browser
+- The right of the OIA row holds `[Kbd] [Reset] [Menu]`, painted by the browser
   over columns the server never writes into. Every pane carries its own, so a
   split is not a screen you have to switch away from to work on. **Menu** opens
   the primary option menu (§4.1), which is the way to every other panel.
+  **Kbd** shows or hides the on-screen keyboard: four rows of host keys a PC
+  keyboard lacks or hides — Enter, Clear, PA1–PA3, Attn, SysReq; Reset,
+  Erase EOF, Erase input, Insert, Dup, Field mark, Home, BackTab, Tab, Newline;
+  PF1–PF12; PF13–PF24 — each row spread over the pane's full width. It covers
+  the bottom four rows of the screen, and the top four while the cursor is
+  under it, so the field being typed in stays in view. A click on a key sends
+  it as if it had been pressed (a macro being recorded takes it too); a click
+  anywhere else on the keyboard does nothing, never a cursor move. It is drawn
+  on the session being looked at only, not under a panel, and is not
+  remembered across a reload.
   **Reset** puts
   this session's screen back the way it should look in the pane it now sits in,
   whatever it has been through — the way out of a pane resized under a

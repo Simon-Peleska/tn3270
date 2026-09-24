@@ -2,6 +2,7 @@ import { Pane, Screen } from "./canvas.js";
 import { renderOia, keyboardLocked } from "./oia.js";
 import { PANEL_COMMANDS, commandForEvent, mapKey } from "./keymap.js";
 import { paint } from "./panel.js";
+import { keyAt, keyFace, keyboardTop, placeKeys } from "./screen-keyboard.js";
 import { HelpPage, MenuPage } from "./menu.js";
 import { SettingsPage, modeOversize } from "./settings.js";
 import { MacrosPage } from "./macros.js";
@@ -51,6 +52,9 @@ if (!(canvasEl instanceof HTMLCanvasElement))
  */
 let screen;
 
+/** Whether the on-screen keyboard is over the session being looked at. */
+let keyboardShown = false;
+
 /**
  * @typedef {object} StatusButton
  * @property {string} label
@@ -74,6 +78,13 @@ function statusButtons(slot, cols) {
   const wanted = [
     { label: "[Menu]", press: () => startPanel("menu") },
     { label: "[Reset]", press: () => resetScreen(slot) },
+    {
+      label: "[Kbd]",
+      press: () => {
+        keyboardShown = !keyboardShown;
+        redraw();
+      },
+    },
   ];
   const request = slot.requests[0];
   if (slot.refusal !== null || slot.waiting) {
@@ -149,6 +160,15 @@ function answerRequest(slot, request, allow) {
   sendTo(slot, { type: "answer", viewer: request.viewer, allow });
 }
 
+/**
+ * @param {import('./canvas.js').Pane} canvas
+ * @returns {import('./screen-keyboard.js').PlacedKey[]}
+ */
+function keyboardKeys(canvas) {
+  const cursorRow = canvas.host.cursor?.row ?? 0;
+  return placeKeys(canvas.cols, keyboardTop(canvas.rows, cursorRow));
+}
+
 /** @type {{ code: string, message: string } | null} */
 let activeError = null;
 /** @type {ReturnType<typeof setTimeout> | undefined} */
@@ -199,6 +219,20 @@ function drawChrome(slot) {
 
   // Everything below belongs to the session being looked at, not to every pane.
   if (!onScreen) return;
+
+  if (keyboardShown && panel === null) {
+    const keys = keyboardKeys(canvas);
+    const rows = new Set(keys.map((key) => key.row));
+    for (const row of rows)
+      overlay.put(row, 0, wide(""), paint(statusBar, statusBar));
+    for (const key of keys)
+      overlay.put(
+        key.row,
+        key.col,
+        keyFace(key),
+        paint(statusBar, statusInk, true),
+      );
+  }
 
   if (activeError !== null)
     overlay.put(
@@ -1399,6 +1433,17 @@ function canvasClicked(event) {
     );
     if (button !== undefined) {
       button.press();
+      return;
+    }
+  }
+
+  // The keyboard is opaque: a click on it, key or gap, is never a cursor move.
+  if (keyboardShown) {
+    const keys = keyboardKeys(canvas);
+    if (keys.some((key) => key.row === row)) {
+      const key = keyAt(keys, row, col);
+      if (key !== null)
+        send({ type: "action", action: key.action, args: key.args });
       return;
     }
   }
