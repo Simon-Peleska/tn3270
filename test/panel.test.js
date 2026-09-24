@@ -421,7 +421,6 @@ test("nothing any panel writes is wider than an 80-column screen", () => {
     applyOversize: () => {},
     windowFit: () => ({ cols: 80, rows: 25 }),
     applyHostColors: () => {},
-    applySharing: () => {},
     applyAutomation: () => {},
     connect: () => {},
   };

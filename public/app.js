@@ -51,22 +51,102 @@ if (!(canvasEl instanceof HTMLCanvasElement))
  */
 let screen;
 
-const RESET_LABEL = "[Reset]";
-const MENU_LABEL = "[Menu]";
-// The menu is the way to every panel, so one button reaches all of them. They
-// sit at the right end of the status row, which this page lays out whole.
-const BUTTONS = `${RESET_LABEL} ${MENU_LABEL}`;
+/**
+ * @typedef {object} StatusButton
+ * @property {string} label
+ * @property {number} col where it starts
+ * @property {() => void} press
+ */
 
 /**
- * Where the two buttons start. `drawChrome` puts them here and `canvasClicked`
- * hit-tests them here, so the row that is drawn and the row that is clickable
- * cannot drift apart.
+ * The buttons at the right end of the status row, which this page lays out
+ * whole. The menu is the way to every panel, so one button reaches all of
+ * them; left of it come whatever sharing asks of this viewer. `drawChrome`
+ * puts them where this says and `canvasClicked` hit-tests the same list, so
+ * the row that is drawn and the row that is clickable cannot drift apart.
  *
+ * @param {SessionSlot} slot
  * @param {number} cols
- * @returns {{ reset: number, menu: number }}
+ * @returns {StatusButton[]}
  */
-function buttonColumns(cols) {
-  return { reset: cols - BUTTONS.length, menu: cols - MENU_LABEL.length };
+function statusButtons(slot, cols) {
+  /** @type {{ label: string, press: () => void }[]} */
+  const wanted = [
+    { label: "[Menu]", press: () => startPanel("menu") },
+    { label: "[Reset]", press: () => resetScreen(slot) },
+  ];
+  const request = slot.requests[0];
+  if (slot.refusal !== null || slot.waiting) {
+    // Nothing to share and nothing to ask for.
+  } else if (request !== undefined) {
+    wanted.push({
+      label: "[No]",
+      press: () => answerRequest(slot, request, false),
+    });
+    wanted.push({
+      label: "[Yes]",
+      press: () => answerRequest(slot, request, true),
+    });
+  } else if (slot.owner) {
+    if (slot.editor !== null)
+      wanted.push({
+        label: "[Stop editing]",
+        press: () => sendTo(slot, { type: "stopEditing" }),
+      });
+    if (slot.guests > 0)
+      wanted.push({
+        label: "[Stop sharing]",
+        press: () => sendTo(slot, { type: "stopSharing" }),
+      });
+  } else if (slot.role === "observer" && !slot.editRequested) {
+    wanted.push({
+      label: "[Edit]",
+      press: () => sendTo(slot, { type: "askEdit" }),
+    });
+  }
+
+  /** @type {StatusButton[]} */
+  const placed = [];
+  let col = cols;
+  for (const button of wanted) {
+    col -= button.label.length;
+    placed.push({ ...button, col });
+    col -= 1;
+  }
+  return placed;
+}
+
+/**
+ * What the status row says instead of the OIA while sharing needs a word:
+ * someone asking the owner, or this viewer waiting on one.
+ *
+ * @param {SessionSlot} slot
+ * @returns {string | null}
+ */
+function sharingText(slot) {
+  if (slot.refusal !== null) return slot.refusal;
+  if (slot.waiting) return "Waiting for the session's owner to let you in";
+  const request = slot.requests[0];
+  if (request !== undefined) {
+    const more =
+      slot.requests.length > 1 ? ` (${slot.requests.length - 1} more)` : "";
+    return request.kind === "watch"
+      ? `${request.name} wants to watch${more}`
+      : `${request.name} wants to edit${more}`;
+  }
+  if (slot.editRequested) return "Asked the owner to let you edit";
+  return null;
+}
+
+/**
+ * @param {SessionSlot} slot
+ * @param {import('../server/protocol.js').SharingRequest} request
+ * @param {boolean} allow
+ * @returns {void}
+ */
+function answerRequest(slot, request, allow) {
+  console.info("sharing request answered", { ...request, allow });
+  sendTo(slot, { type: "answer", viewer: request.viewer, allow });
 }
 
 /** @type {{ code: string, message: string } | null} */
@@ -88,7 +168,8 @@ function drawChrome(slot) {
   if (canvas === null) return;
   const overlay = canvas.overlay;
   const bottom = canvas.statusRow;
-  const buttons = buttonColumns(canvas.cols);
+  const buttons = statusButtons(slot, canvas.cols);
+  const buttonsStart = buttons.at(-1)?.col ?? canvas.cols;
   const colors = settings.theme().colors;
   const background = colors["background"] ?? "#000000";
   const foreground = colors["foreground"] ?? "#00ff00";
@@ -104,20 +185,16 @@ function drawChrome(slot) {
   if (panel !== null) panel.drawInto(overlay);
   else {
     const style = paint(statusInk, statusBar);
+    const loud = paint(statusInk, statusBar, true);
     const cursor = canvas.host.cursor ?? { row: 0, col: 0 };
+    const width = buttonsStart - 1;
+    const said = sharingText(slot);
     overlay.put(bottom, 0, wide(""), style);
-    overlay.put(
-      bottom,
-      0,
-      renderOia(oiaState(slot), cursor, buttons.reset - 1),
-      style,
-    );
-    overlay.put(
-      bottom,
-      buttons.reset,
-      BUTTONS,
-      paint(statusInk, statusBar, true),
-    );
+    if (said === null)
+      overlay.put(bottom, 0, renderOia(oiaState(slot), cursor, width), style);
+    else overlay.put(bottom, 0, said.slice(0, width), loud);
+    for (const button of buttons)
+      overlay.put(bottom, button.col, button.label, loud);
   }
 
   // Everything below belongs to the session being looked at, not to every pane.
@@ -284,8 +361,13 @@ async function liveSessionIds() {
  * @property {boolean} insert
  * @property {boolean} typeahead
  * @property {'controller' | 'observer'} role
- * @property {boolean} allowSharing
- * @property {boolean} allowSharedEditing
+ * @property {boolean} owner
+ * @property {number} guests
+ * @property {string | null} editor
+ * @property {import('../server/protocol.js').SharingRequest[]} requests
+ * @property {boolean} editRequested
+ * @property {boolean} waiting for an owner's yes; nothing is on screen yet
+ * @property {string | null} refusal why the owner sent us away; set, the socket stays closed
  */
 
 /** @type {(SessionSlot | null)[]} */
@@ -342,8 +424,13 @@ function newSlot(id, started = false, cols = 0, rows = 0) {
     insert: false,
     typeahead: false,
     role: "controller",
-    allowSharing: true,
-    allowSharedEditing: false,
+    owner: false,
+    guests: 0,
+    editor: null,
+    requests: [],
+    editRequested: false,
+    waiting: false,
+    refusal: null,
   };
   return slot;
 }
@@ -479,8 +566,6 @@ const settings = new SettingsPage({
     const slot = activeSession();
     return slot === null ? null : paneFit(slot, fontSize);
   },
-  applySharing: (allowView, allowEdit) =>
-    send({ type: "sharing", allowView, allowEdit }),
   connect: connectHost,
   persist: (values) => {
     saveSettings(values).catch((cause) => {
@@ -785,6 +870,9 @@ function connectSocket(slot) {
   // Relative to the document, so a reverse proxy can mount us under a path.
   const url = new URL(`./ws/${slot.id}`, document.baseURI);
   url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  // Per tab and never in the fragment, so sharing the URL does not share it.
+  const pass = sessionStorage.getItem(`tn3270.pass.${slot.id}`);
+  if (pass !== null) url.searchParams.set("pass", pass);
 
   const ws = new WebSocket(url.href);
   slot.socket = ws;
@@ -800,6 +888,8 @@ function connectSocket(slot) {
 
   ws.addEventListener("close", () => {
     slot.socket = null;
+    // Coming back on our own would only ask again after a no.
+    if (slot.refusal !== null) return;
     // Measured from the first drop: the server started reaping then.
     if (slot.reconnectUntil === null) {
       slot.reconnectUntil =
@@ -869,6 +959,9 @@ function handleServerMessage(slot, message) {
   if (message.type === "hello") {
     slot.idleTimeoutMs = message.idleTimeoutMs;
     slot.attempt = 0;
+    slot.waiting = false;
+    slot.owner = message.owner;
+    sessionStorage.setItem(`tn3270.pass.${slot.id}`, message.pass);
     if (slot.reconnectUntil !== null) {
       // Reload rather than resume: the server may now serve newer page code.
       slot.reconnectUntil = null;
@@ -877,6 +970,20 @@ function handleServerMessage(slot, message) {
     }
   }
 
+  if (message.type === "waiting" || message.type === "refused") {
+    slot.waiting = message.type === "waiting";
+    if (message.type === "refused") {
+      console.error(`[${message.code}] ${message.message}`);
+      slot.refusal = `[${message.code}] ${message.message}`;
+    }
+    // No hello has told us a size, but the status row needs a screen to sit under.
+    if (slot.cols < 1) {
+      slot.cols = 80;
+      slot.rows = 24;
+    }
+    if (displayed(slot)) applyLayout();
+    return;
+  }
   if (message.type === "screen") {
     slot.model = message.model;
     slot.oversize = message.oversize;
@@ -900,10 +1007,7 @@ function handleServerMessage(slot, message) {
     settings.setModel(slot.model);
     settings.setOversize(slot.oversize);
     slot.role = message.role;
-    slot.allowSharing = message.allowSharing;
-    slot.allowSharedEditing = message.allowSharedEditing;
     settings.setRole(slot.role);
-    settings.setSharing(slot.allowSharing, slot.allowSharedEditing);
     settings.setHostLocked(message.hostLocked);
     screenEl.focus();
     return;
@@ -941,8 +1045,11 @@ function handleServerMessage(slot, message) {
     slot.insert = message.insert;
     slot.typeahead = message.typeahead;
     slot.role = message.role;
-    slot.allowSharing = message.allowSharing;
-    slot.allowSharedEditing = message.allowSharedEditing;
+    slot.owner = message.owner;
+    slot.guests = message.guests;
+    slot.editor = message.editor;
+    slot.requests = message.requests;
+    slot.editRequested = message.editRequested;
     if (!keyboardLocked(slot.lock)) {
       const waiters = unlockWaiters.get(slot);
       if (waiters !== undefined) {
@@ -960,7 +1067,6 @@ function handleServerMessage(slot, message) {
     if (!onScreen) return;
     settings.connected = message.connected;
     settings.setRole(slot.role);
-    settings.setSharing(slot.allowSharing, slot.allowSharedEditing);
     // b3270 reports the host without its port, so never overwrite a typed one.
     if (message.host !== null && settings.host === "" && !settings.hostLocked)
       settings.setHost(message.host);
@@ -1035,7 +1141,6 @@ function focusSlot(index) {
   settings.setOversize(slot.oversize);
   settings.connected = slot.connected === true;
   settings.setRole(slot.role);
-  settings.setSharing(slot.allowSharing, slot.allowSharedEditing);
   applyLayout();
   screenEl.focus();
 
@@ -1289,13 +1394,11 @@ function canvasClicked(event) {
   }
 
   if (row === canvas.statusRow) {
-    const buttons = buttonColumns(canvas.cols);
-    if (col >= buttons.menu) {
-      startPanel("menu");
-      return;
-    }
-    if (col >= buttons.reset) {
-      resetScreen(slot);
+    const button = statusButtons(slot, canvas.cols).find(
+      (each) => col >= each.col && col < each.col + each.label.length,
+    );
+    if (button !== undefined) {
+      button.press();
       return;
     }
   }

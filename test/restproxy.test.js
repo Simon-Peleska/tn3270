@@ -7,7 +7,7 @@ import { Session } from "../server/session.js";
 import { AppError } from "../server/errors.js";
 import { reserveRestEndpoint, proxyRestRequest } from "../server/restproxy.js";
 import { FakeHost } from "./fakehost.js";
-import { testConfig, waitUntil, collectingViewer } from "./helpers.js";
+import { testConfig, waitUntil, collectingViewer, letIn } from "./helpers.js";
 
 /**
  * An httpd opens a little after its process does and says nothing when it has.
@@ -247,9 +247,7 @@ test("a REST call runs even for a viewer sharing would refuse", async (t) => {
   const controller = collectingViewer("controller");
   const observer = collectingViewer("observer");
   session.attach(controller);
-  session.attach(observer);
-  session.allowSharing = true;
-  session.allowSharedEditing = false;
+  letIn(session, controller, observer);
 
   session.handleClientMessage(observer, {
     type: "action",

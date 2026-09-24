@@ -264,8 +264,9 @@ server.on("upgrade", (req, socket, head) => {
     return;
   }
 
+  const pass = url.searchParams.get("pass") ?? undefined;
   wss.handleUpgrade(req, socket, head, (ws) =>
-    attachViewer(session, ws, client),
+    attachViewer(session, ws, client, pass),
   );
 });
 
@@ -273,17 +274,22 @@ server.on("upgrade", (req, socket, head) => {
  * @param {import('./session.js').Session} session
  * @param {import('ws').WebSocket} ws
  * @param {{ ip: string, user: string }} client
+ * @param {string | undefined} pass from an earlier hello: the owner's, or a guest's let in before
  * @returns {void}
  */
-function attachViewer(session, ws, client) {
+function attachViewer(session, ws, client, pass) {
   /** @type {import('./session.js').Viewer} */
   const viewer = {
     id: randomUUID().slice(0, 8),
     role: "observer",
     ip: client.ip,
     user: client.user,
+    pass,
     sendMessage(message) {
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(message));
+    },
+    close() {
+      ws.close(1008, "refused");
     },
   };
 

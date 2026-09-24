@@ -12,10 +12,13 @@ import { AppError } from "./errors.js";
  * @typedef {{ type: 'oversize', value: string }} OversizeMessage `<cols>x<rows>`, or '' for the model's own size
  * @typedef {{ type: 'refresh' }} RefreshMessage
  * @typedef {{ type: 'copyField' }} CopyFieldMessage
- * @typedef {{ type: 'sharing', allowView: boolean, allowEdit: boolean }} SharingMessage
+ * @typedef {{ type: 'askEdit' }} AskEditMessage
+ * @typedef {{ type: 'answer', viewer: string, allow: boolean }} AnswerMessage the owner's yes or no to a request
+ * @typedef {{ type: 'stopSharing' }} StopSharingMessage
+ * @typedef {{ type: 'stopEditing' }} StopEditingMessage
  * @typedef {{ type: 'recorder', action: 'start' | 'stop' }} RecorderMessage
  * @typedef {{ type: 'hints' }} HintsRequestMessage
- * @typedef {ActionMessage | TextMessage | PasteMessage | ConnectMessage | DisconnectMessage | ModelMessage | OversizeMessage | RefreshMessage | CopyFieldMessage | SharingMessage | RecorderMessage | HintsRequestMessage} ClientMessage
+ * @typedef {ActionMessage | TextMessage | PasteMessage | ConnectMessage | DisconnectMessage | ModelMessage | OversizeMessage | RefreshMessage | CopyFieldMessage | AskEditMessage | AnswerMessage | StopSharingMessage | StopEditingMessage | RecorderMessage | HintsRequestMessage} ClientMessage
  *
  * @typedef {object} HelloMessage
  * @property {'hello'} type
@@ -27,9 +30,9 @@ import { AppError } from "./errors.js";
  * @property {string} oversize `<cols>x<rows>`, or '' for the model's own size
  * @property {boolean} hostLocked
  * @property {'controller' | 'observer'} role
+ * @property {boolean} owner
+ * @property {string} pass comes back on the next connection, so a reload is let in without asking
  * @property {number} viewers
- * @property {boolean} allowSharing
- * @property {boolean} allowSharedEditing
  * @property {number} idleTimeoutMs How long a viewerless session survives; 0 never reaps.
  *
  * Always sent immediately before the repaint that uses it, so no viewer writes
@@ -54,8 +57,22 @@ import { AppError } from "./errors.js";
  * @property {boolean} typeahead
  * @property {'controller' | 'observer'} role
  * @property {number} viewers
- * @property {boolean} allowSharing
- * @property {boolean} allowSharedEditing
+ * @property {boolean} owner
+ * @property {number} guests viewers let in by an owner
+ * @property {string | null} editor the guest who may edit, by name
+ * @property {SharingRequest[]} requests empty for everyone but an owner
+ * @property {boolean} editRequested this viewer asked to edit and has no answer yet
+ *
+ * @typedef {object} SharingRequest
+ * @property {string} viewer
+ * @property {string} name the user the proxy vouched for, else the address
+ * @property {'watch' | 'edit'} kind
+ *
+ * Sent to a viewer that has to wait for an owner's yes before it sees anything.
+ * @typedef {{ type: 'waiting' }} WaitingMessage
+ *
+ * The connection closes right after; the browser must not come back on its own.
+ * @typedef {{ type: 'refused', code: string, message: string }} RefusedMessage
  *
  * A run of cells sharing one style. Colours are b3270's own names — `red`,
  * `deepBlue`, `neutralWhite` — and `gr` is its own comma-separated rendition
@@ -109,7 +126,7 @@ import { AppError } from "./errors.js";
  * @property {'hints'} type
  * @property {{ row: number, col: number, letter: string }[]} hints
  *
- * @typedef {HelloMessage | ScreenMessage | PaintMessage | StatusMessage | ErrorMessage | FieldContentMessage | RecorderStepMessage | HintsMessage} ServerMessage
+ * @typedef {HelloMessage | ScreenMessage | PaintMessage | StatusMessage | ErrorMessage | FieldContentMessage | RecorderStepMessage | HintsMessage | WaitingMessage | RefusedMessage} ServerMessage
  */
 
 /**
@@ -227,16 +244,22 @@ export function parseClientMessage(raw) {
 
   if (type === "hints") return { type: "hints" };
 
-  if (type === "sharing") {
-    const allowView = message["allowView"];
-    const allowEdit = message["allowEdit"];
-    if (typeof allowView !== "boolean" || typeof allowEdit !== "boolean") {
+  if (type === "askEdit") return { type: "askEdit" };
+
+  if (type === "stopSharing") return { type: "stopSharing" };
+
+  if (type === "stopEditing") return { type: "stopEditing" };
+
+  if (type === "answer") {
+    const viewer = message["viewer"];
+    const allow = message["allow"];
+    if (typeof viewer !== "string" || typeof allow !== "boolean") {
       throw new AppError(
         "E4002",
-        "sharing.allowView and allowEdit must be booleans",
+        "answer.viewer must be a string and answer.allow a boolean",
       );
     }
-    return { type: "sharing", allowView, allowEdit };
+    return { type: "answer", viewer, allow };
   }
 
   if (type === "recorder") {

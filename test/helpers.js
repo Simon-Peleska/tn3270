@@ -24,7 +24,7 @@ export function testConfig(overrides = {}) {
  * decoder the browser runs, fed every paint as it arrives.
  *
  * @param {string} id
- * @returns {import('../server/session.js').Viewer & { messages: import('../server/protocol.js').ServerMessage[], paints: import('../server/protocol.js').PaintMessage[], grid: Grid }}
+ * @returns {import('../server/session.js').Viewer & { messages: import('../server/protocol.js').ServerMessage[], paints: import('../server/protocol.js').PaintMessage[], grid: Grid, closed: boolean }}
  */
 export function collectingViewer(id) {
   return {
@@ -36,13 +36,34 @@ export function collectingViewer(id) {
     /** @type {import('../server/protocol.js').PaintMessage[]} */
     paints: [],
     grid: new Grid(1, 1),
+    closed: false,
     sendMessage(message) {
       this.messages.push(message);
       if (message.type !== "paint") return;
       this.paints.push(message);
       this.grid.applyPaint(message);
     },
+    close() {
+      this.closed = true;
+    },
   };
+}
+
+/**
+ * Attaches a second viewer the way a browser does: it asks, the owner says yes.
+ *
+ * @param {import('../server/session.js').Session} session
+ * @param {import('../server/session.js').Viewer} owner
+ * @param {import('../server/session.js').Viewer} guest
+ * @returns {void}
+ */
+export function letIn(session, owner, guest) {
+  session.attach(guest);
+  session.handleClientMessage(owner, {
+    type: "answer",
+    viewer: guest.id,
+    allow: true,
+  });
 }
 
 /**

@@ -226,8 +226,6 @@ the reverse-video status row, and none across a five-row selection either way.
 
 ## Next, if this continues
 
-- Turn on `allowMultipleControllers` and see what shared typing actually feels
-  like; the machinery is there, the UX question is open.
 - A per-viewer cursor overlay so people can see where the others are looking.
 - Reconnect currently redraws from scratch. That is correct but wasteful on a
   slow link; a sequence number per delta would let a viewer resume.

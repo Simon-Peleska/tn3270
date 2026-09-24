@@ -146,9 +146,32 @@ test("two browsers share one session over the real server", async (t) => {
     `ws://127.0.0.1:${server.port}/ws/${created.id}`,
   );
   t.after(() => second.socket.close());
+  await waitUntil(
+    () => second.messages.some((m) => m["type"] === "waiting"),
+    "the late viewer to be told to wait",
+  );
+  /** @returns {Record<string, unknown> | undefined} */
+  const request = () => {
+    const status = first.messages.findLast((m) => m["type"] === "status");
+    const requests = /** @type {Record<string, unknown>[]} */ (
+      status?.["requests"] ?? []
+    );
+    return requests[0];
+  };
+  await waitUntil(() => request() !== undefined, "the owner to be asked");
+  assert.equal(request()?.["name"], "127.0.0.1", "no user, so the address");
+  first.socket.send(
+    JSON.stringify({
+      type: "answer",
+      viewer: request()?.["viewer"],
+      allow: true,
+    }),
+  );
   await waitUntil(() => second.paints.length > 0, "the late viewer repaint");
 
-  assert.equal(second.messages[0]?.["role"], "observer");
+  const hello = second.messages.find((m) => m["type"] === "hello");
+  assert.equal(hello?.["role"], "observer");
+  assert.equal(hello?.["owner"], false);
   assert.ok(
     second.grid.rowText(0).includes("_____"),
     "the late viewer must see the current screen",
@@ -158,6 +181,21 @@ test("two browsers share one session over the real server", async (t) => {
   await waitUntil(
     () => second.messages.some((m) => m["code"] === "E3006"),
     "the observer refusal",
+  );
+
+  second.socket.close();
+  const again = await openViewer(
+    `ws://127.0.0.1:${server.port}/ws/${created.id}?pass=${String(hello?.["pass"])}`,
+  );
+  t.after(() => again.socket.close());
+  await waitUntil(
+    () => again.messages.length > 0,
+    "the guest's reload to be answered",
+  );
+  assert.equal(
+    again.messages[0]?.["type"],
+    "hello",
+    "a guest let in once is let back in without asking",
   );
 });
 

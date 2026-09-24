@@ -41,9 +41,6 @@
 
     // How long a session survives with no viewer, so a reload keeps the host session.
     "idleTimeoutMs": 300000,
-
-    // true lets every viewer type, not just the first to attach.
-    "allowMultipleControllers": false,
   },
 
   "security": {
