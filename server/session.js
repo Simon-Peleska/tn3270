@@ -1,9 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { B3270 } from "./b3270.js";
-import { editableFieldText, fieldMap } from "./readbuffer.js";
-import { pasteSegments } from "./paste.js";
+import { fieldMap } from "./readbuffer.js";
 import { editableSnapshot, changedRuns } from "./history.js";
-import { computeHints } from "./hints.js";
 import { ScreenModel } from "./screen.js";
 import { OiaModel } from "./oia.js";
 import { fullPaint, paintDelta } from "./paint.js";
@@ -107,8 +105,6 @@ export class Session {
     this.idleTimer = null;
     /** @type {(() => void) | null} */
     this.onClosed = null;
-    /** @type {Map<string, Viewer>} `copyField` requests by r-tag. */
-    this.pendingFieldReads = new Map();
     /** @type {boolean} The host redrew since the field map was read. */
     this.fieldsStale = false;
     /** @type {string | null} The r-tag of the field-map read in flight. */
@@ -393,18 +389,6 @@ export class Session {
         return;
       }
 
-      const waitingViewer =
-        tag !== undefined ? this.pendingFieldReads.get(tag) : undefined;
-      if (waitingViewer !== undefined) {
-        this.pendingFieldReads.delete(/** @type {string} */ (tag));
-        // Nothing to copy is routine — every Ctrl+C outside a field lands here.
-        const text = result.success
-          ? editableFieldText(result.text ?? [])
-          : null;
-        if (text !== null)
-          waitingViewer.sendMessage({ type: "fieldContent", text });
-        return;
-      }
       if (!result.success) {
         const text = (result.text ?? []).join(" ");
         this.log.warn("action failed", { tag: result["r-tag"] ?? "", text });
@@ -769,11 +753,6 @@ export class Session {
       total: this.viewers.size,
     });
 
-    // Its copy request will never be answered to anyone now.
-    for (const [tag, waiting] of this.pendingFieldReads) {
-      if (waiting === viewer) this.pendingFieldReads.delete(tag);
-    }
-
     this.broadcastStatus();
     if (this.viewers.size === 0) this.startIdleTimer();
   }
@@ -904,14 +883,7 @@ export class Session {
           else this.record("PasteString", [message.text]);
 
           // Batched, so nothing else can be typed between the segments.
-          const segments = pasteSegments(
-            this.screen.cells,
-            this.screen.fieldsFormatted,
-            this.screen.cols,
-            this.screen.cursor,
-            message.text,
-          );
-          const actions = segments.flatMap(({ row, col, text }) => [
+          const actions = message.segments.flatMap(({ row, col, text }) => [
             { action: "MoveCursor1", args: [String(row + 1), String(col + 1)] },
             {
               action: "PasteString",
@@ -935,20 +907,6 @@ export class Session {
       case "oversize":
         this.setOversize(message.value);
         return;
-      case "copyField": {
-        const tag = this.b3270.runActions([
-          { action: "ReadBuffer", args: ["Ascii", "Field"] },
-        ]);
-        this.pendingFieldReads.set(tag, viewer);
-        return;
-      }
-      case "hints": {
-        const hints = this.screen.fieldsFormatted
-          ? computeHints(this.screen.cells, this.screen.cols)
-          : [];
-        viewer.sendMessage({ type: "hints", hints });
-        return;
-      }
       case "recorder":
         this.recording = message.action === "start" ? { steps: [] } : null;
         return;

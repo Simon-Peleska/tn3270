@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pasteSegments } from "../server/paste.js";
+import { pasteSegments } from "../public/paste.js";
 
 /**
  * '_' is an editable blank; anything else is protected content.

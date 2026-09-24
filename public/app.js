@@ -25,6 +25,8 @@ import {
   switcherText,
 } from "./sessions.js";
 import { backoffDelay, reconnectStep } from "./reconnect.js";
+import { computeHints } from "./hints.js";
+import { pasteMessage } from "./paste.js";
 
 /**
  * @param {string} id
@@ -77,7 +79,6 @@ function statusButtons(slot, cols) {
   /** @type {{ label: string, press: () => void }[]} */
   const wanted = [
     { label: "[Menu]", press: () => startPanel("menu") },
-    { label: "[Reset]", press: () => resetScreen(slot) },
     {
       label: "[Kbd]",
       press: () => {
@@ -614,6 +615,7 @@ const settings = new SettingsPage({
 const macros = new MacrosPage({
   ...panelIo,
   dispatch: (message) => sendTo(activeSession(), message),
+  paste: (text) => sendTo(activeSession(), pasteFor(activeSession(), text)),
   waitForUnlock: () => waitForUnlock(activeSession()),
   persist: (values) => {
     saveMacros(values).catch((cause) => {
@@ -873,6 +875,18 @@ function send(message) {
 
 /**
  * @param {SessionSlot | null} slot
+ * @param {string} text
+ * @returns {import('../server/protocol.js').PasteMessage}
+ */
+function pasteFor(slot, text) {
+  const grid = slot?.pane?.host ?? null;
+  return grid === null
+    ? { type: "paste", text, segments: [] }
+    : pasteMessage(grid, text);
+}
+
+/**
+ * @param {SessionSlot | null} slot
  * @param {import('../server/protocol.js').ClientMessage} message
  * @returns {void}
  */
@@ -1046,20 +1060,8 @@ function handleServerMessage(slot, message) {
     screenEl.focus();
     return;
   }
-  if (message.type === "fieldContent") {
-    if (onScreen) navigator.clipboard.writeText(message.text);
-    return;
-  }
   if (message.type === "recorderStep") {
     recorder.record(message.step);
-    return;
-  }
-  if (message.type === "hints") {
-    // A late answer would paint stale letters over the wrong pane.
-    if (onScreen && prefix.armed) {
-      hints = message.hints;
-      redraw();
-    }
     return;
   }
   if (message.type === "paint") {
@@ -1287,8 +1289,8 @@ window.addEventListener(
       event.preventDefault();
       event.stopPropagation();
       if (decision.action === "arm") {
-        hints = [];
-        send({ type: "hints" });
+        const grid = activePane()?.host ?? null;
+        hints = grid === null ? [] : computeHints(grid.cells, grid.cols);
         redraw();
         return;
       }
@@ -1360,7 +1362,15 @@ screenEl.addEventListener(
       if (canvas !== null && canvas.hasSelection())
         navigator.clipboard.writeText(canvas.getSelection());
       else if (panel !== null) navigator.clipboard.writeText(panel.copy());
-      else send({ type: "copyField" });
+      else {
+        const grid = canvas?.host ?? null;
+        const cursor = grid?.cursor ?? null;
+        const text =
+          grid === null || cursor === null
+            ? null
+            : grid.fieldText(cursor.row, cursor.col);
+        if (text !== null) navigator.clipboard.writeText(text);
+      }
       return;
     }
     // The panel commands are the other client commands, and the window handler
@@ -1373,7 +1383,7 @@ screenEl.addEventListener(
       .then((text) => {
         if (text === "") return;
         if (panel !== null) panel.paste(text);
-        else send({ type: "paste", text });
+        else send(pasteFor(activeSession(), text));
       })
       .catch((cause) => {
         showError(
@@ -1396,22 +1406,10 @@ screenEl.addEventListener(
     if (text === "") return;
     const panel = openPanel();
     if (panel !== null) panel.paste(text);
-    else send({ type: "paste", text });
+    else send(pasteFor(activeSession(), text));
   },
   true,
 );
-
-/**
- * Refits a window-measured screen, which costs the host connection — hence a
- * button and not something that happens on its own.
- *
- * @param {SessionSlot} slot
- * @returns {void}
- */
-function resetScreen(slot) {
-  if (settings.fitsWindow()) fitSession(slot);
-  applyLayout();
-}
 
 /**
  * One canvas means one click listener: which session was clicked is a question

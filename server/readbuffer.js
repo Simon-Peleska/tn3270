@@ -1,30 +1,6 @@
 const FIELD_ATTRIBUTE = /^SF\(c0=([0-9a-f]{2})/;
 
 /**
- * From `ReadBuffer(Ascii,Field)`: `Contents: SF(c0=cd,41=f4) 68 69 00 00 ...`
- * `c0` is the 3270 field attribute byte and 0x20 its protected bit; an untyped
- * cell reads back null rather than blank.
- *
- * @param {string[]} lines
- * @returns {string | null} trimmed content, or null if the field is protected
- *   or there is none under the cursor
- */
-export function editableFieldText(lines) {
-  const contents = lines.find((line) => line.startsWith("Contents: "));
-  if (contents === undefined) return null;
-
-  const [attributeToken, ...byteTokens] = contents
-    .slice("Contents: ".length)
-    .split(" ");
-  const attribute = FIELD_ATTRIBUTE.exec(attributeToken ?? "");
-  if (attribute === null) return null;
-  if ((Number.parseInt(attribute[1], 16) & 0x20) !== 0) return null;
-
-  const bytes = byteTokens.map((token) => Number.parseInt(token, 16) || 0x20);
-  return Buffer.from(bytes).toString("utf8").trim();
-}
-
-/**
  * From a whole-screen `ReadBuffer(Ascii)`, one line per row, one token per cell:
  * `SF(c0=f0) 55 73 65 72 SF(c0=cd,41=f4) 00 00 ...`
  *

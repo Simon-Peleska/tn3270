@@ -173,10 +173,15 @@ test("well-formed client messages are parsed", () => {
     type: "text",
     value: "abc",
   });
-  assert.deepEqual(parseClientMessage('{"type":"paste","text":"a\\nb"}'), {
+  const paste = {
     type: "paste",
     text: "a\nb",
-  });
+    segments: [
+      { row: 0, col: 2, text: "a" },
+      { row: 1, col: 2, text: "b" },
+    ],
+  };
+  assert.deepEqual(parseClientMessage(JSON.stringify(paste)), paste);
   assert.deepEqual(parseClientMessage('{"type":"disconnect"}'), {
     type: "disconnect",
   });
@@ -252,6 +257,28 @@ test("a paste far larger than a screen is refused", () => {
       return true;
     },
   );
+});
+
+test("a paste whose segments are not places on the screen is refused", () => {
+  for (const segments of [
+    undefined,
+    [{ row: -1, col: 0, text: "a" }],
+    [{ row: 0, col: 1.5, text: "a" }],
+    [{ row: 0, col: 0, text: 7 }],
+    [null],
+  ])
+    assert.throws(
+      () =>
+        parseClientMessage(
+          JSON.stringify({ type: "paste", text: "a", segments }),
+        ),
+      (err) => {
+        assert.ok(err instanceof AppError);
+        assert.equal(err.code, "E4002");
+        return true;
+      },
+      JSON.stringify(segments),
+    );
 });
 
 test("an action outside the allow-list never reaches b3270", () => {

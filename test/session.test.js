@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { Session, SessionRegistry } from "../server/session.js";
 import { AppError } from "../server/errors.js";
 import { keyboardLocked } from "../public/oia.js";
+import { computeHints } from "../public/hints.js";
+import { pasteMessage } from "../public/paste.js";
 import {
   testConfig,
   collectingViewer,
@@ -768,22 +770,28 @@ test("typing on the attribute byte just left of a field nudges the cursor into i
     start.col + 1,
     "the character should land in the field, advancing the cursor past it",
   );
+});
 
-  session.handleClientMessage(controller, {
-    type: "action",
-    action: "MoveCursor1",
-    args: [String(start.row + 1), String(start.col + 1)],
-  });
-  session.handleClientMessage(controller, { type: "copyField" });
+test("Ctrl+C in a password field copies nothing, because the page never sees what was typed", async (t) => {
+  // reverse.trc's field is non-display, so b3270 shows it blank.
+  const fixture = await startTracedSession("test/traces/reverse.trc");
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  const { screen } = session;
+  await settle(session);
+  await waitUntil(() => screen.fieldsFormatted, "the field map to load");
+
+  const controller = collectingViewer("controller");
+  session.attach(controller);
+  const start = { ...screen.cursor };
+  session.handleClientMessage(controller, { type: "text", value: "secret" });
+  await waitUntil(
+    () => screen.cursor.col === start.col + 6,
+    "the typing to land",
+  );
   await settle(session);
 
-  const fieldContent = controller.messages.find(
-    (message) => message.type === "fieldContent",
-  );
-  assert.equal(
-    fieldContent?.type === "fieldContent" ? fieldContent.text : null,
-    "x",
-  );
+  assert.equal(controller.grid.fieldText(start.row, start.col), "");
 });
 
 test("BackNewline walks up to the first field of the row above, where Newline walks down", async (t) => {
@@ -871,7 +879,7 @@ test("BackNewline on a screen with no fields falls back to the start of the row 
   );
 });
 
-test("a hints request answers with one letter per editable field, using the cached field map", async (t) => {
+test("the field map reaches the page, which hints one letter per editable field", async (t) => {
   const fixture = await startTracedSession("test/traces/reverse.trc");
   t.after(() => fixture.close());
   const { session } = fixture;
@@ -880,17 +888,13 @@ test("a hints request answers with one letter per editable field, using the cach
   const controller = collectingViewer("controller");
   session.attach(controller);
   await waitUntil(
-    () => session.screen.cells.some((cell) => cell.editable),
-    "the field map to be read",
+    () => controller.grid.cells.some((cell) => cell.editable),
+    "the field map to reach the page",
   );
 
-  session.handleClientMessage(controller, { type: "hints" });
-  await settle(session);
-
-  const hints = controller.messages.find((message) => message.type === "hints");
-  assert.ok(hints?.type === "hints", "a hints message should have been sent");
-  assert.ok(hints.hints.length > 0, "the screen has editable fields to hint");
-  const letters = hints.hints.map((hint) => hint.letter);
+  const hints = computeHints(controller.grid.cells, controller.grid.cols);
+  assert.ok(hints.length > 0, "the screen has editable fields to hint");
+  const letters = hints.map((hint) => hint.letter);
   assert.equal(
     new Set(letters).size,
     letters.length,
@@ -930,7 +934,10 @@ test("pasted text is typed literally, backslashes and all", async (t) => {
   session.attach(controller);
   const before = session.screen.cursor.col;
 
-  session.handleClientMessage(controller, { type: "paste", text: "a\\b" });
+  session.handleClientMessage(
+    controller,
+    pasteMessage(controller.grid, "a\\b"),
+  );
   await settle(session);
 
   assert.equal(session.screen.cursor.col, before + 3);
@@ -950,32 +957,16 @@ test("pasting more than a field holds is truncated at its edge, not spilled into
 
   // The field runs from the cursor to the end of the row; past it is protected.
   const fieldWidth = screen.cols - start.col;
-  session.handleClientMessage(controller, {
-    type: "paste",
-    text: "x".repeat(fieldWidth + 3),
-  });
+  const paste = pasteMessage(controller.grid, "x".repeat(fieldWidth + 3));
+  assert.deepEqual(paste.segments, [
+    { row: start.row, col: start.col, text: "x".repeat(fieldWidth) },
+  ]);
+  session.handleClientMessage(controller, paste);
   await settle(session);
   assert.equal(
     session.oia.keyboardLocked,
     false,
     "landing on the protected field must not lock the keyboard",
-  );
-
-  // b3270's screen indications do not report what a scripted paste typed, so read the field back.
-  session.handleClientMessage(controller, {
-    type: "action",
-    action: "MoveCursor1",
-    args: [String(start.row + 1), String(start.col + 1)],
-  });
-  session.handleClientMessage(controller, { type: "copyField" });
-  await settle(session);
-
-  const fieldContent = controller.messages.find(
-    (message) => message.type === "fieldContent",
-  );
-  assert.equal(
-    fieldContent?.type === "fieldContent" ? fieldContent.text : null,
-    "x".repeat(fieldWidth),
   );
 });
 
@@ -994,7 +985,10 @@ test("a paste crossing the gaps between short fields lands whole, with nothing e
 
     const controller = collectingViewer("controller");
     session.attach(controller);
-    session.handleClientMessage(controller, { type: "paste", text });
+    session.handleClientMessage(
+      controller,
+      pasteMessage(controller.grid, text),
+    );
     await settle(session);
 
     assert.equal(
@@ -1021,7 +1015,10 @@ test("undo takes the typing back out a step at a time, and redo puts it back", a
 
   session.handleClientMessage(controller, { type: "text", value: "abc" });
   await waitUntil(() => row() === " abc        ", "the typing to land");
-  session.handleClientMessage(controller, { type: "paste", text: "456789" });
+  session.handleClientMessage(
+    controller,
+    pasteMessage(controller.grid, "456789"),
+  );
   await waitUntil(() => row() === " abc 456 789", "the paste to land");
 
   // One thing the user did is one step, however many actions it took.

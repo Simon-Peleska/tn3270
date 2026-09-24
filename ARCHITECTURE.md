@@ -81,7 +81,7 @@ wrong here regardless. WebTransport was considered and rejected: mandatory TLS
 and certificates, weaker support, no benefit at this scale.
 
 Everything travels as **one ordered text channel**: `paint` alongside `hello`,
-`screen`, `status`, `error`, `hints` one way, `action`, `text`, `connect`,
+`screen`, `status`, `error` one way, `action`, `text`, `connect`,
 `disconnect`, `model` the other, each an object with a `type`. Screen updates
 used to be binary frames, which made the frame type the discriminator and cost a
 separate "did the geometry message arrive before the repaint that assumes it"
@@ -415,6 +415,12 @@ standing between the source and what runs.
 - **Fonts are immutable** for a year. They are vendored and never edited, they
   are three quarters of the page's weight, and they are the one thing a
   reconnect should never fetch twice.
+- **Read once, until it changes.** Each file is compressed and hashed on its
+  first request and served from memory after that, but every request checks
+  its mtime and size first, and a file that differs is read again. So a
+  deploy that only touches `public/` is a copy, not a restart, and the
+  sessions a restart would end carry on. Open pages keep their old code
+  until their next reload.
 
 777 KB of files reach a cold browser as 320 KB in one wave; a reconnect's
 reload transfers about 6 KB and no font traffic at all.
@@ -442,7 +448,9 @@ server/
 public/
   index.html    the canvas, the inlined CSS, the preloads, and nothing else
   app.js        sessions, panes, the panel registry, clipboard and clicks
-  grid.js       the cell buffer: applyPaint, put, rectangular text
+  grid.js       the cell buffer: applyPaint, put, rectangular text, the field under a cell
+  hints.js      Ctrl-B's field hint letters
+  paste.js      a paste split into one segment per stretch of editable cells
   canvas.js     Pane: two grids and a rectangle; Screen: the page's one canvas
   colors.js     3270 colour name → ANSI slot, gr → flags
   oia.js        the status line, composed from the last status and cursor

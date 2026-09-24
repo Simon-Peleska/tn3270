@@ -32,6 +32,7 @@ function sanitizeFilename(name) {
 /**
  * @typedef {import('./panel.js').PanelDeps & {
  *   dispatch: (message: import('../server/protocol.js').ClientMessage) => void,
+ *   paste: (text: string) => void,
  *   waitForUnlock: () => Promise<void>,
  *   persist: (macros: Macro[]) => void,
  *   exportFile: (filename: string, content: string) => void,
@@ -39,7 +40,7 @@ function sanitizeFilename(name) {
  *   error: (code: string, message: string) => void,
  * }} MacrosDeps
  *
- * `dispatch` bypasses app.js's recording tap, so playback is never recorded
+ * `dispatch` and `paste` bypass app.js's recording tap, so playback is never recorded
  * into itself, and `waitForUnlock` paces playback by the host, not a timer.
  */
 
@@ -189,8 +190,7 @@ export class MacrosPage extends Panel {
     this.playing = state;
     for (const step of macro.steps) {
       if (!state.active) break;
-      if (step.text !== "")
-        this.deps.dispatch({ type: "paste", text: step.text });
+      if (step.text !== "") this.deps.paste(step.text);
       if (step.action !== "") {
         this.deps.dispatch({
           type: "action",

@@ -13,7 +13,7 @@ const RANK = new Map([...LOWER].map((ch, index) => [ch, index]));
  * The protected word just before a field on the same row: "name:___" gives
  * "name". Never reaches past the previous field or the row start.
  *
- * @param {{ ch: string, editable: boolean }[]} cells row-major, length rows*cols
+ * @param {{ ch: string | null, editable: boolean }[]} cells row-major, length rows*cols
  * @param {number} cols
  * @param {number} pos the field's first cell
  * @returns {string | null} lowercase
@@ -48,7 +48,7 @@ function labelCandidates(label) {
  * Labelled fields claim their mnemonic first, in screen order; the rest take
  * the next free letter in keyboard order.
  *
- * @param {{ ch: string, editable: boolean }[]} cells row-major, length rows*cols
+ * @param {{ ch: string | null, editable: boolean }[]} cells row-major, length rows*cols
  * @param {number} cols
  * @returns {{ row: number, col: number, letter: string }[]} in screen order
  */

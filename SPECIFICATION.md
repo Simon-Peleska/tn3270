@@ -138,7 +138,7 @@ the host.
   `X Protected`, `X Numeric`, `X Operator Error`, and so on. An unrecognised lock
   value is shown verbatim as `X <value>` rather than swallowed.
 
-- The right of the OIA row holds `[Kbd] [Reset] [Menu]`, painted by the browser
+- The right of the OIA row holds `[Kbd] [Menu]`, painted by the browser
   over columns the server never writes into. Every pane carries its own, so a
   split is not a screen you have to switch away from to work on. **Menu** opens
   the primary option menu (§4.1), which is the way to every other panel.
@@ -155,15 +155,6 @@ the host.
   recorded takes it too); a click on the keyboard is never a cursor move. It is drawn
   on the session being looked at only, not under a panel, and is not
   remembered across a reload.
-  **Reset** puts
-  this session's screen back the way it should look in the pane it now sits in,
-  whatever it has been through — the way out of a pane resized under a
-  connection the page would not touch on its own. A screen measured from the
-  window is asked for again at the pane's size, which costs the host connection,
-  the same as any other size change; a screen asked for by name — fit off, or
-  the dynamic screen — keeps its size and has its text scaled back to the pane
-  instead. Both repaint, so Reset is also the way back from anything drawn over
-  the screen.
 - Colours are the sixteen 3270 host colours, rendered as truecolor from x3270's
   own palette. If the host reports no colour (a 3278), the screen is rendered
   monochrome green rather than being given invented colours.
@@ -367,6 +358,14 @@ clipboard itself, which the browser asks the user's permission for. A paste of
 more than 16384 characters is refused with `E4003` — b3270 types it one
 character at a time, so a stray copy of a log file would block the session.
 
+The page splits a paste into `segments` itself, against the screen it shows: one
+stretch of editable cells each, since `PasteString` drops a character that lands
+on a protected one. The server only moves the cursor to each and types it;
+`text` is kept for the recorder. The field hints behind `Ctrl-B` and the field
+`Ctrl-C` copies are worked out in the page too, from the cells the paints carry.
+A password field is never painted with what was typed into it, so `Ctrl-C` there
+copies nothing.
+
 ### Action allow-list
 
 Only the actions in the table above may cross the wire. `b3270` accepts many
@@ -415,7 +414,7 @@ reconnecting to it is worth trying.
 
 ```jsonc
 {"type":"text","value":"abc"}
-{"type":"paste","text":"one\ntwo"}
+{"type":"paste","text":"one\ntwo","segments":[{"row":3,"col":10,"text":"one"},{"row":4,"col":10,"text":"two"}]}
 {"type":"action","action":"PF","args":["3"]}
 {"type":"connect","host":"mainframe:23"}
 {"type":"disconnect"}
