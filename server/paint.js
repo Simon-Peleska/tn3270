@@ -73,6 +73,7 @@ export function fullPaint(screen) {
     type: "paint",
     full: true,
     color: screen.color,
+    fieldsFormatted: screen.fieldsFormatted,
     size: { rows: screen.rows, cols: screen.cols },
     rows,
     cursor: paintCursor(screen),
@@ -98,6 +99,7 @@ export function paintDelta(screen, dirtyRows) {
     type: "paint",
     full: false,
     color: screen.color,
+    fieldsFormatted: screen.fieldsFormatted,
     rows,
     cursor: paintCursor(screen),
   };

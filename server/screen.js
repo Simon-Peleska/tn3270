@@ -142,6 +142,8 @@ export class ScreenModel {
    * @returns {void}
    */
   applyFields(editable, hidden, formatted) {
+    // Every paint carries it, but a paint is only sent for a changed row.
+    if (formatted !== this.fieldsFormatted) this.markAllDirty();
     this.fieldsFormatted = formatted;
     this.fieldsHidden = hidden;
     for (let i = 0; i < this.cells.length; i++) {

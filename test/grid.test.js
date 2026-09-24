@@ -11,6 +11,7 @@ function paint(fields) {
     type: "paint",
     full: false,
     color: true,
+    fieldsFormatted: true,
     rows: [],
     cursor: { row: 0, col: 0, on: true },
     ...fields,
@@ -293,4 +294,24 @@ test("the overlay takes the cursor only once it has one of its own", () => {
     col: 1,
     visible: true,
   });
+});
+
+test("Ctrl+C's field is the editable run under the cell, trimmed, wrapping past the last cell", () => {
+  const grid = new Grid(2, 8);
+  grid.put(0, 0, "y", { editable: true });
+  grid.put(0, 1, "Name:");
+  grid.put(0, 6, " a", { editable: true });
+  grid.put(1, 0, "bc  ", { editable: true });
+  grid.put(1, 4, "End");
+  grid.put(1, 7, "x", { editable: true });
+
+  assert.equal(grid.fieldText(0, 7), "abc");
+  assert.equal(grid.fieldText(1, 3), "abc", "from anywhere in the field");
+  assert.equal(
+    grid.fieldText(1, 7),
+    "xy",
+    "the last field runs on into the first cell",
+  );
+  assert.equal(grid.fieldText(0, 0), "xy");
+  assert.equal(grid.fieldText(0, 3), null, "a label is not a field");
 });

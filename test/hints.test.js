@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { computeHints } from "../server/hints.js";
+import { computeHints } from "../public/hints.js";
 
 /**
  * '_' is an editable blank; anything else is protected content.

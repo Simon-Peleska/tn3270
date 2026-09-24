@@ -47,6 +47,8 @@ export class Grid {
     this.defaultFg = null;
     /** @type {string | null} */
     this.defaultBg = null;
+    /** @type {boolean} False for a screen without fields, where typing goes anywhere. */
+    this.fieldsFormatted = false;
     /** @type {Cursor | null} null leaves the cursor to whatever is underneath. */
     this.cursor = null;
     /** @type {Cell[]} Row-major, length rows*cols. */
@@ -152,8 +154,32 @@ export class Grid {
       }
     }
 
+    this.fieldsFormatted = paint.fieldsFormatted;
     const { row, col, on } = paint.cursor;
     this.cursor = { row, col, visible: on };
+  }
+
+  /**
+   * The editable field a cell is in, the way Ctrl+C copies it. A field can wrap
+   * past the last cell into the first, so the walk wraps too.
+   *
+   * @param {number} row 0-based
+   * @param {number} col 0-based
+   * @returns {string | null} trimmed, or null off any editable field
+   */
+  fieldText(row, col) {
+    const total = this.cells.length;
+    const at = row * this.cols + col;
+    const editable = (/** @type {number} */ pos) =>
+      this.cells[(pos + total) % total]?.editable ?? false;
+    if (!editable(at)) return null;
+
+    let start = at;
+    while (start > at - total + 1 && editable(start - 1)) start--;
+    let text = "";
+    for (let pos = start; pos < start + total && editable(pos); pos++)
+      text += this.cells[(pos + total) % total]?.ch ?? " ";
+    return text.trim();
   }
 
   /**

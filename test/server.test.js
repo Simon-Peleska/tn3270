@@ -322,6 +322,27 @@ test("the page preloads every module it imports, and every font", async (t) => {
     );
 });
 
+test("a static file replaced by a deploy is served new, without a restart", async (t) => {
+  const server = await startServer();
+  const name = `.tmp-deploy-${server.port}.js`;
+  t.after(async () => {
+    await server.stop();
+    await rm(`public/${name}`, { force: true });
+  });
+  const url = `http://127.0.0.1:${server.port}/${name}`;
+
+  await writeFile(`public/${name}`, "export const version = 1;\n");
+  const before = await fetch(url);
+  assert.equal(await before.text(), "export const version = 1;\n");
+
+  await writeFile(`public/${name}`, "export const version = 22;\n");
+  const after = await fetch(url, {
+    headers: { "if-none-match": before.headers.get("etag") ?? "" },
+  });
+  assert.equal(after.status, 200, "the old ETag must not match the new file");
+  assert.equal(await after.text(), "export const version = 22;\n");
+});
+
 test("a path that tries to escape the public directory is refused", async (t) => {
   const server = await startServer();
   t.after(() => server.stop());

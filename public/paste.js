@@ -10,7 +10,7 @@
  * blanks typed into fields like any other character. A newline moves one row
  * down, to the column the paste started at.
  *
- * @param {{ ch: string, editable: boolean }[]} cells row-major, length rows*cols
+ * @param {{ ch: string | null, editable: boolean }[]} cells row-major, length rows*cols
  * @param {boolean} fieldsFormatted false types straight through
  * @param {number} cols
  * @param {{ row: number, col: number }} cursor 0-based, where the paste starts
@@ -77,4 +77,27 @@ export function pasteSegments(cells, fieldsFormatted, cols, cursor, text) {
     pos = (Math.floor(pos / cols) + 1) * cols + startCol;
   }
   return segments;
+}
+
+/**
+ * A paste as it goes to the server: split here, against the screen this page
+ * shows, so the server only types what it is given.
+ *
+ * @param {{ cells: { ch: string | null, editable: boolean }[], cols: number,
+ *   fieldsFormatted: boolean, cursor: { row: number, col: number } | null }} screen
+ * @param {string} text
+ * @returns {import('../server/protocol.js').PasteMessage}
+ */
+export function pasteMessage(screen, text) {
+  const segments =
+    screen.cursor === null
+      ? []
+      : pasteSegments(
+          screen.cells,
+          screen.fieldsFormatted,
+          screen.cols,
+          screen.cursor,
+          text,
+        );
+  return { type: "paste", text, segments };
 }

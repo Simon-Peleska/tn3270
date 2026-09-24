@@ -423,6 +423,7 @@ test("nothing any panel writes is wider than an 80-column screen", () => {
     applyHostColors: () => {},
     applyAutomation: () => {},
     connect: () => {},
+    paste: () => {},
   };
   const pages = [
     new MenuPage(deps),

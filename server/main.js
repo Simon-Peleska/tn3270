@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { extname, join, normalize, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { gzipSync } from "node:zlib";
@@ -38,12 +38,11 @@ const IMMUTABLE = new Set([".ttf", ".woff2"]);
 const COMPRESSIBLE = new Set([".html", ".js", ".json", ".ttf"]);
 
 /**
- * `public/` does not change while the process runs — the page's own recovery
- * path is a reload, and new code means a restarted server — so every file is
- * read, hashed and compressed once and then answered from here. Lazily, so
- * startup stays instant and nothing is paid for a file nobody asks for.
+ * Every file is read, hashed and compressed once and then answered from here,
+ * until a deploy replaces it: a changed mtime or size reads it again, so new
+ * frontend code needs no restart, and the sessions it would end live on.
  *
- * @type {Map<string, { content: Buffer, gzipped: Buffer | null, headers: Record<string, string> }>}
+ * @type {Map<string, { mtimeMs: number, size: number, content: Buffer, gzipped: Buffer | null, headers: Record<string, string> }>}
  */
 const STATIC_CACHE = new Map();
 
@@ -85,18 +84,30 @@ async function sendFile(req, res, dir, relative) {
   const file = join(dir, normalize(decoded));
   if (!file.startsWith(dir)) throw new AppError("E6001", relative);
 
+  /** @type {import('node:fs').Stats} */
+  let stats;
+  /** @type {Buffer} */
+  let content;
   let entry = STATIC_CACHE.get(file);
-  if (entry === undefined) {
-    /** @type {Buffer} */
-    let content;
-    try {
-      content = await readFile(file);
-    } catch (cause) {
-      throw new AppError("E6001", relative, cause);
+  try {
+    stats = await stat(file);
+    if (
+      entry !== undefined &&
+      (entry.mtimeMs !== stats.mtimeMs || entry.size !== stats.size)
+    ) {
+      log.info(`${relative} changed on disk, reading it again`);
+      entry = undefined;
     }
+    content = entry?.content ?? (await readFile(file));
+  } catch (cause) {
+    throw new AppError("E6001", relative, cause);
+  }
 
+  if (entry === undefined) {
     const ext = extname(file);
     entry = {
+      mtimeMs: stats.mtimeMs,
+      size: stats.size,
       content,
       gzipped: COMPRESSIBLE.has(ext) ? gzipSync(content) : null,
       headers: {

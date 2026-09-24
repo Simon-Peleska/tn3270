@@ -28,6 +28,8 @@ function fixture(files = []) {
     },
     theme: () => THEMES[0],
     dispatch: (message) => calls.dispatched.push(message),
+    paste: (text) =>
+      calls.dispatched.push({ type: "paste", text, segments: [] }),
     waitForUnlock: () => {
       calls.unlockWaits += 1;
       return new Promise((resolve) => pendingUnlocks.push(resolve));
@@ -105,7 +107,7 @@ test("recording captures typed text and actions, ignoring anything else sent whi
   page.record({ type: "text", value: "A" });
   page.record({ type: "text", value: "B" });
   page.record({ type: "action", action: "Tab", args: [] });
-  page.record({ type: "paste", text: "pasted" });
+  page.record({ type: "paste", text: "pasted", segments: [] });
   page.record({ type: "action", action: "Enter", args: [] });
   page.record({ type: "connect", host: null });
 
@@ -324,7 +326,7 @@ test("playing a macro dispatches each step and waits for the keyboard to unlock 
 
   await Promise.resolve();
   assert.deepEqual(calls.dispatched, [
-    { type: "paste", text: "hello" },
+    { type: "paste", text: "hello", segments: [] },
     { type: "action", action: "Enter", args: [] },
   ]);
   assert.equal(calls.unlockWaits, 1);
@@ -333,9 +335,9 @@ test("playing a macro dispatches each step and waits for the keyboard to unlock 
   await Promise.resolve();
   await Promise.resolve();
   assert.deepEqual(calls.dispatched, [
-    { type: "paste", text: "hello" },
+    { type: "paste", text: "hello", segments: [] },
     { type: "action", action: "Enter", args: [] },
-    { type: "paste", text: "world" },
+    { type: "paste", text: "world", segments: [] },
     { type: "action", action: "Tab", args: [] },
   ]);
 
@@ -405,7 +407,11 @@ test("enter on a macro row closes the page and plays it", async () => {
   assert.equal(page.open, false);
   assert.equal(page.playing?.macro, macro);
   await Promise.resolve();
-  assert.deepEqual(calls.dispatched[0], { type: "paste", text: "go" });
+  assert.deepEqual(calls.dispatched[0], {
+    type: "paste",
+    text: "go",
+    segments: [],
+  });
 });
 
 /**

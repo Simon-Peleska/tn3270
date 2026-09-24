@@ -5,20 +5,20 @@ import { AppError } from "./errors.js";
  *
  * @typedef {{ type: 'action', action: string, args?: string[] }} ActionMessage
  * @typedef {{ type: 'text', value: string }} TextMessage
- * @typedef {{ type: 'paste', text: string }} PasteMessage
+ * @typedef {{ row: number, col: number, text: string }} PasteSegment
+ * @typedef {{ type: 'paste', text: string, segments: PasteSegment[] }} PasteMessage
+ *   split by the page against the screen it shows; `text` is what a recording keeps
  * @typedef {{ type: 'connect', host: string | null }} ConnectMessage
  * @typedef {{ type: 'disconnect' }} DisconnectMessage
  * @typedef {{ type: 'model', model: number }} ModelMessage
  * @typedef {{ type: 'oversize', value: string }} OversizeMessage `<cols>x<rows>`, or '' for the model's own size
  * @typedef {{ type: 'refresh' }} RefreshMessage
- * @typedef {{ type: 'copyField' }} CopyFieldMessage
  * @typedef {{ type: 'askEdit' }} AskEditMessage
  * @typedef {{ type: 'answer', viewer: string, allow: boolean }} AnswerMessage the owner's yes or no to a request
  * @typedef {{ type: 'stopSharing' }} StopSharingMessage
  * @typedef {{ type: 'stopEditing' }} StopEditingMessage
  * @typedef {{ type: 'recorder', action: 'start' | 'stop' }} RecorderMessage
- * @typedef {{ type: 'hints' }} HintsRequestMessage
- * @typedef {ActionMessage | TextMessage | PasteMessage | ConnectMessage | DisconnectMessage | ModelMessage | OversizeMessage | RefreshMessage | CopyFieldMessage | AskEditMessage | AnswerMessage | StopSharingMessage | StopEditingMessage | RecorderMessage | HintsRequestMessage} ClientMessage
+ * @typedef {ActionMessage | TextMessage | PasteMessage | ConnectMessage | DisconnectMessage | ModelMessage | OversizeMessage | RefreshMessage | AskEditMessage | AnswerMessage | StopSharingMessage | StopEditingMessage | RecorderMessage} ClientMessage
  *
  * @typedef {object} HelloMessage
  * @property {'hello'} type
@@ -95,6 +95,7 @@ import { AppError } from "./errors.js";
  * @property {'paint'} type
  * @property {boolean} full whether every cell not mentioned is now blank
  * @property {boolean} color false for a 3278: mono green, invent no colours
+ * @property {boolean} fieldsFormatted false for a screen without fields
  * @property {{ rows: number, cols: number }} [size] sent on a full paint only:
  *   the screen it fills, so the paint needs nothing else to be applied
  *   (`rows` above is the rows it carries, which is not the same question)
@@ -108,10 +109,6 @@ import { AppError } from "./errors.js";
  * @property {string} code
  * @property {string} message
  *
- * @typedef {object} FieldContentMessage
- * @property {'fieldContent'} type
- * @property {string} text
- *
  * @typedef {object} RecorderStep
  * @property {string[]} screen one plain-text line per row, as of just before this step
  * @property {string} [action] omitted for a password marker
@@ -122,11 +119,7 @@ import { AppError } from "./errors.js";
  * @property {'recorderStep'} type
  * @property {RecorderStep} step
  *
- * @typedef {object} HintsMessage
- * @property {'hints'} type
- * @property {{ row: number, col: number, letter: string }[]} hints
- *
- * @typedef {HelloMessage | ScreenMessage | PaintMessage | StatusMessage | ErrorMessage | FieldContentMessage | RecorderStepMessage | HintsMessage | WaitingMessage | RefusedMessage} ServerMessage
+ * @typedef {HelloMessage | ScreenMessage | PaintMessage | StatusMessage | ErrorMessage | RecorderStepMessage | WaitingMessage | RefusedMessage} ServerMessage
  */
 
 /**
@@ -222,7 +215,31 @@ export function parseClientMessage(raw) {
         "E4003",
         `paste of ${text.length} characters is too large`,
       );
-    return { type: "paste", text };
+    const rawSegments = message["segments"];
+    if (!Array.isArray(rawSegments))
+      throw new AppError("E4002", "paste.segments must be an array");
+    /** @type {PasteSegment[]} */
+    const segments = [];
+    let typed = 0;
+    for (const segment of rawSegments) {
+      const { row, col, text: part } = segment ?? {};
+      if (
+        !Number.isInteger(row) ||
+        !Number.isInteger(col) ||
+        row < 0 ||
+        col < 0 ||
+        typeof part !== "string"
+      )
+        throw new AppError(
+          "E4002",
+          "paste.segments must be { row, col, text } with whole, non-negative row and col",
+        );
+      typed += part.length;
+      segments.push({ row, col, text: part });
+    }
+    if (typed > 16384)
+      throw new AppError("E4003", `paste of ${typed} characters is too large`);
+    return { type: "paste", text, segments };
   }
 
   if (type === "connect") {
@@ -239,10 +256,6 @@ export function parseClientMessage(raw) {
   if (type === "disconnect") return { type: "disconnect" };
 
   if (type === "refresh") return { type: "refresh" };
-
-  if (type === "copyField") return { type: "copyField" };
-
-  if (type === "hints") return { type: "hints" };
 
   if (type === "askEdit") return { type: "askEdit" };
 
