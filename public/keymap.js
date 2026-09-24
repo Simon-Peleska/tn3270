@@ -95,7 +95,12 @@ function combo(key, { shift = false, ctrl = false, alt = false } = {}) {
  */
 export const DEFAULT_BINDINGS = Object.freeze({
   // Pressing Control itself sets event.ctrlKey, so the binding needs it too.
-  Enter: [combo("ControlRight", { ctrl: true })],
+  // A browser never sees Fn: laptops send Fn+Enter as the keypad Enter.
+  Enter: [
+    combo("ControlRight", { ctrl: true }),
+    combo("Enter", { ctrl: true }),
+    combo("NumpadEnter"),
+  ],
   Newline: [combo("Enter")],
   BackNewline: [combo("Enter", { shift: true })],
   Tab: [combo("Tab")],
@@ -231,6 +236,7 @@ export const KEY_LABELS = Object.freeze({
   PageUp: "PageUp",
   PageDown: "PageDown",
   Enter: "Enter",
+  NumpadEnter: "NumEnter",
   Tab: "Tab",
   Backspace: "Backspace",
   Delete: "Delete",
@@ -315,6 +321,27 @@ export function withDefaults(stored) {
     );
   }
   return filled;
+}
+
+/**
+ * What is saved: only the commands the user changed, so a default changed in a
+ * later version reaches every command they left alone. `withDefaults` is the
+ * way back.
+ *
+ * @param {Bindings} bindings
+ * @returns {Bindings}
+ */
+export function changedBindings(bindings) {
+  /** @type {Bindings} */
+  const changed = {};
+  for (const [commandId, combos] of Object.entries(bindings)) {
+    const defaults = DEFAULT_BINDINGS[commandId] ?? [];
+    const same =
+      JSON.stringify(combos.map(serializeCombo)) ===
+      JSON.stringify(defaults.map(serializeCombo));
+    if (!same) changed[commandId] = combos;
+  }
+  return changed;
 }
 
 /**

@@ -46,7 +46,8 @@ function fixture(fit = () => ({ cols: 158, rows: 60 })) {
     /** @type {(string | null)[]} */ hosts: [],
     /** @type {number} */ ends: 0,
     /** @type {string[]} */ went: [],
-    /** @type {import('../public/store.js').StoredSettings[]} */ saved: [],
+    /** @type {Partial<import('../public/store.js').StoredSettings>[]} */ saved:
+      [],
     /** @type {{ allowView: boolean, allowEdit: boolean }[]} */ sharing: [],
   };
   const page = new SettingsPage({
@@ -91,6 +92,17 @@ function focus(page, key) {
   assert.notEqual(index, -1, `the panel has no ${key} field`);
   page.onCommand = false;
   page.selected = index;
+}
+
+/**
+ * @param {SettingsPage} page
+ * @param {string} text a command line word
+ * @returns {void}
+ */
+function type(page, text) {
+  page.onCommand = true;
+  for (const char of text) page.handleKey(key({ key: char }));
+  page.handleKey(enterKey());
 }
 
 test("opening draws the panel, and F3 closes it and asks for the screen back", () => {
@@ -179,15 +191,67 @@ test("theme and font apply as you scroll through them and are saved by name", ()
   page.handleKey(key({ key: "ArrowRight" }));
   assert.deepEqual(calls.fonts, [FONTS[1]?.name]);
 
-  assert.deepEqual(calls.saved.at(-1), {
-    theme: THEMES[1]?.name,
-    font: FONTS[1]?.name,
-    model: null,
-    screenSize: null,
-    fitFontSize: 16,
-    fieldBackground: true,
-  });
+  assert.deepEqual(
+    calls.saved.at(-1),
+    { theme: THEMES[1]?.name, font: FONTS[1]?.name },
+    "only what differs from the defaults is saved",
+  );
   assert.deepEqual(calls.models, [], "the screen size must not have moved");
+});
+
+test("a setting put back to its default is no longer saved, so a new default reaches it", () => {
+  const { page, calls } = fixture();
+  page.connected = true;
+  page.show();
+  focus(page, "theme");
+  page.handleKey(key({ key: "ArrowRight" }));
+  page.handleKey(key({ key: "ArrowLeft" }));
+  assert.deepEqual(calls.saved.at(-1), {});
+
+  page.handleKey(enterKey());
+  assert.deepEqual(
+    calls.saved.at(-1),
+    {},
+    "Enter on an unchanged screen size does not pin the server's default",
+  );
+});
+
+test("RESET with a name puts one setting back, and RESET alone puts them all", () => {
+  const { page, calls } = fixture();
+  page.restoreSaved({
+    theme: "Amber",
+    font: "IBM 3270",
+    fieldBackground: false,
+    model: 4,
+    screenSize: "dynamic",
+    fitFontSize: 20,
+  });
+  page.connected = true;
+  page.show();
+
+  type(page, "reset theme");
+  assert.equal(page.theme().name, THEMES[0]?.name);
+  assert.deepEqual(
+    calls.themes,
+    [THEMES[0]?.name],
+    "the default is shown at once",
+  );
+  assert.equal(page.font().name, "IBM 3270", "the others are left alone");
+  assert.match(page.message, /Theme is back to its default/);
+
+  type(page, "reset model");
+  assert.equal(page.savedModel, null);
+  assert.equal(page.savedSize, null);
+  assert.deepEqual(calls.models, [], "the live screen is not reconnected");
+
+  type(page, "reset nonsense");
+  assert.match(page.message, /No setting is called NONSENSE/);
+
+  type(page, "reset");
+  assert.deepEqual(calls.saved.at(-1), {});
+  assert.equal(page.font().name, FONTS[0]?.name);
+  assert.equal(page.fieldBackground, true);
+  assert.equal(page.fitFontSize, 16);
 });
 
 test("a saved theme and font are taken up by name, and an unknown one is ignored", () => {

@@ -58,7 +58,7 @@ export async function loadSettings() {
 }
 
 /**
- * @param {StoredSettings} settings
+ * @param {Partial<StoredSettings>} settings only what differs from the defaults
  * @returns {Promise<void>}
  */
 export async function saveSettings(settings) {

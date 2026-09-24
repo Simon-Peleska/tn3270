@@ -217,6 +217,16 @@ name of any panel, and the words a panel adds of its own —
 `APPLY`, `RENAME`, `DELETE`, `EXPORT`, `IMPORT`, `MARK`, `RECORD`, `STOP`,
 `RESET`, `DEFAULTS`. A word that is none of these is answered on the panel.
 
+Settings and keys are saved in the browser as what differs from the defaults,
+so a default changed in a later version reaches everything the user left
+alone. `RESET` puts them back: on Settings, `RESET` restores every setting and
+`RESET THEME` (any word of a setting's name) just that one. A reset screen size
+takes effect with the next session, not by reconnecting this one. On Keys,
+`RESET` in the list restores the whole keymap, and inside a command just that
+command; `RESET n` or `RESET PF3` restores one command from the list, and
+`RESET ALL` restores everything from anywhere. A command put back takes its
+default keys back from whatever they were bound to since.
+
 Opening a panel is a command like any other, so it is in the keymap of §5 and
 can be rebound there: `Menu`, `Settings`, `Macros`, `Recorder` and `Keys`,
 bound by default to `Alt+Space`, `Alt+,`, `Alt+M`, `Alt+R` and `Alt+K`. The
@@ -239,6 +249,7 @@ mnemonics:
 | Enter (main)          | Newline                                           |
 | Shift-Enter (main)    | BackNewline                                       |
 | Right Ctrl            | Enter                                             |
+| Ctrl-Enter, Fn-Enter  | Enter (Fn-Enter arrives as the keypad Enter)      |
 | Tab / Shift-Tab       | Tab / BackTab                                     |
 | Backspace, Delete     | Backspace, Delete                                 |
 | Arrows, Home          | Up, Down, Left, Right, Home                       |

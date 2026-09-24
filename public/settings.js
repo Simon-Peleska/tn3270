@@ -572,7 +572,7 @@ const VALUE_WIDTH = 24;
  *   applyFieldBackground: (enabled: boolean) => void,
  *   applySharing: (allowView: boolean, allowEdit: boolean) => void,
  *   connect: (host: string | null) => void,
- *   persist: (settings: import('./store.js').StoredSettings) => void,
+ *   persist: (settings: Partial<import('./store.js').StoredSettings>) => void,
  * }} SettingsDeps
  */
 
@@ -796,16 +796,86 @@ export class SettingsPage extends Panel {
     }
   }
 
-  /** @returns {void} */
+  /**
+   * Only what differs from the defaults, so a default changed in a later
+   * version reaches every setting the user left alone.
+   *
+   * @returns {void}
+   */
   save() {
-    this.deps.persist({
-      theme: this.theme().name,
-      font: this.font().name,
-      model: this.savedModel,
-      screenSize: this.savedSize,
-      fitFontSize: this.fitFontSize,
-      fieldBackground: this.fieldBackground,
-    });
+    /** @type {Partial<import('./store.js').StoredSettings>} */
+    const changed = {};
+    if (this.themeIndex !== 0) changed.theme = this.theme().name;
+    if (this.fontIndex !== 0) changed.font = this.font().name;
+    if (this.savedModel !== null) changed.model = this.savedModel;
+    if (this.savedSize !== null) changed.screenSize = this.savedSize;
+    if (this.fitFontSize !== DEFAULT_FIT_FONT_SIZE)
+      changed.fitFontSize = this.fitFontSize;
+    if (!this.fieldBackground) changed.fieldBackground = false;
+    this.deps.persist(changed);
+  }
+
+  /**
+   * The screen size is left as it is: taking it back costs a reconnection, so
+   * the server's default comes with the next session instead.
+   *
+   * @param {string} key a row's key
+   * @returns {boolean} false for a row that is not a saved setting
+   */
+  resetSetting(key) {
+    if (key === "theme") {
+      this.themeIndex = 0;
+      this.deps.applyTheme(this.theme());
+    } else if (key === "font") {
+      this.fontIndex = 0;
+      this.deps.applyFont(this.font());
+    } else if (key === "model" || key === "fit") {
+      this.savedModel = null;
+      this.savedSize = null;
+      this.pendingModel = this.model;
+      this.pendingOversize = this.oversize;
+    } else if (key === "fitSize") {
+      this.fitFontSize = DEFAULT_FIT_FONT_SIZE;
+      if (sizeMode(this.pendingOversize) === "fit")
+        this.pendingOversize = this.fitToWindow();
+    } else if (key === "fieldBackground") {
+      this.fieldBackground = true;
+      this.deps.applyFieldBackground(true);
+    } else {
+      return false;
+    }
+    this.save();
+    return true;
+  }
+
+  /** @returns {void} */
+  resetAll() {
+    for (const key of ["theme", "font", "model", "fitSize", "fieldBackground"])
+      this.resetSetting(key);
+    this.say("Every setting is back to its default");
+  }
+
+  /**
+   * @param {string} name `ALL`, or a word of a setting's label: THEME, MODEL
+   * @returns {void}
+   */
+  resetNamed(name) {
+    if (name === "ALL") {
+      this.resetAll();
+      return;
+    }
+    const row = this.rows().find(
+      (entry) => entry.gap !== true && entry.label.toUpperCase().includes(name),
+    );
+    if (row === undefined) {
+      this.say(`No setting is called ${name}`);
+      return;
+    }
+    if (!this.resetSetting(row.key)) {
+      this.say(`${row.label} is not a saved setting`);
+      return;
+    }
+    this.say(`${row.label} is back to its default`);
   }
 
   /**
@@ -947,6 +1017,14 @@ export class SettingsPage extends Panel {
    * @returns {boolean}
    */
   word(word) {
+    if (word === "RESET" || word === "DEFAULTS") {
+      this.resetAll();
+      return true;
+    }
+    if (word.startsWith("RESET ")) {
+      this.resetNamed(word.slice("RESET ".length).trim());
+      return true;
+    }
     if (word !== "APPLY" && word !== "SAVE") return false;
     this.apply();
     return true;
@@ -958,8 +1036,10 @@ export class SettingsPage extends Panel {
       this.deps.applyModel(this.pendingModel);
     if (this.pendingOversize !== this.oversize)
       this.deps.applyOversize(this.pendingOversize);
-    this.savedModel = this.pendingModel;
-    this.savedSize = sizeMode(this.pendingOversize);
+    // Only a size actually changed is a choice worth keeping over the server's.
+    if (this.pendingModel !== this.model) this.savedModel = this.pendingModel;
+    if (this.pendingOversize !== this.oversize)
+      this.savedSize = sizeMode(this.pendingOversize);
     this.save();
     this.close();
   }
@@ -1080,6 +1160,7 @@ export class SettingsPage extends Panel {
     ) {
       return [
         "Saved in this browser. The host names a colour; the theme decides its look.",
+        "RESET puts every setting back; RESET THEME, or any other name, just one.",
       ];
     }
     return [

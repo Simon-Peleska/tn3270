@@ -5,6 +5,7 @@ import {
   COMMANDS,
   DEFAULT_BINDINGS,
   buildLookup,
+  changedBindings,
   comboFromEvent,
   comboLabel,
   serializeCombo,
@@ -76,7 +77,7 @@ export class KeymapPage extends Panel {
   /** @returns {void} */
   persist() {
     this.rebuildLookup();
-    this.deps.persist(this.bindings);
+    this.deps.persist(changedBindings(this.bindings));
   }
 
   /**
@@ -104,6 +105,21 @@ export class KeymapPage extends Panel {
    * @returns {void}
    */
   addCombo(commandId, combo) {
+    this.takeFromOthers(commandId, combo);
+    const key = serializeCombo(combo);
+    const current = this.combosFor(commandId);
+    if (!current.some((existing) => serializeCombo(existing) === key)) {
+      this.bindings[commandId] = [...current, combo];
+    }
+    this.persist();
+  }
+
+  /**
+   * @param {string} commandId
+   * @param {Combo} combo
+   * @returns {void}
+   */
+  takeFromOthers(commandId, combo) {
     const key = serializeCombo(combo);
     for (const [otherId, combos] of Object.entries(this.bindings)) {
       if (otherId === commandId) continue;
@@ -112,11 +128,6 @@ export class KeymapPage extends Panel {
       );
       if (kept.length !== combos.length) this.bindings[otherId] = kept;
     }
-    const current = this.combosFor(commandId);
-    if (!current.some((existing) => serializeCombo(existing) === key)) {
-      this.bindings[commandId] = [...current, combo];
-    }
-    this.persist();
   }
 
   /**
@@ -129,6 +140,19 @@ export class KeymapPage extends Panel {
     if (index < 0 || index >= combos.length) return;
     combos.splice(index, 1);
     this.bindings[commandId] = combos;
+    this.persist();
+  }
+
+  /**
+   * Its default keys are taken back from whatever they were given to since.
+   *
+   * @param {string} commandId
+   * @returns {void}
+   */
+  resetCommand(commandId) {
+    const defaults = DEFAULT_BINDINGS[commandId] ?? [];
+    for (const combo of defaults) this.takeFromOthers(commandId, combo);
+    this.bindings[commandId] = defaults.map((combo) => ({ ...combo }));
     this.persist();
   }
 
@@ -230,9 +254,11 @@ export class KeymapPage extends Panel {
     if (this.mode === "combos")
       return [
         `${this.deps.keyName("Enter")} opens a line, DELETE removes a binding, ${this.deps.keyName("PF3")} goes back to the list.`,
+        "RESET puts this command's default keys back.",
       ];
     return [
       `${this.deps.keyName("Enter")} opens a command. Commands: EXPORT, IMPORT, RESET.`,
+      "RESET n, or RESET PF3, puts one command back; RESET alone puts them all.",
     ];
   }
 
@@ -308,9 +334,17 @@ export class KeymapPage extends Panel {
       return true;
     }
     if (word === "RESET" || word === "DEFAULTS") {
-      this.resetToDefaults();
-      this.selected = 0;
-      this.draw();
+      const open = COMMANDS[this.commandIndex];
+      if (this.mode === "combos" && open !== undefined) {
+        this.resetCommand(open.id);
+        this.say(`${open.label} is back to its default keys`);
+        return true;
+      }
+      this.resetAll();
+      return true;
+    }
+    if (word.startsWith("RESET ")) {
+      this.resetNamed(word.slice("RESET ".length).trim());
       return true;
     }
     if (word === "DELETE" || word === "DEL") {
@@ -318,6 +352,36 @@ export class KeymapPage extends Panel {
       return true;
     }
     return false;
+  }
+
+  /** @returns {void} */
+  resetAll() {
+    this.resetToDefaults();
+    this.selected = 0;
+    this.say("Every key is back to its default");
+  }
+
+  /**
+   * @param {string} name `ALL`, a line number, or a command's id or label
+   * @returns {void}
+   */
+  resetNamed(name) {
+    if (name === "ALL") {
+      this.resetAll();
+      return;
+    }
+    const command = COMMANDS.find(
+      (entry, index) =>
+        String(index + 1) === name ||
+        entry.id.toUpperCase() === name ||
+        entry.label.toUpperCase() === name,
+    );
+    if (command === undefined) {
+      this.say(`No command is called ${name}`);
+      return;
+    }
+    this.resetCommand(command.id);
+    this.say(`${command.label} is back to its default keys`);
   }
 
   /** @returns {void} */

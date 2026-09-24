@@ -29,6 +29,18 @@ test("the 3270 key positions are kept: right Ctrl is Enter, Enter is New line", 
   });
 });
 
+test("Ctrl-Enter and Fn-Enter, which arrives as the keypad Enter, are Enter too", () => {
+  const enter = { kind: "action", action: "Enter", args: [] };
+  assert.deepEqual(
+    mapKey(key({ key: "Enter", code: "Enter", ctrlKey: true }), lookup),
+    enter,
+  );
+  assert.deepEqual(
+    mapKey(key({ key: "Enter", code: "NumpadEnter" }), lookup),
+    enter,
+  );
+});
+
 test("holding the Enter key down does not machine-gun the host", () => {
   assert.equal(
     mapKey(
