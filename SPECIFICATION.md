@@ -476,22 +476,23 @@ needs a narrower one puts authentication in front of it (section 8).
 `config.jsonc`, overridable with the `TN3270_CONFIG` environment variable. JSONC:
 `//` and `/* */` comments and trailing commas are accepted.
 
-| Setting                         | Default          | Meaning                                                                                                                                 |
-| ------------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `server.host`                   | `127.0.0.1`      | Listen address                                                                                                                          |
-| `server.port`                   | `8017`           | Listen port                                                                                                                             |
-| `b3270.path`                    | `b3270`          | Executable, resolved from `PATH`                                                                                                        |
-| `b3270.model`                   | `2`              | 3270 model a session starts on, 2–5; changeable from the settings panel                                                                 |
-| `b3270.defaultHost`             | `null`           | Connect new sessions here; `null` starts disconnected                                                                                   |
-| `b3270.extraArgs`               | `[]`             | Appended verbatim, e.g. `["-cafile","/path/ca.pem"]`                                                                                    |
-| `sessions.maxSessions`          | `16`             | Refuses more with `E3002`                                                                                                               |
-| `sessions.maxViewersPerSession` | `8`              | Refuses more with `E3003`                                                                                                               |
-| `sessions.idleTimeoutMs`        | `300000`         | Viewer-less session lifetime; `0` disables reaping                                                                                      |
-| `security.allowedHosts`         | `[]`             | Empty = any host. An entry with a port matches exactly; without one, any port on that host                                              |
-| `security.trustProxyHeaders`    | `false`          | Take the client's address from `X-Forwarded-For` and their name from `X-Remote-User`. Only with a reverse proxy in front that sets both |
-| `logLevel`                      | `info`           | `debug` logs every line exchanged with b3270                                                                                            |
-| `logFile`                       | `log/tn3270.log` | Kept as well as stderr, and rolled over to `<logFile>.1`; `""` is stderr only                                                           |
-| `logMaxBytes`                   | `10485760`       | Size at which the log rolls over, so the pair is never more than twice this                                                             |
+| Setting                         | Default              | Meaning                                                                                                                                                                               |
+| ------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `server.host`                   | `127.0.0.1`          | Listen address                                                                                                                                                                        |
+| `server.port`                   | `8017`               | Listen port                                                                                                                                                                           |
+| `b3270.path`                    | `b3270`              | Executable, resolved from `PATH`                                                                                                                                                      |
+| `b3270.model`                   | `2`                  | 3270 model a session starts on, 2–5; changeable from the settings panel                                                                                                               |
+| `b3270.defaultHost`             | `null`               | Connect new sessions here; `null` starts disconnected                                                                                                                                 |
+| `b3270.extraArgs`               | `[]`                 | Appended verbatim, e.g. `["-cafile","/path/ca.pem"]`                                                                                                                                  |
+| `b3270.settings`                | `{"nopSeconds": 60}` | b3270 resources, each passed as `-xrm`. `nopSeconds` sends a TELNET NOP after that many quiet seconds, so a firewall or NAT never drops the host connection as idle; `0` turns it off |
+| `sessions.maxSessions`          | `16`                 | Refuses more with `E3002`                                                                                                                                                             |
+| `sessions.maxViewersPerSession` | `8`                  | Refuses more with `E3003`                                                                                                                                                             |
+| `sessions.idleTimeoutMs`        | `300000`             | Viewer-less session lifetime; `0` disables reaping                                                                                                                                    |
+| `security.allowedHosts`         | `[]`                 | Empty = any host. An entry with a port matches exactly; without one, any port on that host                                                                                            |
+| `security.trustProxyHeaders`    | `false`              | Take the client's address from `X-Forwarded-For` and their name from `X-Remote-User`. Only with a reverse proxy in front that sets both                                               |
+| `logLevel`                      | `info`               | `debug` logs every line exchanged with b3270                                                                                                                                          |
+| `logFile`                       | `log/tn3270.log`     | Kept as well as stderr, and rolled over to `<logFile>.1`; `""` is stderr only                                                                                                         |
+| `logMaxBytes`                   | `10485760`           | Size at which the log rolls over, so the pair is never more than twice this                                                                                                           |
 
 ## 8. Error codes
 

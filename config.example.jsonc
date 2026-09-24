@@ -28,6 +28,8 @@
       // "monoCase": true,
       // "typeahead": false,
       // "verifyHostCert": true,
+      // A TELNET NOP after this many quiet seconds keeps a firewall from
+      // dropping the host connection; 60 unless set, 0 turns it off.
       // "nopSeconds": 60
     },
 

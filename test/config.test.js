@@ -109,6 +109,15 @@ test("any b3270 resource can be set, and reaches b3270 as a string", () => {
   });
 });
 
+test("a quiet host connection is kept open with a NOP every minute, unless the config says otherwise", () => {
+  assert.deepEqual(validateConfig({}).b3270.settings, { nopSeconds: "60" });
+  assert.deepEqual(
+    validateConfig({ b3270: { settings: { nopSeconds: 0, monoCase: true } } })
+      .b3270.settings,
+    { nopSeconds: "0", monoCase: "true" },
+  );
+});
+
 test("a resource name that is not a resource name is refused", () => {
   // These land in `-xrm "b3270.<name>: <value>"`: a space or colon rewrites the argument.
   for (const name of ["code page", "codePage: x", "", "a;b", "-model"]) {

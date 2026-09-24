@@ -96,7 +96,9 @@ const DEFAULTS = {
     path: "b3270",
     model: 2,
     defaultHost: null,
-    settings: {},
+    // A TELNET NOP when the line has been quiet this long, so a firewall or
+    // NAT that drops idle connections never sees one idle.
+    settings: { nopSeconds: "60" },
     extraArgs: [],
   },
   sessions: {
@@ -311,7 +313,10 @@ export function validateConfig(raw) {
       path: str(b3270Section, "b3270", "path", DEFAULTS.b3270.path),
       model,
       defaultHost: rawDefaultHost === undefined ? null : rawDefaultHost,
-      settings: resources(b3270Section, "b3270", "settings"),
+      settings: {
+        ...DEFAULTS.b3270.settings,
+        ...resources(b3270Section, "b3270", "settings"),
+      },
       extraArgs: strArray(
         b3270Section,
         "b3270",
