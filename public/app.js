@@ -2,6 +2,7 @@ import { Pane, Screen } from "./canvas.js";
 import { renderOia, keyboardLocked } from "./oia.js";
 import { PANEL_COMMANDS, commandForEvent, mapKey } from "./keymap.js";
 import { paint } from "./panel.js";
+import { keyAt, keyFace, keyboardTop, placeKeys } from "./screen-keyboard.js";
 import { HelpPage, MenuPage } from "./menu.js";
 import { SettingsPage, modeOversize } from "./settings.js";
 import { MacrosPage } from "./macros.js";
@@ -51,22 +52,39 @@ if (!(canvasEl instanceof HTMLCanvasElement))
  */
 let screen;
 
+const KEYBOARD_LABEL = "[Kbd]";
 const RESET_LABEL = "[Reset]";
 const MENU_LABEL = "[Menu]";
 // The menu is the way to every panel, so one button reaches all of them. They
 // sit at the right end of the status row, which this page lays out whole.
-const BUTTONS = `${RESET_LABEL} ${MENU_LABEL}`;
+const BUTTONS = `${KEYBOARD_LABEL} ${RESET_LABEL} ${MENU_LABEL}`;
 
 /**
- * Where the two buttons start. `drawChrome` puts them here and `canvasClicked`
+ * Where the buttons start. `drawChrome` puts them here and `canvasClicked`
  * hit-tests them here, so the row that is drawn and the row that is clickable
  * cannot drift apart.
  *
  * @param {number} cols
- * @returns {{ reset: number, menu: number }}
+ * @returns {{ keyboard: number, reset: number, menu: number }}
  */
 function buttonColumns(cols) {
-  return { reset: cols - BUTTONS.length, menu: cols - MENU_LABEL.length };
+  return {
+    keyboard: cols - BUTTONS.length,
+    reset: cols - `${RESET_LABEL} ${MENU_LABEL}`.length,
+    menu: cols - MENU_LABEL.length,
+  };
+}
+
+/** Whether the on-screen keyboard is over the session being looked at. */
+let keyboardShown = false;
+
+/**
+ * @param {import('./canvas.js').Pane} canvas
+ * @returns {import('./screen-keyboard.js').PlacedKey[]}
+ */
+function keyboardKeys(canvas) {
+  const cursorRow = canvas.host.cursor?.row ?? 0;
+  return placeKeys(canvas.cols, keyboardTop(canvas.rows, cursorRow));
 }
 
 /** @type {{ code: string, message: string } | null} */
@@ -109,12 +127,12 @@ function drawChrome(slot) {
     overlay.put(
       bottom,
       0,
-      renderOia(oiaState(slot), cursor, buttons.reset - 1),
+      renderOia(oiaState(slot), cursor, buttons.keyboard - 1),
       style,
     );
     overlay.put(
       bottom,
-      buttons.reset,
+      buttons.keyboard,
       BUTTONS,
       paint(statusInk, statusBar, true),
     );
@@ -122,6 +140,20 @@ function drawChrome(slot) {
 
   // Everything below belongs to the session being looked at, not to every pane.
   if (!onScreen) return;
+
+  if (keyboardShown && panel === null) {
+    const keys = keyboardKeys(canvas);
+    const rows = new Set(keys.map((key) => key.row));
+    for (const row of rows)
+      overlay.put(row, 0, wide(""), paint(statusBar, statusBar));
+    for (const key of keys)
+      overlay.put(
+        key.row,
+        key.col,
+        keyFace(key),
+        paint(statusBar, statusInk, true),
+      );
+  }
 
   if (activeError !== null)
     overlay.put(
@@ -1296,6 +1328,22 @@ function canvasClicked(event) {
     }
     if (col >= buttons.reset) {
       resetScreen(slot);
+      return;
+    }
+    if (col >= buttons.keyboard) {
+      keyboardShown = !keyboardShown;
+      redraw();
+      return;
+    }
+  }
+
+  // The keyboard is opaque: a click on it, key or gap, is never a cursor move.
+  if (keyboardShown) {
+    const keys = keyboardKeys(canvas);
+    if (keys.some((key) => key.row === row)) {
+      const key = keyAt(keys, row, col);
+      if (key !== null)
+        send({ type: "action", action: key.action, args: key.args });
       return;
     }
   }
