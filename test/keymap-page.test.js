@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { KeymapPage } from "../public/keymap-page.js";
 import { COMMANDS, DEFAULT_BINDINGS, withDefaults } from "../public/keymap.js";
-import { defaultKeymapDeps, typeCommand } from "./keyevent.js";
+import { defaultKeymapDeps, key, typeCommand } from "./keyevent.js";
 
 function fixture() {
   /** @type {import('../public/keymap.js').Bindings[]} */
@@ -51,6 +51,87 @@ test("a key taken from its default command stays taken after a reload", () => {
     ...DEFAULT_BINDINGS.Clear,
     ESCAPE,
   ]);
+});
+
+/**
+ * @param {string} commandId
+ * @returns {KeymapPage} listening for a key for that command
+ */
+function listeningFor(commandId) {
+  const { page } = fixture();
+  page.show();
+  page.commandIndex = COMMANDS.findIndex((command) => command.id === commandId);
+  page.mode = "combos";
+  page.selected = page.lines().length - 1;
+  page.activate();
+  assert.equal(page.mode, "listening");
+  return page;
+}
+
+test("a combo is picked whole: Ctrl going down first is not the answer", () => {
+  const page = listeningFor("PF1");
+  page.handleKey(key({ key: "Control", code: "ControlLeft", ctrlKey: true }));
+  assert.equal(
+    page.mode,
+    "listening",
+    "Ctrl alone is only on the way to the key",
+  );
+
+  page.handleKey(key({ key: "Enter", ctrlKey: true }));
+  assert.equal(page.mode, "combos");
+  assert.deepEqual(page.combosFor("PF1"), [
+    { key: "F1", shift: false, ctrl: false, alt: false },
+    { key: "Enter", shift: false, ctrl: true, alt: false },
+  ]);
+});
+
+test("a modifier let go on its own is a binding of its own", () => {
+  const page = listeningFor("PF1");
+  const rightCtrl = key({
+    key: "Control",
+    code: "ControlRight",
+    ctrlKey: true,
+  });
+  page.handleKey(rightCtrl);
+  page.released(key({ key: "Control", code: "ControlRight" }));
+
+  assert.equal(page.mode, "combos");
+  assert.deepEqual(page.combosFor("PF1").at(-1), {
+    key: "ControlRight",
+    shift: false,
+    ctrl: true,
+    alt: false,
+  });
+});
+
+test("AltGr on Windows, which comes as a fake left Ctrl and then Ctrl+Alt, picks the character alone", () => {
+  const page = listeningFor("PF1");
+  page.handleKey(key({ key: "Control", code: "ControlLeft", ctrlKey: true }));
+  page.handleKey(
+    key({
+      key: "AltGraph",
+      code: "AltRight",
+      ctrlKey: true,
+      altKey: true,
+      altGraph: true,
+    }),
+  );
+  page.handleKey(
+    key({
+      key: "\\",
+      code: "Minus",
+      ctrlKey: true,
+      altKey: true,
+      altGraph: true,
+    }),
+  );
+
+  assert.deepEqual(page.combosFor("PF1").at(-1), {
+    key: "\\",
+    shift: false,
+    ctrl: false,
+    alt: false,
+  });
 });
 
 test("RESET inside a command puts its default keys back, taking them from wherever they went", () => {

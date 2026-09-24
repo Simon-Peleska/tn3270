@@ -252,9 +252,17 @@ command; `RESET n` or `RESET PF3` restores one command from the list, and
 `RESET ALL` restores everything from anywhere. A command put back takes its
 default keys back from whatever they were bound to since.
 
+Picking a key, on the Keys panel or for a macro, takes the whole combination:
+a modifier going down is only on the way to the key, so `Ctrl+Enter` can be
+pressed as it is typed, and a modifier counts on its own only when it is let go
+with nothing pressed in between, which is how right Ctrl alone is bound. F12 or
+Esc cancels. While a key is being picked every key goes to the panel, the
+session prefix and the panel shortcuts included. AltGr is not a modifier here
+or on the screen: Windows reports it as Ctrl+Alt, but a `\` or `{` typed with
+it is the character, on a German keyboard as on any other.
+
 A macro can have a key of its own: `KEY` on the Macros panel, with the cursor
-on the macro, waits for the next key pressed (a modifier alone does not count,
-so `Ctrl+1` can be pressed as it is typed; F12 or Esc cancels) and binds it.
+on the macro, waits for a key picked that way and binds it.
 `UNKEY` removes it. The list shows each macro's key after its step count. The
 key is kept in the keymap, as a command named `Macro <name>` that the Keys
 panel lists after the fixed ones, so it follows the keymap's one rule: a key
@@ -316,6 +324,12 @@ action for: the server finds the first typeable cell of the nearest row above
 the cursor's — wrapping off the top of the screen to the bottom, as Newline
 wraps off the bottom — from the field map it already keeps, and sends a cursor
 move. A screen with no fields on it falls back to the start of the row above.
+
+Keys pressed while the host has the keyboard (`X SYSTEM`, `X Wait`) are not
+lost: the server queues them and runs them in the order they were pressed once
+the host answers, each only after the one before it is done. Reset, Attn and
+SysReq skip the queue, since they are how a user gets out of a wait, and Reset
+throws away whatever was typed ahead, as it does on a 3270.
 
 Plain Ctrl and Meta combinations are left to the browser, except Ctrl-B (the
 session prefix, below) and Ctrl-C/Ctrl-V, which copy and paste the system

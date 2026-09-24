@@ -7,7 +7,7 @@ import {
   buildLookup,
   macroCommand,
   changedBindings,
-  comboFromEvent,
+  ComboCapture,
   comboLabel,
   serializeCombo,
   withDefaults,
@@ -54,6 +54,8 @@ export class KeymapPage extends Panel {
     this.mode = "commands";
     /** @type {number} index into commands(), the command the combos list belongs to */
     this.commandIndex = 0;
+    /** @type {ComboCapture} the key being picked, while listening */
+    this.capture = new ComboCapture();
   }
 
   /**
@@ -355,7 +357,10 @@ export class KeymapPage extends Panel {
       this.draw();
       return;
     }
-    if (this.selected === this.lines().length - 1) this.mode = "listening";
+    if (this.selected === this.lines().length - 1) {
+      this.mode = "listening";
+      this.capture = new ComboCapture();
+    }
     this.draw();
   }
 
@@ -458,12 +463,38 @@ export class KeymapPage extends Panel {
       return true;
     }
     if (event.metaKey) return true;
+    const picked = this.capture.keydown(event);
+    if (picked !== null) this.bind(picked);
+    return true;
+  }
+
+  /** @override */
+  capturing() {
+    return this.mode === "listening";
+  }
+
+  /**
+   * @override
+   * @param {KeyboardEvent} event
+   * @returns {boolean}
+   */
+  released(event) {
+    if (this.mode !== "listening") return false;
+    const picked = this.capture.keyup(event);
+    if (picked !== null) this.bind(picked);
+    return true;
+  }
+
+  /**
+   * @param {Combo} picked
+   * @returns {void}
+   */
+  bind(picked) {
     const command = this.commands()[this.commandIndex];
-    if (command) this.addCombo(command.id, comboFromEvent(event));
+    if (command) this.addCombo(command.id, picked);
     this.mode = "combos";
     this.selected = 0;
     this.draw();
-    return true;
   }
 
   /**

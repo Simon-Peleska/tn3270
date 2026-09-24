@@ -5,6 +5,8 @@
  * shape of a panel lives here.
  */
 
+import { heldModifiers } from "./keymap.js";
+
 /** @typedef {import('./settings.js').Theme} Theme */
 
 /**
@@ -391,7 +393,8 @@ const COMMAND_ACTIONS = Object.freeze({
  * @returns {string | null} the text after the key, or null when it was not for it
  */
 export function typeKey(text, event, command) {
-  if (event.ctrlKey || event.metaKey || event.altKey) return null;
+  const { ctrl, alt } = heldModifiers(event);
+  if (ctrl || alt || event.metaKey) return null;
   if (command === "Backspace") return text.slice(0, -1);
   if (event.key.length === 1) return text + event.key;
   return null;
@@ -579,6 +582,24 @@ export class Panel {
    * @returns {boolean} true when a modal state of the page took the key first
    */
   override(_event) {
+    return false;
+  }
+
+  /**
+   * Picking a key for a binding takes every key, before the prefix and the
+   * panel shortcuts get to claim theirs.
+   *
+   * @returns {boolean}
+   */
+  capturing() {
+    return false;
+  }
+
+  /**
+   * @param {KeyboardEvent} _event a key let go
+   * @returns {boolean} true when the page took it
+   */
+  released(_event) {
     return false;
   }
 
@@ -787,7 +808,7 @@ export class Panel {
     }
     // A key the keymap has nothing for here is the browser's: reload, devtools,
     // and the clipboard, which app.js dispatches for panel and screen alike.
-    if (event.ctrlKey || event.metaKey) return false;
+    if (heldModifiers(event).ctrl || event.metaKey) return false;
     if (!this.onCommand && this.typed(event)) return true;
 
     const typed = typeKey(this.command, event, command);

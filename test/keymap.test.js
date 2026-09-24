@@ -293,6 +293,36 @@ test("a printable key is text and Alt is otherwise left to the page", () => {
   );
 });
 
+test("AltGr characters are text on Windows, which reports AltGr as Ctrl+Alt", () => {
+  for (const [character, code] of [
+    ["\\", "Minus"],
+    ["{", "Digit7"],
+    ["[", "Digit8"],
+    ["]", "Digit9"],
+    ["}", "Digit0"],
+    ["@", "KeyQ"],
+    ["~", "BracketRight"],
+    ["|", "IntlBackslash"],
+  ]) {
+    const altGr = key({
+      key: character,
+      code,
+      ctrlKey: true,
+      altKey: true,
+      altGraph: true,
+    });
+    assert.deepEqual(mapKey(altGr, lookup), { kind: "text", value: character });
+  }
+  // A real Ctrl+Alt combo, with no AltGr about it, is still the browser's.
+  assert.equal(
+    mapKey(
+      key({ key: "x", code: "KeyX", ctrlKey: true, altKey: true }),
+      lookup,
+    ),
+    null,
+  );
+});
+
 test("a binding can be removed even with none left for its command", () => {
   const empty = buildLookup({ ...DEFAULT_BINDINGS, Attn: [] });
   assert.equal(mapKey(key({ key: "Escape", code: "Escape" }), empty), null);

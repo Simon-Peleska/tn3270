@@ -510,6 +510,23 @@ test("a renamed macro keeps its key, and a deleted one gives it back", () => {
   assert.equal(keymap.bindings["Macro:New"], undefined);
 });
 
+test("KEY can give a macro right Ctrl alone, let go without another key", () => {
+  const { page, calls } = fixture();
+  page.macros.push({ name: "Logon", steps: [] });
+  page.show();
+  page.selected = 1;
+
+  typeCommand(page, "key");
+  page.handleKey(key({ key: "Control", code: "ControlRight", ctrlKey: true }));
+  assert.equal(page.listening, 0);
+  page.released(key({ key: "Control", code: "ControlRight" }));
+
+  assert.equal(page.listening, null);
+  assert.deepEqual(calls.keymaps.at(-1)?.["Macro:Logon"], [
+    { key: "ControlRight", shift: false, ctrl: true, alt: false },
+  ]);
+});
+
 test("Escape while listening for a key binds nothing", () => {
   const { page } = fixture();
   /** @type {Macro} */

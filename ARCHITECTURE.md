@@ -129,8 +129,9 @@ quiet.
 Extra viewers come in only on the owner's yes, as observers, and at most one of
 them is let edit beside the owner (SPECIFICATION §3). Two controllers at once
 needed no redesign — because **there are no locks anywhere**. Concurrent input cannot corrupt anything: every keystroke from every
-viewer funnels into a single ordered stdin queue, and the resulting screen comes
-back to everyone identically.
+viewer funnels into the session's one input queue, which hands b3270 the next
+input only once it has finished the last, and the resulting screen comes back to
+everyone identically.
 
 ## REST: the emulator's own interface, forwarded
 

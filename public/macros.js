@@ -6,15 +6,17 @@
 
 import { Panel, typeKey, keyLegend } from "./panel.js";
 import { macrosToXml, parseMacrosXml } from "./macro-xml.js";
-import { comboFromEvent, comboLabel, macroCommand } from "./keymap.js";
+import {
+  ComboCapture,
+  comboLabel,
+  heldModifiers,
+  macroCommand,
+} from "./keymap.js";
 
 /** @typedef {import('./macro-xml.js').Macro} Macro */
 /** @typedef {import('./macro-xml.js').MacroStep} MacroStep */
 
 const NAME_WIDTH = 24;
-
-/** Held on their own they are only on the way to the real key. */
-const MODIFIER_KEYS = new Set(["Shift", "Control", "Alt", "AltGraph"]);
 
 /**
  * @param {string} name
@@ -66,6 +68,8 @@ export class MacrosPage extends Panel {
     this.marked = new Set();
     /** @type {number | null} the macro waiting for its key to be pressed */
     this.listening = null;
+    /** @type {ComboCapture} the key being picked, while listening */
+    this.capture = new ComboCapture();
   }
 
   /**
@@ -512,6 +516,7 @@ export class MacrosPage extends Panel {
    */
   listenForKey(index) {
     this.listening = index;
+    this.capture = new ComboCapture();
     this.onCommand = false;
     this.selected = index + 1;
     this.draw();
@@ -524,6 +529,33 @@ export class MacrosPage extends Panel {
   mark(index) {
     if (this.marked.has(index)) this.marked.delete(index);
     else this.marked.add(index);
+    this.draw();
+  }
+
+  /** @override */
+  capturing() {
+    return this.listening !== null;
+  }
+
+  /**
+   * @override
+   * @param {KeyboardEvent} event
+   * @returns {boolean}
+   */
+  released(event) {
+    if (this.listening === null) return false;
+    const picked = this.capture.keyup(event);
+    if (picked !== null) this.bindListened(picked);
+    return true;
+  }
+
+  /**
+   * @param {import('./keymap.js').Combo} picked
+   * @returns {void}
+   */
+  bindListened(picked) {
+    if (this.listening !== null) this.bindKey(this.listening, picked);
+    this.listening = null;
     this.draw();
   }
 
@@ -544,10 +576,9 @@ export class MacrosPage extends Panel {
         this.draw();
         return true;
       }
-      if (event.metaKey || MODIFIER_KEYS.has(event.key)) return true;
-      this.bindKey(this.listening, comboFromEvent(event));
-      this.listening = null;
-      this.draw();
+      if (event.metaKey) return true;
+      const picked = this.capture.keydown(event);
+      if (picked !== null) this.bindListened(picked);
       return true;
     }
     if (this.naming === null) return false;
@@ -563,7 +594,7 @@ export class MacrosPage extends Panel {
       this.draw();
       return true;
     }
-    if (event.ctrlKey || event.metaKey) return false;
+    if (heldModifiers(event).ctrl || event.metaKey) return false;
     const typed = typeKey(this.nameBuffer, event, command);
     if (typed !== null) {
       this.nameBuffer = typed;

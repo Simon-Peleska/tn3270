@@ -13,7 +13,7 @@ import {
  * a letter or a digit has to be given both.
  *
  * @param {{ key?: string, code?: string, ctrlKey?: boolean, altKey?: boolean,
- *   metaKey?: boolean, shiftKey?: boolean, repeat?: boolean }} init
+ *   metaKey?: boolean, shiftKey?: boolean, repeat?: boolean, altGraph?: boolean }} init
  * @returns {KeyboardEvent}
  */
 export function key(init) {
@@ -26,6 +26,7 @@ export function key(init) {
     metaKey: init.metaKey ?? false,
     shiftKey: init.shiftKey ?? false,
     repeat: init.repeat ?? false,
+    getModifierState: (name) => name === "AltGraph" && init.altGraph === true,
   });
 }
 

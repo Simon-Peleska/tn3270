@@ -83,12 +83,17 @@ export async function waitUntil(predicate, message, timeoutMs = 5000) {
 
 /**
  * b3270's stdout is one ordered stream: once our own run-result comes back,
- * every indication before it has been applied to the model.
+ * every indication before it has been applied to the model. Input the session
+ * has queued goes first, or the Reset would overtake it.
  *
  * @param {import('../server/session.js').Session} session
  * @returns {Promise<void>}
  */
-export function settle(session) {
+export async function settle(session) {
+  await waitUntil(
+    () => session.inputQueue.length === 0 && session.inputTag === null,
+    "the queued input to run",
+  );
   const b3270 = session.b3270;
   const previous = b3270.handlers.onIndication;
   return new Promise((resolve) => {

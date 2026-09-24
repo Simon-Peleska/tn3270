@@ -232,15 +232,67 @@ export function normalizeKey(character) {
 }
 
 /**
+ * Windows sends AltGr as Ctrl+Alt, so `\` on a German board arrives looking like
+ * Ctrl+Alt+\. The character already says what AltGr made of the key, so the two
+ * flags it fakes are dropped. Every place that asks whether Ctrl or Alt is held
+ * asks here.
+ *
+ * @param {KeyboardEvent} event
+ * @returns {{ ctrl: boolean, alt: boolean }}
+ */
+export function heldModifiers(event) {
+  if (event.getModifierState?.("AltGraph") === true)
+    return { ctrl: false, alt: false };
+  return { ctrl: event.ctrlKey, alt: event.altKey };
+}
+
+/**
  * @param {KeyboardEvent} event
  * @returns {Combo}
  */
 export function comboFromEvent(event) {
   return combo(keyIdentity(event), {
     shift: event.shiftKey,
-    ctrl: event.ctrlKey,
-    alt: event.altKey,
+    ...heldModifiers(event),
   });
+}
+
+/**
+ * Picking the key for a binding. A modifier goes down before the key it
+ * modifies, so its keydown is not the answer yet: the combo is the first other
+ * key pressed, or a modifier let go with nothing pressed while it was held,
+ * which is how right Ctrl alone is bound.
+ */
+export class ComboCapture {
+  constructor() {
+    /** @type {Combo | null} the modifier held last, if nothing came after it */
+    this.lone = null;
+  }
+
+  /**
+   * @param {KeyboardEvent} event
+   * @returns {Combo | null} the combo, once the key is a real one
+   */
+  keydown(event) {
+    const pressed = comboFromEvent(event);
+    if (MODIFIER_KEYS[pressed.key] === undefined) {
+      this.lone = null;
+      return pressed;
+    }
+    this.lone = pressed;
+    return null;
+  }
+
+  /**
+   * @param {KeyboardEvent} event
+   * @returns {Combo | null} the modifier, if it was let go on its own
+   */
+  keyup(event) {
+    const lone = this.lone;
+    this.lone = null;
+    if (lone === null || lone.key !== event.code) return null;
+    return lone;
+  }
 }
 
 /**
@@ -429,7 +481,8 @@ export function mapKey(event, lookup) {
   }
 
   // Unclaimed Ctrl/Alt combos belong to the browser.
-  if (event.ctrlKey || event.altKey) return null;
+  const { ctrl, alt } = heldModifiers(event);
+  if (ctrl || alt) return null;
 
   // One character is text; longer is a named key nothing binds.
   if ([...event.key].length === 1) return { kind: "text", value: event.key };

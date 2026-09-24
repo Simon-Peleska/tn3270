@@ -1,6 +1,7 @@
 // The settings panel, drawn as cells into the screen itself rather than HTML.
 
 import { Panel, cycle, keyLegend } from "./panel.js";
+import { heldModifiers } from "./keymap.js";
 
 /**
  * @typedef {object} Theme
@@ -970,7 +971,11 @@ export class SettingsPage extends Panel {
       this.draw();
       return true;
     }
-    if (event.key.length !== 1 || event.altKey || !this.insert(event.key))
+    if (
+      event.key.length !== 1 ||
+      heldModifiers(event).alt ||
+      !this.insert(event.key)
+    )
       return false;
     this.draw();
     return true;

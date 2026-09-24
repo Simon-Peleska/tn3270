@@ -1279,10 +1279,19 @@ function jumpToHint(letter) {
 }
 
 // The prefix goes first: a disconnected session has settings open over it, and
-// being unable to switch away would be a trap.
+// being unable to switch away would be a trap. Only a key being picked for a
+// binding goes before it, since that key may well be the prefix itself.
 window.addEventListener(
   "keydown",
   (event) => {
+    const capturing = openPanel();
+    if (capturing !== null && capturing.capturing()) {
+      event.preventDefault();
+      event.stopPropagation();
+      capturing.handleKey(event);
+      return;
+    }
+
     const decision = prefix.handleKey(
       event,
       hints.map((hint) => hint.letter),
@@ -1317,6 +1326,18 @@ window.addEventListener(
 
     // Ctrl and Meta fall through on purpose: copy, paste and reload work in a panel.
     if (openPanel()?.handleKey(event) === true) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  },
+  true,
+);
+
+// A modifier on its own is only a binding once it is let go alone.
+window.addEventListener(
+  "keyup",
+  (event) => {
+    if (openPanel()?.released(event) === true) {
       event.preventDefault();
       event.stopPropagation();
     }

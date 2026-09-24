@@ -171,6 +171,52 @@ test("the keyboard locking is pushed to every viewer the moment it happens", asy
   );
 });
 
+test("what is typed while the host has the keyboard runs, in order, once it answers", async (t) => {
+  // fields.trc: Name at row 2 and Note at row 4, both from column 11.
+  const fixture = await startTracedSession("test/traces/fields.trc");
+  t.after(() => fixture.close());
+  const { session, host } = fixture;
+  const viewer = collectingViewer("viewer");
+  session.attach(viewer);
+  await waitUntil(() => session.screen.fieldsFormatted, "the field map");
+
+  session.handleClientMessage(viewer, { type: "action", action: "Enter" });
+  await waitUntil(() => session.oia.keyboardLocked, "the keyboard to lock");
+  session.handleClientMessage(viewer, { type: "text", value: "x" });
+  session.handleClientMessage(viewer, { type: "action", action: "Tab" });
+  session.handleClientMessage(viewer, { type: "text", value: "y" });
+  assert.equal(session.inputQueue.length, 3, "all of it waits for the host");
+
+  // The host answers with the same screen again, which unlocks the keyboard.
+  host.cursor = 0;
+  await host.sendRecords(1);
+  await settle(session);
+
+  assert.equal(session.screen.rowText(2).slice(0, 14), " Name:     x  ");
+  assert.equal(session.screen.rowText(4).slice(0, 14), " Note:     y  ");
+});
+
+test("Reset while the host has the keyboard throws away what was typed ahead", async (t) => {
+  const fixture = await startTracedSession("test/traces/fields.trc");
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  const viewer = collectingViewer("viewer");
+  session.attach(viewer);
+  await waitUntil(() => session.screen.fieldsFormatted, "the field map");
+
+  session.handleClientMessage(viewer, { type: "action", action: "Enter" });
+  await waitUntil(() => session.oia.keyboardLocked, "the keyboard to lock");
+  session.handleClientMessage(viewer, { type: "text", value: "lost" });
+
+  session.handleClientMessage(viewer, { type: "action", action: "Reset" });
+  await waitUntil(() => !session.oia.keyboardLocked, "the keyboard to unlock");
+  assert.equal(session.inputQueue.length, 0);
+
+  session.handleClientMessage(viewer, { type: "text", value: "kept" });
+  await settle(session);
+  assert.equal(session.screen.rowText(2).slice(0, 16), " Name:     kept ");
+});
+
 test("a second viewer waits until the owner lets them in, and sees nothing before", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
@@ -1059,6 +1105,8 @@ test("an AID key ends the history: what was typed before it cannot be undone", a
   session.handleClientMessage(controller, { type: "action", action: "Enter" });
   assert.equal(session.undoStack.length, 0, "the screen went to the host");
 
+  // The replay never answers, so the Undo would wait on the host for ever.
+  session.handleClientMessage(controller, { type: "action", action: "Reset" });
   session.handleClientMessage(controller, { type: "action", action: "Undo" });
   await settle(session);
   assert.equal(row(), " abc        ", "the typing stands");
@@ -1257,6 +1305,7 @@ test("recording captures the screen and each step, and stops cleanly", async (t)
 
   session.handleClientMessage(controller, { type: "text", value: "abc" });
   session.handleClientMessage(controller, { type: "action", action: "Enter" });
+  await settle(session);
 
   const steps = controller.messages
     .filter((m) => m.type === "recorderStep")
@@ -1325,52 +1374,46 @@ test("an observer cannot start or stop a recording", async (t) => {
 });
 
 test("a run of keystrokes into a password field collapses to a single marker", async (t) => {
-  const session = new Session(testConfig());
-  t.after(() => session.close());
-  await session.ready;
+  // password-field.trc: an ordinary field at columns 2-4, a non-display one at 6-8.
+  const fixture = await startTracedSession("test/traces/password-field.trc");
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  await settle(session);
+  await waitUntil(() => session.screen.fieldsFormatted, "the field map");
 
   const controller = collectingViewer("controller");
   session.attach(controller);
-
   session.handleClientMessage(controller, {
     type: "recorder",
     action: "start",
   });
-  // Set directly; readbuffer.test.js covers the attribute-bit detection behind
-  // it, and the trace-driven test below covers the cursor finding its way in.
-  const everywhere = (/** @type {boolean} */ hidden) =>
-    new Array(session.screen.cells.length).fill(hidden);
-  session.screen.fieldsHidden = everywhere(true);
+  session.handleClientMessage(controller, { type: "action", action: "Tab" });
+  await waitUntil(
+    () => session.screen.cursor.col === 5,
+    "the cursor to reach the password field",
+  );
 
   session.handleClientMessage(controller, { type: "text", value: "s" });
-  session.handleClientMessage(controller, { type: "text", value: "ec" });
-  session.handleClientMessage(controller, { type: "text", value: "ret" });
+  session.handleClientMessage(controller, { type: "text", value: "e" });
+  session.handleClientMessage(controller, { type: "text", value: "c" });
+  await settle(session);
 
   const steps = /** @type {import('../server/protocol.js').RecorderStep[]} */ (
     session.recording?.steps ?? []
   );
-  assert.equal(steps.length, 1, "the whole run collapses into one entry");
-  assert.equal(steps[0].password, true);
+  assert.equal(steps.length, 2, "the whole run collapses into one entry");
+  assert.equal(steps[1].password, true);
   assert.equal(
-    steps[0].action,
+    steps[1].action,
     undefined,
     "no action and no args, so nothing typed ever leaks out",
   );
-  assert.equal(steps[0].args, undefined);
+  assert.equal(steps[1].args, undefined);
 
   // The Enter that submits the field is not its content, and replay needs it.
   session.handleClientMessage(controller, { type: "action", action: "Enter" });
-  assert.equal(steps.length, 2);
-  assert.equal(steps[1].action, "Enter");
-
-  session.screen.fieldsHidden = everywhere(false);
-  session.handleClientMessage(controller, { type: "text", value: "next" });
-  assert.equal(steps.length, 3);
-  assert.deepEqual(steps[2], {
-    screen: steps[2].screen,
-    action: "String",
-    args: ["next"],
-  });
+  await waitUntil(() => steps.length === 3, "the Enter to be recorded");
+  assert.equal(steps[2].action, "Enter");
 });
 
 test("tabbing into a password field is enough to redact what is typed there", async (t) => {

@@ -47,6 +47,9 @@ const AID_ACTIONS = new Set([
   "CursorSelect",
 ]);
 
+/** How a user gets out of a wait for the host, so they never wait in line. */
+const INTERRUPT_ACTIONS = new Set(["Reset", "Attn", "SysReq"]);
+
 export class Session {
   /**
    * @param {import('./config.js').Config} config
@@ -122,6 +125,11 @@ export class Session {
      * retypes pass over states that were never the user's, so they are not
      * history. */
     this.historyTag = null;
+
+    /** @type {import('./protocol.js').ClientMessage[]} Input not sent to b3270 yet. */
+    this.inputQueue = [];
+    /** @type {string | null} The r-tag of the input b3270 is working on. */
+    this.inputTag = null;
 
     /** @type {() => void} */
     this.markReady = () => {};
@@ -375,6 +383,11 @@ export class Session {
         this.scheduleFlush();
       }
 
+      if (tag !== undefined && tag === this.inputTag) {
+        this.inputTag = null;
+        this.runQueuedInput();
+      }
+
       if (tag !== undefined && tag === this.fieldReadTag) {
         this.fieldReadTag = null;
         if (result.success) {
@@ -445,10 +458,11 @@ export class Session {
    * in the middle of it were never anyone's.
    *
    * @param {{ action: string, args?: string[] }[]} actions
-   * @returns {void}
+   * @returns {string} the r-tag
    */
   runEdit(actions) {
     this.historyTag = this.b3270.runActions(actions);
+    return this.historyTag;
   }
 
   /**
@@ -507,7 +521,7 @@ export class Session {
    * and retyping only the runs that differ, then returning the cursor.
    *
    * @param {boolean} back true undoes, false redoes
-   * @returns {void}
+   * @returns {string | null} the r-tag, or null for nothing to step to
    */
   stepHistory(back) {
     const from = back ? this.undoStack : this.redoStack;
@@ -515,7 +529,7 @@ export class Session {
     const target = from.pop();
     if (target === undefined || this.snapshot === null) {
       this.log.info(back ? "nothing to undo" : "nothing to redo", {});
-      return;
+      return null;
     }
     to.push(this.snapshot);
 
@@ -547,7 +561,7 @@ export class Session {
     });
 
     this.snapshot = target;
-    this.runEdit(actions);
+    return this.runEdit(actions);
   }
 
   /** @returns {string} `<rows>x<cols>` */
@@ -829,71 +843,10 @@ export class Session {
 
     switch (message.type) {
       case "action":
-        // Ours alone, and not an action a recording could ever replay.
-        if (message.action === "Undo" || message.action === "Redo") {
-          this.stepHistory(message.action === "Undo");
-          return;
-        }
-        // Past an AID key the screen belongs to the host, so there is nothing
-        // left to put back.
-        if (AID_ACTIONS.has(message.action)) this.clearHistory(message.action);
-        // Control keys carry no field content, so they are always safe to record.
-        this.record(message.action, message.args ?? []);
-        // b3270's Backspace only moves left, as real 3270 hardware does; a PC
-        // keyboard expects a delete, and the field map says if there is room.
-        if (message.action === "Backspace") {
-          if (this.canBackspace())
-            this.runEdit([{ action: "Left" }, { action: "Delete" }]);
-          return;
-        }
-        // b3270 has no upward Newline; the cached field map answers it here.
-        if (message.action === "BackNewline") {
-          const target = this.backNewlineTarget();
-          this.b3270.runActions([
-            {
-              action: "MoveCursor1",
-              args: [String(target.row + 1), String(target.col + 1)],
-            },
-          ]);
-          return;
-        }
-        this.runEdit([{ action: message.action, args: message.args ?? [] }]);
-        return;
       case "text":
-        if (message.value !== "") {
-          if (this.screen.cursorHidden()) this.recordPassword();
-          else this.record("String", [message.value]);
-          const nudge = this.typingNudge();
-          const actions =
-            nudge === null
-              ? [{ action: "String", args: [message.value] }]
-              : [
-                  {
-                    action: "MoveCursor1",
-                    args: [String(nudge.row + 1), String(nudge.col + 1)],
-                  },
-                  { action: "String", args: [message.value] },
-                ];
-          this.runEdit(actions);
-        }
+      case "paste":
+        this.queueInput(message);
         return;
-      case "paste": {
-        if (message.text !== "") {
-          if (this.screen.cursorHidden()) this.recordPassword();
-          else this.record("PasteString", [message.text]);
-
-          // Batched, so nothing else can be typed between the segments.
-          const actions = message.segments.flatMap(({ row, col, text }) => [
-            { action: "MoveCursor1", args: [String(row + 1), String(col + 1)] },
-            {
-              action: "PasteString",
-              args: [Buffer.from(text, "utf8").toString("hex")],
-            },
-          ]);
-          if (actions.length > 0) this.runEdit(actions);
-        }
-        return;
-      }
       case "connect":
         // A configured host never reaches the browser, so it asks without one.
         this.connect(message.host ?? this.lastHost ?? "");
@@ -1000,6 +953,119 @@ export class Session {
         code: "E3012",
         message: `${ownerName} took editing back.`,
       });
+    }
+  }
+
+  /**
+   * Input goes to b3270 one message at a time, each once b3270 has finished the
+   * last. b3270 already holds an action back while the host has the keyboard,
+   * but several held at once come out of that wait in the wrong order, and
+   * Backspace and the typing nudge read a screen the last input must have
+   * settled. Reset, Attn and SysReq are how a user gets out of a wait, so they
+   * skip the line, and Reset throws away what was typed ahead, as a 3270 does.
+   *
+   * @param {import('./protocol.js').ClientMessage} message
+   * @returns {void}
+   */
+  queueInput(message) {
+    if (message.type === "action" && INTERRUPT_ACTIONS.has(message.action)) {
+      if (message.action === "Reset") {
+        if (this.inputQueue.length > 0)
+          this.log.info("reset drops typed-ahead input", {
+            dropped: this.inputQueue.length,
+          });
+        this.inputQueue = [];
+        this.inputTag = null;
+      }
+      this.runInput(message);
+      return;
+    }
+    this.inputQueue.push(message);
+    if (this.inputTag !== null)
+      this.log.debug("input waits for the one before", {
+        queued: this.inputQueue.length,
+      });
+    this.runQueuedInput();
+  }
+
+  /** @returns {void} */
+  runQueuedInput() {
+    while (this.inputTag === null) {
+      const next = this.inputQueue.shift();
+      if (next === undefined) return;
+      this.inputTag = this.runInput(next);
+    }
+  }
+
+  /**
+   * @param {import('./protocol.js').ClientMessage} message
+   * @returns {string | null} the r-tag, or null when there was nothing to send
+   */
+  runInput(message) {
+    switch (message.type) {
+      case "action":
+        // Ours alone, and not an action a recording could ever replay.
+        if (message.action === "Undo" || message.action === "Redo")
+          return this.stepHistory(message.action === "Undo");
+        // Past an AID key the screen belongs to the host, so there is nothing
+        // left to put back.
+        if (AID_ACTIONS.has(message.action)) this.clearHistory(message.action);
+        // Control keys carry no field content, so they are always safe to record.
+        this.record(message.action, message.args ?? []);
+        // b3270's Backspace only moves left, as real 3270 hardware does; a PC
+        // keyboard expects a delete, and the field map says if there is room.
+        if (message.action === "Backspace") {
+          if (!this.canBackspace()) return null;
+          return this.runEdit([{ action: "Left" }, { action: "Delete" }]);
+        }
+        // b3270 has no upward Newline; the cached field map answers it here.
+        if (message.action === "BackNewline") {
+          const target = this.backNewlineTarget();
+          return this.b3270.runActions([
+            {
+              action: "MoveCursor1",
+              args: [String(target.row + 1), String(target.col + 1)],
+            },
+          ]);
+        }
+        return this.runEdit([
+          { action: message.action, args: message.args ?? [] },
+        ]);
+      case "text": {
+        if (message.value === "") return null;
+        if (this.screen.cursorHidden()) this.recordPassword();
+        else this.record("String", [message.value]);
+        const nudge = this.typingNudge();
+        const actions =
+          nudge === null
+            ? [{ action: "String", args: [message.value] }]
+            : [
+                {
+                  action: "MoveCursor1",
+                  args: [String(nudge.row + 1), String(nudge.col + 1)],
+                },
+                { action: "String", args: [message.value] },
+              ];
+        return this.runEdit(actions);
+      }
+      case "paste": {
+        if (message.text === "") return null;
+        if (this.screen.cursorHidden()) this.recordPassword();
+        else this.record("PasteString", [message.text]);
+
+        // Batched, so nothing else can be typed between the segments.
+        const actions = message.segments.flatMap(({ row, col, text }) => [
+          { action: "MoveCursor1", args: [String(row + 1), String(col + 1)] },
+          {
+            action: "PasteString",
+            args: [Buffer.from(text, "utf8").toString("hex")],
+          },
+        ]);
+        if (actions.length === 0) return null;
+        return this.runEdit(actions);
+      }
+      default:
+        return null;
     }
   }
 
@@ -1138,6 +1204,7 @@ export class Session {
     this.markReady();
     this.stopIdleTimer();
     this.log.info("closing", { viewers: this.viewers.size });
+    this.inputQueue = [];
     this.b3270.stop();
     this.viewers.clear();
     this.waiting.clear();
