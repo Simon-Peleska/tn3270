@@ -4,6 +4,8 @@ import { MacrosPage } from "../public/macros.js";
 import { THEMES } from "../public/settings.js";
 import { key, enterKey, defaultKeymapDeps } from "./keyevent.js";
 
+/** @typedef {import('../public/macro-xml.js').Macro} Macro */
+
 /** @param {string[]} [files] */
 function fixture(files = []) {
   const calls = {
@@ -404,4 +406,85 @@ test("enter on a macro row closes the page and plays it", async () => {
   assert.equal(page.playing?.macro, macro);
   await Promise.resolve();
   assert.deepEqual(calls.dispatched[0], { type: "paste", text: "go" });
+});
+
+/**
+ * @param {MacrosPage} page
+ * @param {string} text a command line word
+ * @returns {void}
+ */
+function type(page, text) {
+  page.onCommand = true;
+  for (const char of text) page.handleKey(key({ key: char }));
+  page.handleKey(enterKey());
+}
+
+test("KEY on a macro binds the next key pressed, and that key finds the macro", () => {
+  const { page, calls } = fixture();
+  /** @type {Macro} */
+  const macro = { name: "Logon", steps: [] };
+  page.macros.push(macro);
+  page.show();
+  page.selected = 1;
+
+  type(page, "key");
+  assert.match(page.lines()[1]?.value ?? "", /press a key/);
+  page.handleKey(key({ key: "Control", code: "ControlLeft", ctrlKey: true }));
+  assert.equal(page.listening, 0, "Ctrl alone is only on the way to the key");
+  page.handleKey(key({ key: "1", code: "Digit1", ctrlKey: true }));
+
+  assert.deepEqual(macro.key, {
+    key: "1",
+    shift: false,
+    ctrl: true,
+    alt: false,
+  });
+  assert.equal(calls.saved.at(-1)?.[0]?.key, macro.key, "the key is saved");
+  assert.match(page.lines()[1]?.value ?? "", /Ctrl\+1/);
+  assert.match(page.message, /Ctrl\+1 plays Logon/);
+
+  assert.equal(
+    page.macroForKey(key({ key: "1", code: "Digit1", ctrlKey: true })),
+    macro,
+  );
+  assert.equal(page.macroForKey(key({ key: "1", code: "Digit1" })), null);
+});
+
+test("a key bound to a second macro is taken from the first, and UNKEY frees it", () => {
+  const { page } = fixture();
+  /** @type {Macro} */
+  const first = { name: "First", steps: [] };
+  /** @type {Macro} */
+  const second = { name: "Second", steps: [] };
+  page.macros.push(first, second);
+  page.show();
+  const f5 = key({ key: "F5", shiftKey: true });
+
+  page.selected = 1;
+  type(page, "key");
+  page.handleKey(f5);
+  page.selected = 2;
+  type(page, "key");
+  page.handleKey(f5);
+  assert.equal(first.key, undefined);
+  assert.equal(page.macroForKey(f5), second);
+
+  type(page, "unkey");
+  assert.equal(second.key, undefined);
+  assert.equal(page.macroForKey(f5), null);
+});
+
+test("Escape while listening for a key binds nothing", () => {
+  const { page } = fixture();
+  /** @type {Macro} */
+  const macro = { name: "Logon", steps: [] };
+  page.macros.push(macro);
+  page.show();
+  page.selected = 1;
+
+  type(page, "key");
+  page.handleKey(key({ key: "Escape" }));
+  assert.equal(page.listening, null);
+  assert.equal(macro.key, undefined);
+  assert.equal(page.open, true, "Escape leaves the listening, not the panel");
 });

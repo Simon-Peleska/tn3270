@@ -1325,6 +1325,16 @@ screenEl.addEventListener(
   (event) => {
     clearError();
 
+    // A macro's own key is the more specific choice, so it wins over the keymap.
+    const bound = openPanel() === null ? macros.macroForKey(event) : null;
+    if (bound !== null) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.repeat || macros.playing !== null) return;
+      macros.play(bound);
+      return;
+    }
+
     const mapped = mapKey(event, keymap.lookup());
     if (mapped === null) return;
     event.preventDefault();

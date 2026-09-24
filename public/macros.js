@@ -6,11 +6,15 @@
 
 import { Panel, typeKey, keyLegend } from "./panel.js";
 import { macrosToXml, parseMacrosXml } from "./macro-xml.js";
+import { comboFromEvent, comboLabel, serializeCombo } from "./keymap.js";
 
 /** @typedef {import('./macro-xml.js').Macro} Macro */
 /** @typedef {import('./macro-xml.js').MacroStep} MacroStep */
 
 const NAME_WIDTH = 24;
+
+/** Held on their own they are only on the way to the real key. */
+const MODIFIER_KEYS = new Set(["Shift", "Control", "Alt", "AltGraph"]);
 
 /**
  * @param {string} name
@@ -56,6 +60,8 @@ export class MacrosPage extends Panel {
     this.nameBuffer = "";
     /** @type {Set<number>} indices marked for a batch export */
     this.marked = new Set();
+    /** @type {number | null} the macro waiting for its key to be pressed */
+    this.listening = null;
   }
 
   /**
@@ -65,6 +71,53 @@ export class MacrosPage extends Panel {
   setMacros(macros) {
     this.macros = macros;
     if (this.open) this.draw();
+  }
+
+  /**
+   * @param {KeyboardEvent} event
+   * @returns {Macro | null} the macro bound to this key
+   */
+  macroForKey(event) {
+    if (event.metaKey) return null;
+    const pressed = serializeCombo(comboFromEvent(event));
+    return (
+      this.macros.find(
+        (macro) =>
+          macro.key !== undefined && serializeCombo(macro.key) === pressed,
+      ) ?? null
+    );
+  }
+
+  /**
+   * A key plays one macro only, so it is taken from any other that had it.
+   *
+   * @param {number} index
+   * @param {import('./keymap.js').Combo} combo
+   * @returns {void}
+   */
+  bindKey(index, combo) {
+    const pressed = serializeCombo(combo);
+    for (const macro of this.macros) {
+      if (macro.key !== undefined && serializeCombo(macro.key) === pressed)
+        delete macro.key;
+    }
+    const macro = this.macros[index];
+    if (macro === undefined) return;
+    macro.key = combo;
+    this.persist();
+    this.say(`${comboLabel(combo)} plays ${macro.name}`);
+  }
+
+  /**
+   * @param {number} index
+   * @returns {void}
+   */
+  unbindKey(index) {
+    const macro = this.macros[index];
+    if (macro === undefined) return;
+    delete macro.key;
+    this.persist();
+    this.say(`${macro.name} has no key now`);
   }
 
   /** @returns {boolean} */
@@ -285,10 +338,14 @@ export class MacrosPage extends Panel {
         return;
       }
       const count = macro.steps.length;
+      const steps = `${count} step${count === 1 ? "" : "s"}`;
+      let bound = "";
+      if (this.listening === index) bound = " - press a key";
+      else if (macro.key !== undefined) bound = ` - ${comboLabel(macro.key)}`;
       lines.push({
         option: String(index + 1),
         text: `${this.marked.has(index) ? "/" : " "} ${macro.name}`,
-        value: `${count} step${count === 1 ? "" : "s"}`,
+        value: steps + bound,
       });
     });
     return lines;
@@ -315,13 +372,17 @@ export class MacrosPage extends Panel {
    * @returns {string[]}
    */
   notes() {
+    if (this.listening !== null)
+      return [
+        "Press the key that should play this macro. F12 or Escape cancels.",
+      ];
     if (this.naming !== null)
       return [
         `Type a name and press ${this.deps.keyName("Enter")}. ${this.deps.keyName("PF12")} leaves it unsaved.`,
       ];
     return [
       `${this.deps.keyName("Enter")} records, stops or plays the line the cursor is on. / marks a macro.`,
-      "Commands: RENAME, DELETE, EXPORT, IMPORT, MARK.",
+      "Commands: RENAME, DELETE, EXPORT, IMPORT, MARK, KEY, UNKEY.",
     ];
   }
 
@@ -356,6 +417,7 @@ export class MacrosPage extends Panel {
    */
   show() {
     this.reset();
+    this.listening = null;
     if (this.naming !== null) {
       this.selected = this.lines().findIndex((line) => line.field === true);
       this.onCommand = false;
@@ -418,7 +480,9 @@ export class MacrosPage extends Panel {
       word !== "REN" &&
       word !== "DELETE" &&
       word !== "DEL" &&
-      word !== "MARK"
+      word !== "MARK" &&
+      word !== "KEY" &&
+      word !== "UNKEY"
     )
       return false;
     if (index === null) {
@@ -427,6 +491,8 @@ export class MacrosPage extends Panel {
     }
     if (word === "RENAME" || word === "REN") this.rename(index);
     else if (word === "DELETE" || word === "DEL") this.removeMacro(index);
+    else if (word === "KEY") this.listenForKey(index);
+    else if (word === "UNKEY") this.unbindKey(index);
     else this.mark(index);
     return true;
   }
@@ -438,6 +504,17 @@ export class MacrosPage extends Panel {
   rename(index) {
     this.naming = { kind: "rename", index };
     this.nameBuffer = this.macros[index]?.name ?? "";
+    this.onCommand = false;
+    this.selected = index + 1;
+    this.draw();
+  }
+
+  /**
+   * @param {number} index
+   * @returns {void}
+   */
+  listenForKey(index) {
+    this.listening = index;
     this.onCommand = false;
     this.selected = index + 1;
     this.draw();
@@ -462,6 +539,20 @@ export class MacrosPage extends Panel {
    * @returns {boolean}
    */
   override(event) {
+    if (this.listening !== null) {
+      // By name, not the keymap, like the Keys panel: the key being picked may be
+      // one the keymap uses.
+      if (event.key === "Escape" || event.key === "F12") {
+        this.listening = null;
+        this.draw();
+        return true;
+      }
+      if (event.metaKey || MODIFIER_KEYS.has(event.key)) return true;
+      this.bindKey(this.listening, comboFromEvent(event));
+      this.listening = null;
+      this.draw();
+      return true;
+    }
     if (this.naming === null) return false;
     const command = this.deps.keyCommand(event);
     if (command === "Attn" || command === "PF12") {
