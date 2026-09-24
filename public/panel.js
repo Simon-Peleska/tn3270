@@ -27,7 +27,7 @@ export const PANELS = Object.freeze([
     id: "settings",
     option: "0",
     name: "Settings",
-    blurb: "Colours, font, screen size and sharing",
+    blurb: "Colours, font and screen size",
     command: "Settings",
   },
   {

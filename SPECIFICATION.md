@@ -170,7 +170,7 @@ underneath.
  Option ===> ________________________________________________________
 
 
-    0  Settings     Colours, font, screen size and sharing
+    0  Settings     Colours, font and screen size
     1  Macros       Record, play back and trade keystroke macros
     2  Recorder     Capture screens and keys as a script
     3  Keys         What each key and key combination does
