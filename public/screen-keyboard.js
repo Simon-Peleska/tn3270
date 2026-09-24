@@ -9,7 +9,7 @@
 
 /** Every key is one or two cells of this many columns, so the rows line up. */
 const CELL = 6;
-export const KEYBOARD_WIDTH = 12 * CELL;
+const KEYBOARD_WIDTH = 12 * CELL;
 
 /**
  * @param {string} label

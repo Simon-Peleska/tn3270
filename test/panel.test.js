@@ -424,6 +424,9 @@ test("nothing any panel writes is wider than an 80-column screen", () => {
     applyAutomation: () => {},
     connect: () => {},
     paste: () => {},
+    setKey: () => {},
+    renameKey: () => {},
+    macroNames: () => ["Logon"],
   };
   const pages = [
     new MenuPage(deps),

@@ -6,7 +6,7 @@
 
 import { Panel, typeKey, keyLegend } from "./panel.js";
 import { macrosToXml, parseMacrosXml } from "./macro-xml.js";
-import { comboFromEvent, comboLabel, serializeCombo } from "./keymap.js";
+import { comboFromEvent, comboLabel, macroCommand } from "./keymap.js";
 
 /** @typedef {import('./macro-xml.js').Macro} Macro */
 /** @typedef {import('./macro-xml.js').MacroStep} MacroStep */
@@ -38,10 +38,13 @@ function sanitizeFilename(name) {
  *   exportFile: (filename: string, content: string) => void,
  *   importFiles: () => Promise<string[]>,
  *   error: (code: string, message: string) => void,
+ *   setKey: (commandId: string, combo: import('./keymap.js').Combo | null) => void,
+ *   renameKey: (from: string, to: string) => void,
  * }} MacrosDeps
  *
  * `dispatch` and `paste` bypass app.js's recording tap, so playback is never recorded
- * into itself, and `waitForUnlock` paces playback by the host, not a timer.
+ * into itself, and `waitForUnlock` paces playback by the host, not a timer. A
+ * macro's key lives in the keymap, which `setKey` and `renameKey` reach.
  */
 
 /** @extends {Panel<MacrosDeps>} */
@@ -75,37 +78,25 @@ export class MacrosPage extends Panel {
   }
 
   /**
-   * @param {KeyboardEvent} event
-   * @returns {Macro | null} the macro bound to this key
+   * @param {string} commandId
+   * @returns {Macro | null}
    */
-  macroForKey(event) {
-    if (event.metaKey) return null;
-    const pressed = serializeCombo(comboFromEvent(event));
+  macroFor(commandId) {
     return (
-      this.macros.find(
-        (macro) =>
-          macro.key !== undefined && serializeCombo(macro.key) === pressed,
-      ) ?? null
+      this.macros.find((macro) => macroCommand(macro.name) === commandId) ??
+      null
     );
   }
 
   /**
-   * A key plays one macro only, so it is taken from any other that had it.
-   *
    * @param {number} index
    * @param {import('./keymap.js').Combo} combo
    * @returns {void}
    */
   bindKey(index, combo) {
-    const pressed = serializeCombo(combo);
-    for (const macro of this.macros) {
-      if (macro.key !== undefined && serializeCombo(macro.key) === pressed)
-        delete macro.key;
-    }
     const macro = this.macros[index];
     if (macro === undefined) return;
-    macro.key = combo;
-    this.persist();
+    this.deps.setKey(macroCommand(macro.name), combo);
     this.say(`${comboLabel(combo)} plays ${macro.name}`);
   }
 
@@ -116,8 +107,7 @@ export class MacrosPage extends Panel {
   unbindKey(index) {
     const macro = this.macros[index];
     if (macro === undefined) return;
-    delete macro.key;
-    this.persist();
+    this.deps.setKey(macroCommand(macro.name), null);
     this.say(`${macro.name} has no key now`);
   }
 
@@ -219,7 +209,9 @@ export class MacrosPage extends Panel {
    * @returns {void}
    */
   removeMacro(index) {
-    this.macros.splice(index, 1);
+    const [removed] = this.macros.splice(index, 1);
+    if (removed !== undefined)
+      this.deps.setKey(macroCommand(removed.name), null);
     this.marked = new Set(
       [...this.marked]
         .filter((i) => i !== index)
@@ -286,7 +278,11 @@ export class MacrosPage extends Panel {
       });
     } else {
       const macro = this.macros[this.naming.index];
-      if (macro) macro.name = this.uniqueName(name, this.naming.index);
+      if (macro) {
+        const renamed = this.uniqueName(name, this.naming.index);
+        this.deps.renameKey(macroCommand(macro.name), macroCommand(renamed));
+        macro.name = renamed;
+      }
     }
     this.naming = null;
     this.persist();
@@ -339,9 +335,10 @@ export class MacrosPage extends Panel {
       }
       const count = macro.steps.length;
       const steps = `${count} step${count === 1 ? "" : "s"}`;
+      const key = this.deps.keyName(macroCommand(macro.name));
       let bound = "";
       if (this.listening === index) bound = " - press a key";
-      else if (macro.key !== undefined) bound = ` - ${comboLabel(macro.key)}`;
+      else if (key !== "") bound = ` - ${key}`;
       lines.push({
         option: String(index + 1),
         text: `${this.marked.has(index) ? "/" : " "} ${macro.name}`,

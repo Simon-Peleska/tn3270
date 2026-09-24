@@ -92,3 +92,14 @@ export function recordedPuts(page) {
   page.drawInto(grid);
   return puts;
 }
+
+/**
+ * @param {{ onCommand: boolean, handleKey: (event: KeyboardEvent) => boolean }} page
+ * @param {string} text a command line word
+ * @returns {void}
+ */
+export function typeCommand(page, text) {
+  page.onCommand = true;
+  for (const char of text) page.handleKey(key({ key: char }));
+  page.handleKey(enterKey());
+}

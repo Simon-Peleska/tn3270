@@ -525,8 +525,37 @@ export const FONTS = Object.freeze([
   { name: "JetBrains Mono", family: '"JetBrains Mono", monospace' },
 ]);
 
-// The size "fit to window" measures at, not the font size on screen.
-const DEFAULT_FIT_FONT_SIZE = 16;
+/**
+ * What a browser that never changed anything gets. Only what differs from it is
+ * saved, so a default changed in a later version reaches every setting the user
+ * left alone. The model and the screen size are null until one is chosen here,
+ * which leaves them to the server.
+ *
+ * @type {Readonly<import('./store.js').StoredSettings>}
+ */
+const DEFAULT_SETTINGS = Object.freeze({
+  theme: "Host On-Demand",
+  font: "Fira Mono",
+  model: null,
+  screenSize: null,
+  // The size "fit to window" measures at, not the font size on screen.
+  fitFontSize: 16,
+  fieldBackground: true,
+});
+
+/**
+ * The saved settings behind each row, which RESET with that row's name puts back.
+ *
+ * @type {Readonly<Record<string, (keyof import('./store.js').StoredSettings)[]>>}
+ */
+const ROW_SETTINGS = Object.freeze({
+  theme: ["theme"],
+  font: ["font"],
+  model: ["model", "screenSize"],
+  fitSize: ["fitFontSize"],
+  fieldBackground: ["fieldBackground"],
+});
+
 const MIN_FIT_FONT_SIZE = 8;
 const MAX_FIT_FONT_SIZE = 32;
 
@@ -625,8 +654,6 @@ const PREVIEW = Object.freeze([
  * @property {string} key
  * @property {string} label
  * @property {string} value
- * @property {boolean} [toggle] a `/` field, which is how ISPF writes a yes or no
- * @property {boolean} [gap] a heading or a spacer
  */
 
 /** @extends {Panel<SettingsDeps>} */
@@ -634,10 +661,9 @@ export class SettingsPage extends Panel {
   /** @param {SettingsDeps} deps */
   constructor(deps) {
     super("settings", deps);
-    /** @type {number} */
-    this.themeIndex = 0;
-    /** @type {number} */
-    this.fontIndex = 0;
+    /** @type {import('./store.js').StoredSettings} What is saved in this browser.
+     * The model is asked for again by every tab, which starts its own sessions. */
+    this.values = { ...DEFAULT_SETTINGS };
     /** @type {number} The model the server has confirmed. */
     this.model = 2;
     /** @type {number} What the user has dialled up but not applied yet. */
@@ -646,25 +672,14 @@ export class SettingsPage extends Panel {
     this.oversize = "";
     /** @type {string} What the user has dialled up but not applied yet. */
     this.pendingOversize = "";
-    /** @type {number} */
-    this.fitFontSize = DEFAULT_FIT_FONT_SIZE;
-    /** @type {number | null} The model saved in this browser: every tab starts
-     * its own sessions, so each one has to ask for it again. */
-    this.savedModel = null;
-    /** @type {'model' | 'fit' | 'dynamic' | null} The saved screen size. */
-    this.savedSize = null;
     /** @type {import('../server/b3270.js').ModelInfo[]} */
     this.models = [];
     /** @type {boolean} */
     this.connected = false;
-    /** @type {boolean} Whether a typeable field is tinted to show where it is. */
-    this.fieldBackground = true;
     /** @type {string} */
     this.host = "";
     /** @type {boolean} Host comes from the server's config: not editable here. */
     this.hostLocked = false;
-    /** @type {'controller' | 'observer'} Server-assigned, not a preference. */
-    this.role = "controller";
   }
 
   /**
@@ -693,54 +708,24 @@ export class SettingsPage extends Panel {
     }
     rows.push({ key: "theme", label: "Theme", value: this.theme().name });
     rows.push({ key: "font", label: "Font", value: this.font().name });
-    const dynamic = this.pendingOversize === DYNAMIC_OVERSIZE;
     rows.push({
       key: "model",
       label: "Screen model",
-      value: dynamic
-        ? `Dynamic - ${DYNAMIC_ROWS}x${DYNAMIC_COLS}`
-        : this.describeModel(this.pendingModel),
+      value: this.describeSize(),
     });
-    // The dynamic screen is already a size asked for, so there is nothing to fit.
-    if (!dynamic) {
+    if (sizeMode(this.pendingOversize) === "fit") {
       rows.push({
-        key: "fit",
-        label: "Fit to window",
-        value: this.pendingOversize === "" ? "Off" : this.pendingOversize,
+        key: "fitSize",
+        label: "Text size",
+        value: `${this.values.fitFontSize} px`,
       });
-      if (this.pendingOversize !== "") {
-        rows.push({
-          key: "fitSize",
-          label: "Text size",
-          value: `${this.fitFontSize} px`,
-        });
-      }
     }
-    rows.push({ key: "", label: "", value: "", gap: true });
     rows.push({
-      key: "",
-      label: "Type / to turn one on",
-      value: "",
-      gap: true,
+      key: "fieldBackground",
+      label: "Field background",
+      value: this.values.fieldBackground ? "On" : "Off",
     });
-    rows.push(
-      this.toggleRow(
-        "fieldBackground",
-        "Field background",
-        this.fieldBackground,
-      ),
-    );
     return rows;
-  }
-
-  /**
-   * @param {string} key
-   * @param {string} label
-   * @param {boolean} on
-   * @returns {SettingsRow}
-   */
-  toggleRow(key, label, on) {
-    return { key, label, value: on ? "/" : " ", toggle: true };
   }
 
   /**
@@ -761,24 +746,16 @@ export class SettingsPage extends Panel {
     if (this.open) this.draw();
   }
 
-  /**
-   * @param {'controller' | 'observer'} role
-   * @returns {void}
-   */
-  setRole(role) {
-    if (role === this.role) return;
-    this.role = role;
-    if (this.open) this.draw();
-  }
-
   /** @returns {Theme} */
   theme() {
-    return THEMES[this.themeIndex] ?? THEMES[0];
+    return (
+      THEMES.find((entry) => entry.name === this.values.theme) ?? THEMES[0]
+    );
   }
 
   /** @returns {{ name: string, family: string }} */
   font() {
-    return FONTS[this.fontIndex] ?? FONTS[0];
+    return FONTS.find((entry) => entry.name === this.values.font) ?? FONTS[0];
   }
 
   /**
@@ -788,84 +765,74 @@ export class SettingsPage extends Panel {
    * @returns {void}
    */
   restoreSaved(saved) {
-    const theme = THEMES.findIndex((entry) => entry.name === saved.theme);
-    if (theme !== -1) this.themeIndex = theme;
-    const font = FONTS.findIndex((entry) => entry.name === saved.font);
-    if (font !== -1) this.fontIndex = font;
+    const theme = THEMES.find((entry) => entry.name === saved.theme);
+    if (theme !== undefined) this.values.theme = theme.name;
+    const font = FONTS.find((entry) => entry.name === saved.font);
+    if (font !== undefined) this.values.font = font.name;
     if (typeof saved.fieldBackground === "boolean")
-      this.fieldBackground = saved.fieldBackground;
-    if (typeof saved.model === "number") this.savedModel = saved.model;
+      this.values.fieldBackground = saved.fieldBackground;
+    if (typeof saved.model === "number") this.values.model = saved.model;
     if (
       saved.screenSize === "model" ||
       saved.screenSize === "fit" ||
       saved.screenSize === "dynamic"
     ) {
-      this.savedSize = saved.screenSize;
+      this.values.screenSize = saved.screenSize;
     }
     if (typeof saved.fitFontSize === "number") {
-      this.fitFontSize = Math.max(
+      this.values.fitFontSize = Math.max(
         MIN_FIT_FONT_SIZE,
         Math.min(MAX_FIT_FONT_SIZE, saved.fitFontSize),
       );
     }
   }
 
-  /**
-   * Only what differs from the defaults, so a default changed in a later
-   * version reaches every setting the user left alone.
-   *
-   * @returns {void}
-   */
+  /** @returns {void} */
   save() {
-    /** @type {Partial<import('./store.js').StoredSettings>} */
+    /** @type {Record<string, unknown>} */
+    const defaults = DEFAULT_SETTINGS;
+    /** @type {Record<string, unknown>} */
     const changed = {};
-    if (this.themeIndex !== 0) changed.theme = this.theme().name;
-    if (this.fontIndex !== 0) changed.font = this.font().name;
-    if (this.savedModel !== null) changed.model = this.savedModel;
-    if (this.savedSize !== null) changed.screenSize = this.savedSize;
-    if (this.fitFontSize !== DEFAULT_FIT_FONT_SIZE)
-      changed.fitFontSize = this.fitFontSize;
-    if (!this.fieldBackground) changed.fieldBackground = false;
+    for (const [name, value] of Object.entries(this.values))
+      if (value !== defaults[name]) changed[name] = value;
     this.deps.persist(changed);
   }
 
   /**
-   * The screen size is left as it is: taking it back costs a reconnection, so
-   * the server's default comes with the next session instead.
+   * Shows the settings as they now are, after a reset. The live screen size is
+   * left as it is: taking it back costs a reconnection, so the server's default
+   * comes with the next session instead.
    *
+   * @returns {void}
+   */
+  showValues() {
+    this.deps.applyTheme(this.theme());
+    this.deps.applyFont(this.font());
+    this.deps.applyFieldBackground(this.values.fieldBackground);
+    this.pendingModel = this.model;
+    this.pendingOversize = this.fitsWindow()
+      ? this.fitToWindow()
+      : this.oversize;
+  }
+
+  /**
    * @param {string} key a row's key
    * @returns {boolean} false for a row that is not a saved setting
    */
   resetSetting(key) {
-    if (key === "theme") {
-      this.themeIndex = 0;
-      this.deps.applyTheme(this.theme());
-    } else if (key === "font") {
-      this.fontIndex = 0;
-      this.deps.applyFont(this.font());
-    } else if (key === "model" || key === "fit") {
-      this.savedModel = null;
-      this.savedSize = null;
-      this.pendingModel = this.model;
-      this.pendingOversize = this.oversize;
-    } else if (key === "fitSize") {
-      this.fitFontSize = DEFAULT_FIT_FONT_SIZE;
-      if (sizeMode(this.pendingOversize) === "fit")
-        this.pendingOversize = this.fitToWindow();
-    } else if (key === "fieldBackground") {
-      this.fieldBackground = true;
-      this.deps.applyFieldBackground(true);
-    } else {
-      return false;
-    }
-    this.save();
+    const names = ROW_SETTINGS[key];
+    if (names === undefined) return false;
+    for (const name of names)
+      Object.assign(this.values, { [name]: DEFAULT_SETTINGS[name] });
+    this.showValues();
     return true;
   }
 
   /** @returns {void} */
   resetAll() {
-    for (const key of ["theme", "font", "model", "fitSize", "fieldBackground"])
-      this.resetSetting(key);
+    this.values = { ...DEFAULT_SETTINGS };
+    this.showValues();
+    this.save();
     this.say("Every setting is back to its default");
   }
 
@@ -878,8 +845,8 @@ export class SettingsPage extends Panel {
       this.resetAll();
       return;
     }
-    const row = this.rows().find(
-      (entry) => entry.gap !== true && entry.label.toUpperCase().includes(name),
+    const row = this.rows().find((entry) =>
+      entry.label.toUpperCase().includes(name),
     );
     if (row === undefined) {
       this.say(`No setting is called ${name}`);
@@ -889,6 +856,7 @@ export class SettingsPage extends Panel {
       this.say(`${row.label} is not a saved setting`);
       return;
     }
+    this.save();
     this.say(`${row.label} is back to its default`);
   }
 
@@ -939,7 +907,7 @@ export class SettingsPage extends Panel {
 
   /** @returns {string} */
   fitToWindow() {
-    const fit = this.deps.windowFit(this.fitFontSize);
+    const fit = this.deps.windowFit(this.values.fitFontSize);
     if (fit === null) return "";
     return this.fitSize(fit, this.pendingModel);
   }
@@ -982,8 +950,8 @@ export class SettingsPage extends Panel {
   }
 
   /**
-   * The host is a text field and the switches are `/` fields; both take their
-   * own keys before the command line gets them.
+   * The host is a text field, and takes its own keys before the command line
+   * gets them.
    *
    * @override
    * @param {KeyboardEvent} event
@@ -999,11 +967,6 @@ export class SettingsPage extends Panel {
     }
     if (row.key === "host" && rubout) {
       this.host = this.host.slice(0, -1);
-      this.draw();
-      return true;
-    }
-    if (row.toggle === true && (event.key === "/" || event.key === " ")) {
-      this.change(1);
       this.draw();
       return true;
     }
@@ -1051,9 +1014,9 @@ export class SettingsPage extends Panel {
     if (this.pendingOversize !== this.oversize)
       this.deps.applyOversize(this.pendingOversize);
     // Only a size actually changed is a choice worth keeping over the server's.
-    if (this.pendingModel !== this.model) this.savedModel = this.pendingModel;
+    if (this.pendingModel !== this.model) this.values.model = this.pendingModel;
     if (this.pendingOversize !== this.oversize)
-      this.savedSize = sizeMode(this.pendingOversize);
+      this.values.screenSize = sizeMode(this.pendingOversize);
     this.save();
     this.close();
   }
@@ -1069,46 +1032,57 @@ export class SettingsPage extends Panel {
   change(step) {
     const key = this.rows()[this.selected]?.key;
     if (key === "theme") {
-      this.themeIndex = cycle(this.themeIndex, step, THEMES.length);
+      const index = cycle(THEMES.indexOf(this.theme()), step, THEMES.length);
+      this.values.theme = THEMES[index]?.name ?? this.values.theme;
       this.deps.applyTheme(this.theme());
       this.save();
     } else if (key === "font") {
-      this.fontIndex = cycle(this.fontIndex, step, FONTS.length);
+      const index = cycle(FONTS.indexOf(this.font()), step, FONTS.length);
+      this.values.font = FONTS[index]?.name ?? this.values.font;
       this.deps.applyFont(this.font());
       this.save();
     } else if (key === "model") {
-      // The dynamic screen is one more choice after the models.
+      // The dynamic screen and the fit are two more choices after the models.
       const models =
         this.models.length > 0
           ? this.models.map((info) => info.model)
           : [2, 3, 4, 5];
-      const dynamic = this.pendingOversize === DYNAMIC_OVERSIZE;
-      const current = dynamic
-        ? models.length
-        : models.indexOf(this.pendingModel);
-      const next = cycle(current, step, models.length + 1);
+      const mode = sizeMode(this.pendingOversize);
+      const current =
+        mode === "model"
+          ? models.indexOf(this.pendingModel)
+          : models.length + (mode === "dynamic" ? 0 : 1);
+      const next = cycle(current, step, models.length + 2);
       if (next === models.length) {
         this.pendingOversize = DYNAMIC_OVERSIZE;
+      } else if (next === models.length + 1) {
+        // Measured afresh: the window may have been resized since it was shown.
+        this.pendingOversize = this.fitToWindow();
       } else {
         this.pendingModel = models[next] ?? this.pendingModel;
-        if (dynamic) this.pendingOversize = "";
+        this.pendingOversize = "";
       }
-    } else if (key === "fit") {
-      // Measured afresh: the window may have been resized since it was shown.
-      this.pendingOversize =
-        this.pendingOversize === "" ? this.fitToWindow() : "";
     } else if (key === "fitSize") {
-      this.fitFontSize = Math.max(
+      this.values.fitFontSize = Math.max(
         MIN_FIT_FONT_SIZE,
-        Math.min(MAX_FIT_FONT_SIZE, this.fitFontSize + step),
+        Math.min(MAX_FIT_FONT_SIZE, this.values.fitFontSize + step),
       );
       this.pendingOversize = this.fitToWindow();
       this.save();
     } else if (key === "fieldBackground") {
-      this.fieldBackground = !this.fieldBackground;
-      this.deps.applyFieldBackground(this.fieldBackground);
+      this.values.fieldBackground = !this.values.fieldBackground;
+      this.deps.applyFieldBackground(this.values.fieldBackground);
       this.save();
     }
+  }
+
+  /** @returns {string} */
+  describeSize() {
+    const mode = sizeMode(this.pendingOversize);
+    if (mode === "dynamic") return `Dynamic - ${DYNAMIC_ROWS}x${DYNAMIC_COLS}`;
+    if (mode === "model") return this.describeModel(this.pendingModel);
+    const [cols, rows] = this.pendingOversize.split("x");
+    return `Fit to window - ${rows}x${cols}`;
   }
 
   /**
@@ -1145,10 +1119,9 @@ export class SettingsPage extends Panel {
   lines() {
     /** @type {import('./panel.js').PanelLine[]} */
     const lines = this.rows().map((row) => {
-      if (row.gap === true) return { text: row.label, gap: true };
       return {
         text: row.label,
-        value: row.toggle === true ? row.value : row.value.padEnd(VALUE_WIDTH),
+        value: row.value.padEnd(VALUE_WIDTH),
         cursor: row.key === "host" ? this.host.length : 0,
         dots: true,
         field: true,

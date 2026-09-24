@@ -485,6 +485,57 @@ test("a new press takes the previous selection off the screen", () => {
   assert.equal(selectedCells(screen, panes[0]), 0);
 });
 
+test("shift and the arrows select a rectangle from the cursor", () => {
+  const { screen, panes } = pageOf(1);
+  const pane = panes[0];
+  pane.host.cursor = { row: 2, col: 0, visible: false };
+
+  for (let step = 0; step < 3; step++) pane.stepSelection(0, 1);
+  pane.stepSelection(1, 0);
+  screen.render();
+
+  assert.equal(pane.getSelection(), "PANE\n");
+  assert.equal(selectedCells(screen, pane), 8);
+
+  pane.stepSelection(-1, 0);
+  for (let step = 0; step < 3; step++) pane.stepSelection(0, -1);
+  assert.equal(
+    pane.hasSelection(),
+    false,
+    "back at the cursor is no selection",
+  );
+});
+
+test("a keyboard selection starts at the cursor, not at the last click", () => {
+  const { screen, panes } = pageOf(1);
+  const pane = panes[0];
+  mouse(screen, "mousedown", pane, 10, 10);
+  mouse(screen, "mouseup", pane, 10, 10);
+  pane.host.cursor = { row: 2, col: 5, visible: true };
+
+  pane.stepSelection(0, 1);
+  assert.equal(pane.getSelection(), "0");
+});
+
+test("a keyboard selection stops at the edge of the host's screen", () => {
+  const { panes } = pageOf(1);
+  const pane = panes[0];
+  pane.host.cursor = { row: 23, col: 79, visible: true };
+
+  pane.stepSelection(1, 0);
+  pane.stepSelection(0, 1);
+  assert.equal(pane.hasSelection(), false);
+
+  pane.stepSelection(0, -1);
+  pane.stepSelection(1, 0);
+  assert.deepEqual(pane.selectionBox(), {
+    top: 23,
+    left: 78,
+    bottom: 23,
+    right: 79,
+  });
+});
+
 test("a selection belongs to one pane, and a press in another clears it", () => {
   const { screen, panes } = pageOf(2);
 

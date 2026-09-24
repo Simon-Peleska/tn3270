@@ -78,6 +78,10 @@ function keyToCombo(text) {
 const OWN_KEYWORDS = Object.freeze({
   Copy: "copy",
   Paste: "paste",
+  SelectUp: "select-up",
+  SelectDown: "select-down",
+  SelectLeft: "select-left",
+  SelectRight: "select-right",
   Undo: "undo",
   Redo: "redo",
   Menu: "menu",

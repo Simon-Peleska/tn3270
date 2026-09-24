@@ -29,7 +29,7 @@ import { logger } from "./log.js";
  * @param {Viewer} viewer
  * @returns {string}
  */
-export function nameOf(viewer) {
+function nameOf(viewer) {
   return viewer.user || viewer.ip || "Someone";
 }
 

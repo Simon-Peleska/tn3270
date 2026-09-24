@@ -1,6 +1,11 @@
 import { Pane, Screen } from "./canvas.js";
 import { renderOia, keyboardLocked } from "./oia.js";
-import { PANEL_COMMANDS, commandForEvent, mapKey } from "./keymap.js";
+import {
+  PANEL_COMMANDS,
+  commandForEvent,
+  isMacroCommand,
+  mapKey,
+} from "./keymap.js";
 import { paint } from "./panel.js";
 import { keyAt, keyFace, keyboardTop, placeKeys } from "./screen-keyboard.js";
 import { HelpPage, MenuPage } from "./menu.js";
@@ -628,6 +633,8 @@ const macros = new MacrosPage({
   exportFile: downloadFile,
   importFiles: pickXmlFiles,
   error: showError,
+  setKey: (commandId, combo) => keymap.setKey(commandId, combo),
+  renameKey: (from, to) => keymap.renameCommand(from, to),
 });
 
 const recorder = new RecorderPage({
@@ -649,6 +656,7 @@ const keymap = new KeymapPage({
   exportFile: downloadFile,
   importFiles: pickKeymapFiles,
   error: showError,
+  macroNames: () => macros.macros.map((macro) => macro.name),
 });
 
 const menu = new MenuPage(panelIo);
@@ -805,7 +813,7 @@ function paneFit(slot, fontSize) {
  * @returns {void}
  */
 function fitSession(slot, model = slot.model) {
-  const fit = paneFit(slot, settings.fitFontSize);
+  const fit = paneFit(slot, settings.values.fitFontSize);
   if (fit === null) return;
   const value = settings.fitSize(fit, model);
   if (value === slot.oversize) return;
@@ -822,12 +830,12 @@ function fitSession(slot, model = slot.model) {
 function applySavedSize(slot) {
   if (!slot.started) return;
 
-  const model = settings.savedModel ?? slot.model;
+  const model = settings.values.model ?? slot.model;
   if (model !== slot.model) sendQuietly(slot, { type: "model", model });
 
   // Nothing saved leaves the stretch to the server's own configuration.
-  if (settings.savedSize === null) return;
-  const value = modeOversize(settings.savedSize);
+  if (settings.values.screenSize === null) return;
+  const value = modeOversize(settings.values.screenSize);
   if (value === null) fitSession(slot, model);
   else if (value !== slot.oversize)
     sendQuietly(slot, { type: "oversize", value });
@@ -879,10 +887,7 @@ function send(message) {
  * @returns {import('../server/protocol.js').PasteMessage}
  */
 function pasteFor(slot, text) {
-  const grid = slot?.pane?.host ?? null;
-  return grid === null
-    ? { type: "paste", text, segments: [] }
-    : pasteMessage(grid, text);
+  return pasteMessage(slot?.pane?.host ?? null, text);
 }
 
 /**
@@ -1055,7 +1060,6 @@ function handleServerMessage(slot, message) {
     settings.setModel(slot.model);
     settings.setOversize(slot.oversize);
     slot.role = message.role;
-    settings.setRole(slot.role);
     settings.setHostLocked(message.hostLocked);
     screenEl.focus();
     return;
@@ -1102,7 +1106,6 @@ function handleServerMessage(slot, message) {
       fitIdleSessions();
     if (!onScreen) return;
     settings.connected = message.connected;
-    settings.setRole(slot.role);
     // b3270 reports the host without its port, so never overwrite a typed one.
     if (message.host !== null && settings.host === "" && !settings.hostLocked)
       settings.setHost(message.host);
@@ -1176,7 +1179,6 @@ function focusSlot(index) {
   settings.setModel(slot.model);
   settings.setOversize(slot.oversize);
   settings.connected = slot.connected === true;
-  settings.setRole(slot.role);
   applyLayout();
   screenEl.focus();
 
@@ -1322,20 +1324,18 @@ window.addEventListener(
   true,
 );
 
+/** @type {Readonly<Record<string, { row: number, col: number }>>} */
+const SELECT_STEPS = Object.freeze({
+  SelectUp: { row: -1, col: 0 },
+  SelectDown: { row: 1, col: 0 },
+  SelectLeft: { row: 0, col: -1 },
+  SelectRight: { row: 0, col: 1 },
+});
+
 screenEl.addEventListener(
   "keydown",
   (event) => {
     clearError();
-
-    // A macro's own key is the more specific choice, so it wins over the keymap.
-    const bound = openPanel() === null ? macros.macroForKey(event) : null;
-    if (bound !== null) {
-      event.preventDefault();
-      event.stopPropagation();
-      if (event.repeat || macros.playing !== null) return;
-      macros.play(bound);
-      return;
-    }
 
     const mapped = mapKey(event, keymap.lookup());
     if (mapped === null) return;
@@ -1352,6 +1352,21 @@ screenEl.addEventListener(
     }
     if (mapped.kind === "action") {
       send({ type: "action", action: mapped.action, args: mapped.args });
+      return;
+    }
+
+    if (isMacroCommand(mapped.command)) {
+      const macro = macros.macroFor(mapped.command);
+      if (panel !== null || event.repeat || macros.playing !== null) return;
+      if (macro !== null) macros.play(macro);
+      return;
+    }
+
+    const step = SELECT_STEPS[mapped.command];
+    if (step !== undefined) {
+      if (panel !== null) return;
+      activePane()?.stepSelection(step.row, step.col);
+      redraw();
       return;
     }
 
@@ -1502,7 +1517,7 @@ try {
   screen = new Screen({
     canvas: canvasEl,
     theme: settings.theme().colors,
-    fieldBackground: settings.fieldBackground,
+    fieldBackground: settings.values.fieldBackground,
   });
 } catch (cause) {
   showError("E5001", `The renderer failed to start: ${String(cause)}`);

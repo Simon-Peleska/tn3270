@@ -5,6 +5,7 @@ import {
   COMMANDS,
   DEFAULT_BINDINGS,
   buildLookup,
+  macroCommand,
   changedBindings,
   comboFromEvent,
   comboLabel,
@@ -34,6 +35,7 @@ function cloneBindings(bindings) {
  *   exportFile: (filename: string, content: string) => void,
  *   importFiles: () => Promise<string[]>,
  *   error: (code: string, message: string) => void,
+ *   macroNames: () => string[],
  * }} KeymapDeps
  *
  * `importFiles` resolves empty when the picker was cancelled.
@@ -50,7 +52,7 @@ export class KeymapPage extends Panel {
     this.lookupCache = buildLookup(this.bindings);
     /** @type {'commands' | 'combos' | 'listening'} */
     this.mode = "commands";
-    /** @type {number} index into COMMANDS, the command the combos list belongs to */
+    /** @type {number} index into commands(), the command the combos list belongs to */
     this.commandIndex = 0;
   }
 
@@ -62,6 +64,20 @@ export class KeymapPage extends Panel {
     this.bindings = cloneBindings(withDefaults(bindings));
     this.rebuildLookup();
     if (this.open) this.draw();
+  }
+
+  /**
+   * The fixed commands, then one per macro.
+   *
+   * @returns {import('./keymap.js').Command[]}
+   */
+  commands() {
+    return [
+      ...COMMANDS,
+      ...this.deps
+        .macroNames()
+        .map((name) => ({ id: macroCommand(name), label: `Macro ${name}` })),
+    ];
   }
 
   /** @returns {void} */
@@ -115,6 +131,38 @@ export class KeymapPage extends Panel {
   }
 
   /**
+   * The Macros panel's KEY: the key replaces the command's others. Null unbinds it.
+   *
+   * @param {string} commandId
+   * @param {Combo | null} combo
+   * @returns {void}
+   */
+  setKey(commandId, combo) {
+    if (combo === null) {
+      delete this.bindings[commandId];
+    } else {
+      this.takeFromOthers(commandId, combo);
+      this.bindings[commandId] = [combo];
+    }
+    this.persist();
+  }
+
+  /**
+   * A renamed macro keeps its keys.
+   *
+   * @param {string} from
+   * @param {string} to
+   * @returns {void}
+   */
+  renameCommand(from, to) {
+    const combos = this.bindings[from];
+    if (combos === undefined) return;
+    delete this.bindings[from];
+    this.bindings[to] = combos;
+    this.persist();
+  }
+
+  /**
    * @param {string} commandId
    * @param {Combo} combo
    * @returns {void}
@@ -153,14 +201,6 @@ export class KeymapPage extends Panel {
     const defaults = DEFAULT_BINDINGS[commandId] ?? [];
     for (const combo of defaults) this.takeFromOthers(commandId, combo);
     this.bindings[commandId] = defaults.map((combo) => ({ ...combo }));
-    this.persist();
-  }
-
-  /** @returns {void} */
-  resetToDefaults() {
-    this.bindings = cloneBindings(DEFAULT_BINDINGS);
-    this.commandIndex = 0;
-    this.mode = "commands";
     this.persist();
   }
 
@@ -204,7 +244,7 @@ export class KeymapPage extends Panel {
    */
   lines() {
     if (this.mode === "commands") {
-      return COMMANDS.map((command, index) => ({
+      return this.commands().map((command, index) => ({
         option: String(index + 1),
         text: command.label,
         dots: true,
@@ -212,7 +252,7 @@ export class KeymapPage extends Panel {
           this.combosFor(command.id).map(comboLabel).join(", ") || "(unbound)",
       }));
     }
-    const command = COMMANDS[this.commandIndex];
+    const command = this.commands()[this.commandIndex];
     const combos = command ? this.combosFor(command.id) : [];
     return [
       ...combos.map((combo, index) => ({
@@ -233,7 +273,7 @@ export class KeymapPage extends Panel {
    */
   title() {
     if (this.mode === "commands") return "TN3270 Keys";
-    return `TN3270 Keys - ${COMMANDS[this.commandIndex]?.label ?? ""}`;
+    return `TN3270 Keys - ${this.commands()[this.commandIndex]?.label ?? ""}`;
   }
 
   /**
@@ -334,7 +374,7 @@ export class KeymapPage extends Panel {
       return true;
     }
     if (word === "RESET" || word === "DEFAULTS") {
-      const open = COMMANDS[this.commandIndex];
+      const open = this.commands()[this.commandIndex];
       if (this.mode === "combos" && open !== undefined) {
         this.resetCommand(open.id);
         this.say(`${open.label} is back to its default keys`);
@@ -356,7 +396,10 @@ export class KeymapPage extends Panel {
 
   /** @returns {void} */
   resetAll() {
-    this.resetToDefaults();
+    this.bindings = cloneBindings(DEFAULT_BINDINGS);
+    this.commandIndex = 0;
+    this.mode = "commands";
+    this.persist();
     this.selected = 0;
     this.say("Every key is back to its default");
   }
@@ -370,7 +413,7 @@ export class KeymapPage extends Panel {
       this.resetAll();
       return;
     }
-    const command = COMMANDS.find(
+    const command = this.commands().find(
       (entry, index) =>
         String(index + 1) === name ||
         entry.id.toUpperCase() === name ||
@@ -386,7 +429,7 @@ export class KeymapPage extends Panel {
 
   /** @returns {void} */
   removeSelectedCombo() {
-    const command = COMMANDS[this.commandIndex];
+    const command = this.commands()[this.commandIndex];
     if (this.mode !== "combos" || command === undefined) {
       this.say("Open a command first");
       return;
@@ -415,7 +458,7 @@ export class KeymapPage extends Panel {
       return true;
     }
     if (event.metaKey) return true;
-    const command = COMMANDS[this.commandIndex];
+    const command = this.commands()[this.commandIndex];
     if (command) this.addCombo(command.id, comboFromEvent(event));
     this.mode = "combos";
     this.selected = 0;

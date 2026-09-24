@@ -34,6 +34,10 @@ export const COMMANDS = Object.freeze([
   { id: "Clear", label: "Clear" },
   { id: "Copy", label: "Copy" },
   { id: "Paste", label: "Paste" },
+  { id: "SelectUp", label: "Select up" },
+  { id: "SelectDown", label: "Select down" },
+  { id: "SelectLeft", label: "Select left" },
+  { id: "SelectRight", label: "Select right" },
   { id: "Undo", label: "Undo typing" },
   { id: "Redo", label: "Redo typing" },
   { id: "Menu", label: "Menu panel" },
@@ -60,6 +64,10 @@ export const COMMANDS = Object.freeze([
 export const CLIENT_COMMANDS = new Set([
   "Copy",
   "Paste",
+  "SelectUp",
+  "SelectDown",
+  "SelectLeft",
+  "SelectRight",
   "Menu",
   "Settings",
   "Macros",
@@ -78,6 +86,25 @@ export const PANEL_COMMANDS = Object.freeze({
   Recorder: "recorder",
   Keys: "keymap",
 });
+
+/**
+ * A macro's key is bound like any other command's, under the macro's name, so
+ * one keystroke still means one command.
+ *
+ * @param {string} name
+ * @returns {string}
+ */
+export function macroCommand(name) {
+  return `Macro:${name}`;
+}
+
+/**
+ * @param {string} commandId
+ * @returns {boolean}
+ */
+export function isMacroCommand(commandId) {
+  return commandId.startsWith("Macro:");
+}
 
 /**
  * @param {string} key one character, or a `KeyboardEvent.code` for keys that
@@ -122,6 +149,10 @@ export const DEFAULT_BINDINGS = Object.freeze({
   Clear: [combo("Pause")],
   Copy: [combo("C", { ctrl: true }), combo("Insert", { ctrl: true })],
   Paste: [combo("Insert", { shift: true })],
+  SelectUp: [combo("ArrowUp", { shift: true })],
+  SelectDown: [combo("ArrowDown", { shift: true })],
+  SelectLeft: [combo("ArrowLeft", { shift: true })],
+  SelectRight: [combo("ArrowRight", { shift: true })],
   // Bound, so the browser never sees them: Ctrl+R would reload the page.
   Undo: [combo("Z", { ctrl: true })],
   Redo: [combo("R", { ctrl: true })],
@@ -391,7 +422,7 @@ export function mapKey(event, lookup) {
   const commandId = commandForEvent(event, lookup);
   if (commandId !== null) {
     if (event.repeat && isAidCommand(commandId)) return null;
-    if (CLIENT_COMMANDS.has(commandId))
+    if (CLIENT_COMMANDS.has(commandId) || isMacroCommand(commandId))
       return { kind: "client", command: commandId };
     const { action, args } = commandToAction(commandId);
     return { kind: "action", action, args };

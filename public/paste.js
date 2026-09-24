@@ -84,13 +84,14 @@ export function pasteSegments(cells, fieldsFormatted, cols, cursor, text) {
  * shows, so the server only types what it is given.
  *
  * @param {{ cells: { ch: string | null, editable: boolean }[], cols: number,
- *   fieldsFormatted: boolean, cursor: { row: number, col: number } | null }} screen
+ *   fieldsFormatted: boolean, cursor: { row: number, col: number } | null } | null} screen
+ *   null when no screen is shown yet
  * @param {string} text
  * @returns {import('../server/protocol.js').PasteMessage}
  */
 export function pasteMessage(screen, text) {
   const segments =
-    screen.cursor === null
+    screen === null || screen.cursor === null
       ? []
       : pasteSegments(
           screen.cells,

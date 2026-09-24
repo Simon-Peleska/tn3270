@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { KeymapPage } from "../public/keymap-page.js";
 import { COMMANDS, DEFAULT_BINDINGS, withDefaults } from "../public/keymap.js";
-import { key, enterKey, defaultKeymapDeps } from "./keyevent.js";
+import { defaultKeymapDeps, typeCommand } from "./keyevent.js";
 
 function fixture() {
   /** @type {import('../public/keymap.js').Bindings[]} */
@@ -16,19 +16,9 @@ function fixture() {
     exportFile: () => {},
     importFiles: async () => [],
     error: () => {},
+    macroNames: () => [],
   });
   return { page, saved };
-}
-
-/**
- * @param {KeymapPage} page
- * @param {string} text a command line word
- * @returns {void}
- */
-function type(page, text) {
-  page.onCommand = true;
-  for (const char of text) page.handleKey(key({ key: char }));
-  page.handleKey(enterKey());
 }
 
 const F2 = { key: "F2", shift: false, ctrl: false, alt: false };
@@ -71,7 +61,7 @@ test("RESET inside a command puts its default keys back, taking them from wherev
   page.mode = "combos";
   assert.equal(page.title(), "TN3270 Keys - Attn");
 
-  type(page, "reset");
+  typeCommand(page, "reset");
   assert.deepEqual(page.combosFor("Attn"), DEFAULT_BINDINGS.Attn);
   assert.deepEqual(page.combosFor("Clear"), [], "Escape is Attn's again");
   assert.deepEqual(saved.at(-1), { Clear: [], PF2: [] });
@@ -83,18 +73,18 @@ test("RESET with a number or a name puts one command back, and RESET alone all o
   page.setBindings({ Enter: [F2], PF3: [ESCAPE], Attn: [] });
   page.show();
 
-  type(page, "reset 1");
+  typeCommand(page, "reset 1");
   assert.deepEqual(page.combosFor("Enter"), DEFAULT_BINDINGS.Enter);
   assert.deepEqual(page.combosFor("PF3"), [ESCAPE], "the others are left");
 
-  type(page, "reset pf3");
+  typeCommand(page, "reset pf3");
   assert.deepEqual(page.combosFor("PF3"), DEFAULT_BINDINGS.PF3);
 
-  type(page, "reset nothing");
+  typeCommand(page, "reset nothing");
   assert.match(page.message, /No command is called NOTHING/);
 
   page.setBindings({ Enter: [F2], Attn: [] });
-  type(page, "reset");
+  typeCommand(page, "reset");
   assert.deepEqual(saved.at(-1), {});
   assert.deepEqual(page.bindings, withDefaults({}));
 });

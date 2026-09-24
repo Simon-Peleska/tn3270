@@ -7,6 +7,7 @@ import {
   defaultKeymapDeps,
   drawn,
   recordedPuts,
+  typeCommand,
 } from "./keyevent.js";
 
 /**
@@ -25,13 +26,10 @@ function windowOf(width, height) {
 
 /**
  * @param {SettingsPage} page
- * @returns {string[]} the keys of the fields, leaving out the headings
+ * @returns {string[]}
  */
 function fieldKeys(page) {
-  return page
-    .rows()
-    .filter((row) => row.gap !== true)
-    .map((row) => row.key);
+  return page.rows().map((row) => row.key);
 }
 
 /** @param {(fontSize: number) => { cols: number, rows: number } | null} [fit] */
@@ -89,17 +87,6 @@ function focus(page, key) {
   assert.notEqual(index, -1, `the panel has no ${key} field`);
   page.onCommand = false;
   page.selected = index;
-}
-
-/**
- * @param {SettingsPage} page
- * @param {string} text a command line word
- * @returns {void}
- */
-function type(page, text) {
-  page.onCommand = true;
-  for (const char of text) page.handleKey(key({ key: char }));
-  page.handleKey(enterKey());
 }
 
 test("opening draws the panel, and F3 closes it and asks for the screen back", () => {
@@ -226,7 +213,7 @@ test("RESET with a name puts one setting back, and RESET alone puts them all", (
   page.connected = true;
   page.show();
 
-  type(page, "reset theme");
+  typeCommand(page, "reset theme");
   assert.equal(page.theme().name, THEMES[0]?.name);
   assert.deepEqual(
     calls.themes,
@@ -236,19 +223,19 @@ test("RESET with a name puts one setting back, and RESET alone puts them all", (
   assert.equal(page.font().name, "IBM 3270", "the others are left alone");
   assert.match(page.message, /Theme is back to its default/);
 
-  type(page, "reset model");
-  assert.equal(page.savedModel, null);
-  assert.equal(page.savedSize, null);
+  typeCommand(page, "reset model");
+  assert.equal(page.values.model, null);
+  assert.equal(page.values.screenSize, null);
   assert.deepEqual(calls.models, [], "the live screen is not reconnected");
 
-  type(page, "reset nonsense");
+  typeCommand(page, "reset nonsense");
   assert.match(page.message, /No setting is called NONSENSE/);
 
-  type(page, "reset");
+  typeCommand(page, "reset");
   assert.deepEqual(calls.saved.at(-1), {});
   assert.equal(page.font().name, FONTS[0]?.name);
-  assert.equal(page.fieldBackground, true);
-  assert.equal(page.fitFontSize, 16);
+  assert.equal(page.values.fieldBackground, true);
+  assert.equal(page.values.fitFontSize, 16);
 });
 
 test("a saved theme and font are taken up by name, and an unknown one is ignored", () => {
@@ -269,12 +256,13 @@ test("a saved theme and font are taken up by name, and an unknown one is ignored
 test("the field background can be turned off, and comes back off next time", () => {
   const { page, calls } = fixture();
   page.connected = true;
-  page.setRole("observer");
   page.show();
 
   focus(page, "fieldBackground");
+  assert.equal(page.rows()[page.selected]?.value, "On");
   page.handleKey(key({ key: "ArrowLeft" }));
-  assert.equal(page.fieldBackground, false);
+  assert.equal(page.values.fieldBackground, false);
+  assert.equal(page.rows()[page.selected]?.value, "Off");
   assert.deepEqual(calls.fieldBackgrounds, [false]);
   assert.equal(calls.saved.at(-1)?.fieldBackground, false);
 
@@ -283,7 +271,7 @@ test("the field background can be turned off, and comes back off next time", () 
 
   const { page: next } = fixture();
   next.restoreSaved({ fieldBackground: false });
-  assert.equal(next.fieldBackground, false);
+  assert.equal(next.values.fieldBackground, false);
 });
 
 test("a screen size change waits for Enter and warns what it costs", () => {
@@ -354,18 +342,20 @@ test("leaving the dynamic screen goes back to a model on its own", () => {
   );
 });
 
-test("fit to window asks for the screen the browser measured, on Enter", () => {
+test("fit to window is the last screen model, and asks for the screen the browser measured on Enter", () => {
   const { page, calls } = fixture();
+  page.setModel(2);
   page.connected = true;
   page.show();
 
-  focus(page, "fit");
-  page.handleKey(key({ key: "ArrowRight" }));
+  focus(page, "model");
+  page.handleKey(key({ key: "ArrowLeft" }));
 
+  assert.equal(page.rows()[page.selected]?.value, "Fit to window - 60x158");
   assert.equal(page.pendingOversize, "158x60");
   assert.deepEqual(calls.oversizes, [], "nothing may happen before Enter");
   const text = drawn(page).text(0, 0, 24, 79);
-  assert.match(text, /158x60/);
+  assert.match(text, /Fit to window - 60x158/);
   assert.match(text, /The host connection is dropped and reopened/);
 
   page.handleKey(enterKey());
@@ -373,7 +363,7 @@ test("fit to window asks for the screen the browser measured, on Enter", () => {
   assert.deepEqual(calls.models, [], "the model itself did not move");
 });
 
-test("fitting again turns it off, and the model is the floor", () => {
+test("the model last chosen is the fit's floor, and choosing a model again takes the fit off", () => {
   // b3270 refuses an oversize below its model, so a narrow window asks for the
   // model's own columns, in text small enough to hold more rows than it measured.
   const { page } = fixture(() => ({ cols: 40, rows: 12 }));
@@ -381,12 +371,14 @@ test("fitting again turns it off, and the model is the floor", () => {
   page.connected = true;
   page.show();
 
-  focus(page, "fit");
+  focus(page, "model");
+  page.handleKey(key({ key: "ArrowRight" }));
   page.handleKey(key({ key: "ArrowRight" }));
   assert.equal(page.pendingOversize, "132x42");
 
-  page.handleKey(key({ key: "ArrowLeft" }));
-  assert.equal(page.pendingOversize, "", "off is the model on its own");
+  page.handleKey(key({ key: "ArrowRight" }));
+  assert.equal(page.rows()[page.selected]?.value, "Model 2 - 24x80");
+  assert.equal(page.pendingOversize, "", "a model is its own size");
 });
 
 test("the text size appears with the fit and drives what it measures", () => {
@@ -394,22 +386,22 @@ test("the text size appears with the fit and drives what it measures", () => {
   page.connected = true;
   page.show();
 
-  focus(page, "fit");
+  focus(page, "model");
   assert.equal(
     fieldKeys(page).length,
-    5,
+    4,
     "the text size is not offered while the fit is off",
   );
 
-  page.handleKey(key({ key: "ArrowRight" }));
+  page.handleKey(key({ key: "ArrowLeft" }));
   assert.equal(page.pendingOversize, "166x40");
-  assert.equal(fieldKeys(page).length, 6);
+  assert.equal(fieldKeys(page).length, 5);
   assert.equal(page.rows()[page.selected + 1]?.key, "fitSize");
   assert.equal(page.rows()[page.selected + 1]?.value, "16 px");
 
   page.handleKey(key({ key: "ArrowDown" }));
   page.handleKey(key({ key: "ArrowRight" }));
-  assert.equal(page.fitFontSize, 17);
+  assert.equal(page.values.fitFontSize, 17);
   assert.equal(page.pendingOversize, "156x38", "bigger text, fewer cells");
   assert.equal(
     calls.saved.at(-1)?.fitFontSize,
@@ -426,16 +418,16 @@ test("the text size stops at both ends instead of wrapping round", () => {
   page.connected = true;
   page.show();
 
-  focus(page, "fit");
-  page.handleKey(key({ key: "ArrowRight" }));
+  focus(page, "model");
+  page.handleKey(key({ key: "ArrowLeft" }));
   focus(page, "fitSize");
 
   for (let step = 0; step < 30; step++)
     page.handleKey(key({ key: "ArrowLeft" }));
-  assert.equal(page.fitFontSize, 8);
+  assert.equal(page.values.fitFontSize, 8);
   for (let step = 0; step < 60; step++)
     page.handleKey(key({ key: "ArrowRight" }));
-  assert.equal(page.fitFontSize, 32);
+  assert.equal(page.values.fitFontSize, 32);
 });
 
 test("a screen bigger than b3270 can hold is trimmed to fit its buffer", () => {
@@ -444,8 +436,8 @@ test("a screen bigger than b3270 can hold is trimmed to fit its buffer", () => {
   page.connected = true;
   page.show();
 
-  focus(page, "fit");
-  page.handleKey(key({ key: "ArrowRight" }));
+  focus(page, "model");
+  page.handleKey(key({ key: "ArrowLeft" }));
 
   const [cols, rows] = page.pendingOversize.split("x").map(Number);
   assert.equal(rows, 120);
@@ -482,14 +474,10 @@ test("applying a screen size saves it as a choice, so another tab can ask for it
   page.show();
 
   focus(page, "model");
-  page.handleKey(key({ key: "ArrowRight" }));
-  focus(page, "fit");
-  page.handleKey(key({ key: "ArrowRight" }));
+  page.handleKey(key({ key: "ArrowLeft" }));
   page.handleKey(enterKey());
 
-  assert.deepEqual(calls.models, [3]);
   assert.deepEqual(calls.oversizes, ["158x60"]);
-  assert.equal(calls.saved.at(-1)?.model, 3);
   assert.equal(
     calls.saved.at(-1)?.screenSize,
     "fit",
@@ -498,8 +486,7 @@ test("applying a screen size saves it as a choice, so another tab can ask for it
 
   const fresh = fixture().page;
   fresh.restoreSaved(calls.saved.at(-1) ?? {});
-  assert.equal(fresh.savedModel, 3);
-  assert.equal(fresh.savedSize, "fit");
+  assert.equal(fresh.values.screenSize, "fit");
 });
 
 test("the dynamic screen and a plain model are saved as themselves", () => {
@@ -509,10 +496,11 @@ test("the dynamic screen and a plain model are saved as themselves", () => {
 
   focus(page, "model");
   page.handleKey(key({ key: "ArrowLeft" }));
+  page.handleKey(key({ key: "ArrowLeft" }));
   assert.equal(
     page.pendingOversize,
     "160x62",
-    "one step back from model 2 is the dynamic screen",
+    "two steps back from model 2, past the fit, is the dynamic screen",
   );
   page.handleKey(enterKey());
   assert.equal(calls.saved.at(-1)?.screenSize, "dynamic");
@@ -520,7 +508,7 @@ test("the dynamic screen and a plain model are saved as themselves", () => {
   page.setOversize("160x62");
   page.show();
   focus(page, "model");
-  page.handleKey(key({ key: "ArrowRight" }));
+  page.handleKey(key({ key: "ArrowLeft" }));
   page.handleKey(enterKey());
   assert.equal(calls.saved.at(-1)?.screenSize, "model");
 });
@@ -528,9 +516,9 @@ test("the dynamic screen and a plain model are saved as themselves", () => {
 test("a size from a version that never saved one is left to the server", () => {
   const { page } = fixture();
   page.restoreSaved({ theme: "Amber" });
-  assert.equal(page.savedModel, null);
+  assert.equal(page.values.model, null);
   assert.equal(
-    page.savedSize,
+    page.values.screenSize,
     null,
     "no choice means the server default stands",
   );
@@ -538,7 +526,7 @@ test("a size from a version that never saved one is left to the server", () => {
   page.restoreSaved({
     screenSize: /** @type {'fit'} */ ("a size from a later version"),
   });
-  assert.equal(page.savedSize, null);
+  assert.equal(page.values.screenSize, null);
 });
 
 test("nothing the page draws runs off the right edge", () => {

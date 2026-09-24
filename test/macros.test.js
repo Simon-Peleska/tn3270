@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { MacrosPage } from "../public/macros.js";
+import { KeymapPage } from "../public/keymap-page.js";
+import { commandForEvent, mapKey } from "../public/keymap.js";
 import { THEMES } from "../public/settings.js";
-import { key, enterKey, defaultKeymapDeps } from "./keyevent.js";
+import { key, enterKey, defaultKeymapDeps, typeCommand } from "./keyevent.js";
 
 /** @typedef {import('../public/macro-xml.js').Macro} Macro */
 
@@ -18,7 +20,22 @@ function fixture(files = []) {
     /** @type {{ filename: string, content: string }[]} */ exported: [],
     /** @type {{ code: string, message: string }[]} */ errors: [],
     /** @type {number} */ unlockWaits: 0,
+    /** @type {import('../public/keymap.js').Bindings[]} */ keymaps: [],
   };
+  /** @type {Macro[]} */
+  const macroList = [];
+  // The real keymap, since that is where a macro's key is kept.
+  const keymap = new KeymapPage({
+    ...defaultKeymapDeps,
+    redraw: () => {},
+    end: () => {},
+    go: () => {},
+    persist: (bindings) => calls.keymaps.push(bindings),
+    exportFile: () => {},
+    importFiles: async () => [],
+    error: () => {},
+    macroNames: () => macroList.map((macro) => macro.name),
+  });
   /** @type {(() => void)[]} */
   const pendingUnlocks = [];
   const page = new MacrosPage({
@@ -43,8 +60,13 @@ function fixture(files = []) {
       calls.exported.push({ filename, content }),
     importFiles: () => Promise.resolve(files),
     error: (code, message) => calls.errors.push({ code, message }),
+    keyCommand: (event) => commandForEvent(event, keymap.lookup()),
+    keyName: (commandId) => keymap.labelFor(commandId),
+    setKey: (commandId, combo) => keymap.setKey(commandId, combo),
+    renameKey: (from, to) => keymap.renameCommand(from, to),
   });
-  return { page, calls, pendingUnlocks };
+  page.macros = macroList;
+  return { page, calls, pendingUnlocks, keymap };
 }
 
 test("opening draws the panel, and F3 closes it and asks for the screen back", () => {
@@ -414,70 +436,78 @@ test("enter on a macro row closes the page and plays it", async () => {
   });
 });
 
-/**
- * @param {MacrosPage} page
- * @param {string} text a command line word
- * @returns {void}
- */
-function type(page, text) {
-  page.onCommand = true;
-  for (const char of text) page.handleKey(key({ key: char }));
-  page.handleKey(enterKey());
-}
-
-test("KEY on a macro binds the next key pressed, and that key finds the macro", () => {
-  const { page, calls } = fixture();
-  /** @type {Macro} */
-  const macro = { name: "Logon", steps: [] };
-  page.macros.push(macro);
+test("KEY on a macro binds the next key pressed in the keymap, where the screen finds it", () => {
+  const { page, calls, keymap } = fixture();
+  page.macros.push({ name: "Logon", steps: [] });
   page.show();
   page.selected = 1;
 
-  type(page, "key");
+  typeCommand(page, "key");
   assert.match(page.lines()[1]?.value ?? "", /press a key/);
   page.handleKey(key({ key: "Control", code: "ControlLeft", ctrlKey: true }));
   assert.equal(page.listening, 0, "Ctrl alone is only on the way to the key");
-  page.handleKey(key({ key: "1", code: "Digit1", ctrlKey: true }));
+  const ctrl1 = key({ key: "1", code: "Digit1", ctrlKey: true });
+  page.handleKey(ctrl1);
 
-  assert.deepEqual(macro.key, {
-    key: "1",
-    shift: false,
-    ctrl: true,
-    alt: false,
-  });
-  assert.equal(calls.saved.at(-1)?.[0]?.key, macro.key, "the key is saved");
+  assert.deepEqual(
+    calls.keymaps.at(-1)?.["Macro:Logon"],
+    [{ key: "1", shift: false, ctrl: true, alt: false }],
+    "the key is saved with the keymap",
+  );
   assert.match(page.lines()[1]?.value ?? "", /Ctrl\+1/);
   assert.match(page.message, /Ctrl\+1 plays Logon/);
-
-  assert.equal(
-    page.macroForKey(key({ key: "1", code: "Digit1", ctrlKey: true })),
-    macro,
+  assert.deepEqual(mapKey(ctrl1, keymap.lookup()), {
+    kind: "client",
+    command: "Macro:Logon",
+  });
+  assert.ok(
+    keymap.lines().some((line) => line.text === "Macro Logon"),
+    "the Keys panel lists it with the other commands",
   );
-  assert.equal(page.macroForKey(key({ key: "1", code: "Digit1" })), null);
 });
 
-test("a key bound to a second macro is taken from the first, and UNKEY frees it", () => {
-  const { page } = fixture();
-  /** @type {Macro} */
-  const first = { name: "First", steps: [] };
-  /** @type {Macro} */
-  const second = { name: "Second", steps: [] };
-  page.macros.push(first, second);
+test("a macro's key is taken from whatever had it, the way the Keys panel takes one", () => {
+  const { page, keymap } = fixture();
+  page.macros.push({ name: "First", steps: [] }, { name: "Second", steps: [] });
   page.show();
-  const f5 = key({ key: "F5", shiftKey: true });
+  const f3 = key({ key: "F3" });
 
   page.selected = 1;
-  type(page, "key");
-  page.handleKey(f5);
-  page.selected = 2;
-  type(page, "key");
-  page.handleKey(f5);
-  assert.equal(first.key, undefined);
-  assert.equal(page.macroForKey(f5), second);
+  typeCommand(page, "key");
+  page.handleKey(f3);
+  assert.equal(commandForEvent(f3, keymap.lookup()), "Macro:First");
+  assert.deepEqual(keymap.combosFor("PF3"), [], "PF3 gave its key up");
 
-  type(page, "unkey");
-  assert.equal(second.key, undefined);
-  assert.equal(page.macroForKey(f5), null);
+  page.selected = 2;
+  typeCommand(page, "key");
+  page.handleKey(f3);
+  assert.equal(commandForEvent(f3, keymap.lookup()), "Macro:Second");
+
+  typeCommand(page, "unkey");
+  assert.equal(commandForEvent(f3, keymap.lookup()), null);
+});
+
+test("a renamed macro keeps its key, and a deleted one gives it back", () => {
+  const { page, keymap } = fixture();
+  page.macros.push({ name: "Old", steps: [] });
+  page.show();
+  const f5 = key({ key: "F5", shiftKey: true });
+  page.selected = 1;
+  typeCommand(page, "key");
+  page.handleKey(f5);
+
+  page.selected = 1;
+  typeCommand(page, "ren");
+  for (let step = 0; step < 3; step++)
+    page.handleKey(key({ key: "Backspace" }));
+  for (const char of "New") page.handleKey(key({ key: char }));
+  page.handleKey(enterKey());
+  assert.equal(commandForEvent(f5, keymap.lookup()), "Macro:New");
+
+  page.selected = 1;
+  typeCommand(page, "del");
+  assert.equal(commandForEvent(f5, keymap.lookup()), null);
+  assert.equal(keymap.bindings["Macro:New"], undefined);
 });
 
 test("Escape while listening for a key binds nothing", () => {
@@ -488,9 +518,9 @@ test("Escape while listening for a key binds nothing", () => {
   page.show();
   page.selected = 1;
 
-  type(page, "key");
+  typeCommand(page, "key");
   page.handleKey(key({ key: "Escape" }));
   assert.equal(page.listening, null);
-  assert.equal(macro.key, undefined);
+  assert.equal(page.deps.keyName("Macro:Logon"), "");
   assert.equal(page.open, true, "Escape leaves the listening, not the panel");
 });

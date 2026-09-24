@@ -87,12 +87,11 @@ the host.
   screen an IBM host will bind. It sits with the models because it behaves like
   one — a size asked for by name, with no window measured for it — and it is
   what `b3270.oversize` starts every session at.
-- **Fit to window** asks for a bigger screen than the model has: the browser
-  measures how many cells the session's pane would hold at a chosen text size and
-  asks for exactly that many columns and rows, which b3270 takes as an _oversize_
-  and negotiates as IBM-DYNAMIC. Turning it off puts the model's own size back.
-  It is not offered on the dynamic screen, which is already a size asked for.
-  The screen is never smaller than the model — b3270 refuses that and quietly
+- **Fit to window** is the last choice in the same list, after the dynamic
+  screen. The browser measures how many cells the session's pane would hold at a
+  chosen text size and asks for exactly that many columns and rows, which b3270
+  takes as an _oversize_ on top of the model last chosen and negotiates as
+  IBM-DYNAMIC. Choosing a model puts the model's own size back. The screen is never smaller than the model — b3270 refuses that and quietly
   hands back the model's own screen — and never more than the 16383 cells b3270
   has a buffer for (`E4004`); a model change that the standing size no longer fits
   turns the oversize off rather than failing.
@@ -255,13 +254,17 @@ default keys back from whatever they were bound to since.
 
 A macro can have a key of its own: `KEY` on the Macros panel, with the cursor
 on the macro, waits for the next key pressed (a modifier alone does not count,
-so `Ctrl+1` can be pressed as it is typed; F12 or Esc cancels) and binds it,
-taking it from any other macro that had it. `UNKEY` removes it. The list shows
-each macro's key after its step count. On the screen that key plays the macro,
-winning over the keymap, and does nothing while a macro is already playing or
-a panel is open; a panel's own opening key is claimed before it and cannot be
-taken. The key is saved with the macro in this browser, but is not part of an
-exported macro file, which is Host On-Demand's format.
+so `Ctrl+1` can be pressed as it is typed; F12 or Esc cancels) and binds it.
+`UNKEY` removes it. The list shows each macro's key after its step count. The
+key is kept in the keymap, as a command named `Macro <name>` that the Keys
+panel lists after the fixed ones, so it follows the keymap's one rule: a key
+bound to a macro is taken from whatever had it, macro or command, and the Keys
+panel can add, remove and reset it like any other. Renaming a macro keeps its
+key; deleting it frees the key. On the screen that key plays the macro, and does
+nothing while a macro is already playing or a panel is open. `RESET` on the
+Keys panel takes every macro's key away with the rest. Macro keys are saved in
+this browser but are not part of an exported keymap file, nor of an exported
+macro file, which is Host On-Demand's format.
 
 Opening a panel is a command like any other, so it is in the keymap of §5 and
 can be rebound there: `Menu`, `Settings`, `Macros`, `Recorder` and `Keys`,
@@ -280,32 +283,33 @@ Printable characters are sent as text. Everything else follows IBM Personal
 Communications' (PCOMM) default 3270 keyboard, not x3270's Ctrl-letter
 mnemonics:
 
-| Key                   | 3270 action                                       |
-| --------------------- | ------------------------------------------------- |
-| Enter (main)          | Newline                                           |
-| Shift-Enter (main)    | BackNewline                                       |
-| Right Ctrl            | Enter                                             |
-| Ctrl-Enter, Fn-Enter  | Enter (Fn-Enter arrives as the keypad Enter)      |
-| Tab / Shift-Tab       | Tab / BackTab                                     |
-| Backspace, Delete     | Backspace, Delete                                 |
-| Arrows, Home          | Up, Down, Left, Right, Home                       |
-| Insert                | ToggleInsert                                      |
-| Alt-Insert            | PA1                                               |
-| Ctrl-C                | copy the selection, or the field under the cursor |
-| Ctrl-V, Shift-Insert  | paste the clipboard into the screen               |
-| Shift-Home            | FieldMark                                         |
-| Alt-Home              | PA2                                               |
-| End                   | EraseEOF                                          |
-| Alt-End               | EraseInput                                        |
-| Shift-PageUp          | PA3                                               |
-| Esc                   | Attn                                              |
-| Shift-Esc             | SysReq                                            |
-| Pause                 | Clear                                             |
-| Caps Lock             | Reset                                             |
-| F1–F12                | PF1–PF12                                          |
-| Shift-F1–F12          | PF13–PF24                                         |
-| Ctrl-B then 1–4       | aim the keyboard at that session                  |
-| Ctrl-B then Shift-1–4 | show that many sessions at once                   |
+| Key                   | 3270 action                                        |
+| --------------------- | -------------------------------------------------- |
+| Enter (main)          | Newline                                            |
+| Shift-Enter (main)    | BackNewline                                        |
+| Right Ctrl            | Enter                                              |
+| Ctrl-Enter, Fn-Enter  | Enter (Fn-Enter arrives as the keypad Enter)       |
+| Tab / Shift-Tab       | Tab / BackTab                                      |
+| Backspace, Delete     | Backspace, Delete                                  |
+| Arrows, Home          | Up, Down, Left, Right, Home                        |
+| Insert                | ToggleInsert                                       |
+| Alt-Insert            | PA1                                                |
+| Shift-Arrows          | select a rectangle from the cursor, as a drag does |
+| Ctrl-C                | copy the selection, or the field under the cursor  |
+| Ctrl-V, Shift-Insert  | paste the clipboard into the screen                |
+| Shift-Home            | FieldMark                                          |
+| Alt-Home              | PA2                                                |
+| End                   | EraseEOF                                           |
+| Alt-End               | EraseInput                                         |
+| Shift-PageUp          | PA3                                                |
+| Esc                   | Attn                                               |
+| Shift-Esc             | SysReq                                             |
+| Pause                 | Clear                                              |
+| Caps Lock             | Reset                                              |
+| F1–F12                | PF1–PF12                                           |
+| Shift-F1–F12          | PF13–PF24                                          |
+| Ctrl-B then 1–4       | aim the keyboard at that session                   |
+| Ctrl-B then Shift-1–4 | show that many sessions at once                    |
 
 `BackNewline` is Newline's mirror and the one name in the table b3270 has no
 action for: the server finds the first typeable cell of the nearest row above

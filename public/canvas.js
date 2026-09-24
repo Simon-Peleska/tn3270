@@ -145,6 +145,28 @@ export class Pane {
   }
 
   /**
+   * Shift+arrow is a drag by keyboard: the cursor is where it was pressed, and
+   * each step moves the far corner. A stale click point is not a selection, so
+   * with nothing selected a new one starts at the cursor.
+   *
+   * @param {number} rowStep
+   * @param {number} colStep
+   * @returns {void}
+   */
+  stepSelection(rowStep, colStep) {
+    if (!this.hasSelection()) {
+      const cursor = this.host.cursor ?? { row: 0, col: 0 };
+      this.selectionStart = { row: cursor.row, col: cursor.col };
+      this.selectionEnd = { row: cursor.row, col: cursor.col };
+    }
+    const end = this.selectionEnd ?? { row: 0, col: 0 };
+    this.selectionEnd = {
+      row: Math.min(Math.max(end.row + rowStep, 0), this.rows - 1),
+      col: Math.min(Math.max(end.col + colStep, 0), this.cols - 1),
+    };
+  }
+
+  /**
    * @param {number} row
    * @param {number} col
    * @returns {boolean}
