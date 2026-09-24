@@ -224,13 +224,13 @@ function drawChrome(slot) {
     const keys = keyboardKeys(canvas);
     const rows = new Set(keys.map((key) => key.row));
     for (const row of rows)
-      overlay.put(row, 0, wide(""), paint(statusBar, statusBar));
+      overlay.put(row, 0, wide(""), paint(foreground, background));
     for (const key of keys)
       overlay.put(
         key.row,
         key.col,
         keyFace(key),
-        paint(statusBar, statusInk, true),
+        paint(foreground, background, true),
       );
   }
 
@@ -1437,7 +1437,7 @@ function canvasClicked(event) {
     }
   }
 
-  // The keyboard is opaque: a click on it, key or gap, is never a cursor move.
+  // The keyboard is opaque: a click on it is never a cursor move.
   if (keyboardShown) {
     const keys = keyboardKeys(canvas);
     if (keys.some((key) => key.row === row)) {

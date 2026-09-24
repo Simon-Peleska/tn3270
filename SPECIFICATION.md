@@ -143,13 +143,16 @@ the host.
   split is not a screen you have to switch away from to work on. **Menu** opens
   the primary option menu (§4.1), which is the way to every other panel.
   **Kbd** shows or hides the on-screen keyboard: four rows of host keys a PC
-  keyboard lacks or hides — Enter, Clear, PA1–PA3, Attn, SysReq; Reset,
-  Erase EOF, Erase input, Insert, Dup, Field mark, Home, BackTab, Tab, Newline;
-  PF1–PF12; PF13–PF24 — each row spread over the pane's full width. It covers
+  keyboard lacks or hides — Enter, Clear, Reset, PA1–PA3, Attn, SysReq;
+  Erase EOF, Erase input, Insert, Dup, Field mark, Home, BackTab, Tab;
+  PF1–PF12; PF13–PF24 — in the screen's own colours, every key a bold
+  `[label]` like the status row's buttons. The keys sit on a grid of twelve
+  six-column cells, 72 columns centred in the pane, a key taking two cells when
+  its label needs them, so PF13 is under PF1. It covers
   the bottom four rows of the screen, and the top four while the cursor is
-  under it, so the field being typed in stays in view. A click on a key sends
-  it as if it had been pressed (a macro being recorded takes it too); a click
-  anywhere else on the keyboard does nothing, never a cursor move. It is drawn
+  under it, so the field being typed in stays in view. A click anywhere in a
+  key's cells sends it as if it had been pressed (a macro being
+  recorded takes it too); a click on the keyboard is never a cursor move. It is drawn
   on the session being looked at only, not under a panel, and is not
   remembered across a reload.
   **Reset** puts
