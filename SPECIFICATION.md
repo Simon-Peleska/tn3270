@@ -215,7 +215,7 @@ named here are the commands' defaults.
 panel, `END`/`EXIT`/`X`, `CANCEL`/`CAN`, `RETURN`/`RET`/`MENU`, `HELP`/`?`, the
 name of any panel, and the words a panel adds of its own —
 `APPLY`, `RENAME`, `DELETE`, `EXPORT`, `IMPORT`, `MARK`, `RECORD`, `STOP`,
-`RESET`, `DEFAULTS`. A word that is none of these is answered on the panel.
+`KEY`, `UNKEY`, `RESET`, `DEFAULTS`. A word that is none of these is answered on the panel.
 
 Settings and keys are saved in the browser as what differs from the defaults,
 so a default changed in a later version reaches everything the user left
@@ -226,6 +226,16 @@ takes effect with the next session, not by reconnecting this one. On Keys,
 command; `RESET n` or `RESET PF3` restores one command from the list, and
 `RESET ALL` restores everything from anywhere. A command put back takes its
 default keys back from whatever they were bound to since.
+
+A macro can have a key of its own: `KEY` on the Macros panel, with the cursor
+on the macro, waits for the next key pressed (a modifier alone does not count,
+so `Ctrl+1` can be pressed as it is typed; F12 or Esc cancels) and binds it,
+taking it from any other macro that had it. `UNKEY` removes it. The list shows
+each macro's key after its step count. On the screen that key plays the macro,
+winning over the keymap, and does nothing while a macro is already playing or
+a panel is open; a panel's own opening key is claimed before it and cannot be
+taken. The key is saved with the macro in this browser, but is not part of an
+exported macro file, which is Host On-Demand's format.
 
 Opening a panel is a command like any other, so it is in the keymap of §5 and
 can be rebound there: `Menu`, `Settings`, `Macros`, `Recorder` and `Keys`,

@@ -4,7 +4,7 @@
  * keyword and get invented ones, so only a round trip through this app sees them.
  *
  * @typedef {{ text: string, action: string, args: string[] }} MacroStep
- * @typedef {{ name: string, steps: MacroStep[] }} Macro
+ * @typedef {{ name: string, steps: MacroStep[], key?: import('./keymap.js').Combo }} Macro
  */
 
 /** @type {Readonly<Record<string, string>>} */
