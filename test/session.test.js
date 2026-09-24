@@ -9,6 +9,7 @@ import {
   waitUntil,
   settle,
   startTracedSession,
+  letIn,
 } from "./helpers.js";
 
 test("the first viewer controls and the rest observe", async (t) => {
@@ -19,7 +20,7 @@ test("the first viewer controls and the rest observe", async (t) => {
   const first = collectingViewer("first");
   const second = collectingViewer("second");
   session.attach(first);
-  session.attach(second);
+  letIn(session, first, second);
 
   assert.equal(first.role, "controller");
   assert.equal(second.role, "observer");
@@ -38,7 +39,7 @@ test("a viewer joining mid-stream gets a repaint matching what the first viewer 
   );
 
   const late = collectingViewer("late");
-  session.attach(late);
+  letIn(session, early, late);
 
   const repaint = late.paints[0];
   assert.ok(
@@ -55,7 +56,7 @@ test("a viewer joining mid-stream gets a repaint matching what the first viewer 
     "the repaint must contain the current screen",
   );
 
-  const hello = late.messages[0];
+  const hello = late.messages[1];
   assert.equal(hello?.type, "hello");
   assert.equal(hello?.type === "hello" ? hello.rows : 0, session.screen.rows);
 });
@@ -72,7 +73,7 @@ test("every attached viewer receives the same delta", async (t) => {
   const a = collectingViewer("a");
   const b = collectingViewer("b");
   session.attach(a);
-  session.attach(b);
+  letIn(session, a, b);
   const beforeA = a.paints.length;
   const beforeB = b.paints.length;
 
@@ -94,7 +95,7 @@ test("an observer cannot type, and is told why in place", async (t) => {
   const controller = collectingViewer("controller");
   const observer = collectingViewer("observer");
   session.attach(controller);
-  session.attach(observer);
+  letIn(session, controller, observer);
 
   session.handleClientMessage(observer, { type: "text", value: "nope" });
 
@@ -168,169 +169,287 @@ test("the keyboard locking is pushed to every viewer the moment it happens", asy
   );
 });
 
-test("control passes on when the controller leaves", async (t) => {
+test("a second viewer waits until the owner lets them in, and sees nothing before", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
   await session.ready;
 
+  const owner = collectingViewer("owner");
+  const guest = { ...collectingViewer("guest"), user: "alice" };
+  session.attach(owner);
+  session.attach(guest);
+
+  assert.deepEqual(
+    guest.messages.map((message) => message.type),
+    ["waiting"],
+    "no hello and no paint before the owner has said yes",
+  );
+  const status = owner.messages.at(-1);
+  assert.deepEqual(status?.type === "status" ? status.requests : null, [
+    { viewer: "guest", name: "alice", kind: "watch" },
+  ]);
+
+  session.handleClientMessage(owner, {
+    type: "answer",
+    viewer: "guest",
+    allow: true,
+  });
+  assert.equal(guest.messages[1]?.type, "hello");
+  assert.equal(guest.role, "observer");
+  assert.ok(guest.paints.length > 0, "and the screen comes with it");
+  const after = owner.messages.at(-1);
+  assert.deepEqual(after?.type === "status" ? after.requests : null, []);
+  assert.equal(after?.type === "status" ? after.guests : null, 1);
+});
+
+test("a viewer still waiting cannot get the screen by asking for a repaint", async (t) => {
+  const session = new Session(testConfig());
+  t.after(() => session.close());
+  await session.ready;
+
+  const owner = collectingViewer("owner");
+  const guest = collectingViewer("guest");
+  session.attach(owner);
+  session.attach(guest);
+  session.handleClientMessage(guest, { type: "refresh" });
+  session.handleClientMessage(guest, { type: "askEdit" });
+
+  assert.deepEqual(guest.paints, []);
+  const status = owner.messages.at(-1);
+  assert.equal(status?.type === "status" ? status.requests.length : null, 1);
+});
+
+test("a viewer the owner says no to is sent away, named by address without a user", async (t) => {
+  const session = new Session(testConfig());
+  t.after(() => session.close());
+  await session.ready;
+
+  const owner = { ...collectingViewer("owner"), user: "bob" };
+  const guest = collectingViewer("guest");
+  session.attach(owner);
+  session.attach(guest);
+  const status = owner.messages.at(-1);
+  assert.equal(
+    status?.type === "status" ? status.requests[0]?.name : null,
+    "127.0.0.1",
+  );
+
+  session.handleClientMessage(owner, {
+    type: "answer",
+    viewer: "guest",
+    allow: false,
+  });
+  assert.deepEqual(guest.messages.at(-1), {
+    type: "refused",
+    code: "E3008",
+    message: "bob did not let you in.",
+  });
+  assert.equal(guest.closed, true);
+  assert.equal(session.waiting.size, 0);
+  assert.equal(session.viewers.size, 1);
+});
+
+test("a guest asks to edit, and only one guest edits at a time", async (t) => {
+  const session = new Session(testConfig());
+  t.after(() => session.close());
+  await session.ready;
+
+  const owner = collectingViewer("owner");
   const first = collectingViewer("first");
   const second = collectingViewer("second");
-  session.attach(first);
-  session.attach(second);
-  session.detach(first);
+  session.attach(owner);
+  letIn(session, owner, first);
+  letIn(session, owner, second);
 
-  assert.equal(
-    second.role,
-    "controller",
-    "the session must not be left read-only",
+  session.handleClientMessage(first, { type: "text", value: "x" });
+  const refused = first.messages.at(-1);
+  assert.equal(refused?.type === "error" ? refused.code : "", "E3006");
+
+  session.handleClientMessage(first, { type: "askEdit" });
+  const asked = owner.messages.at(-1);
+  assert.deepEqual(asked?.type === "status" ? asked.requests : null, [
+    { viewer: "first", name: "127.0.0.1", kind: "edit" },
+  ]);
+  const own = first.messages.at(-1);
+  assert.equal(own?.type === "status" ? own.editRequested : null, true);
+
+  session.handleClientMessage(owner, {
+    type: "answer",
+    viewer: "first",
+    allow: true,
+  });
+  assert.equal(first.role, "controller");
+
+  session.handleClientMessage(second, { type: "askEdit" });
+  session.handleClientMessage(owner, {
+    type: "answer",
+    viewer: "second",
+    allow: true,
+  });
+  assert.equal(second.role, "controller");
+  assert.equal(first.role, "observer", "the first guest gives way");
+  assert.ok(
+    first.messages.some(
+      (message) => message.type === "error" && message.code === "E3012",
+    ),
+    "and is told why",
   );
+  assert.equal(owner.role, "controller", "the owner never gives way");
 });
 
-test("allowMultipleControllers makes every viewer a controller", async (t) => {
-  const session = new Session(
-    testConfig({
-      sessions: { allowMultipleControllers: true, idleTimeoutMs: 0 },
-    }),
-  );
-  t.after(() => session.close());
-  await session.ready;
-
-  const a = collectingViewer("a");
-  const b = collectingViewer("b");
-  session.attach(a);
-  session.attach(b);
-
-  assert.equal(a.role, "controller");
-  assert.equal(b.role, "controller");
-});
-
-test("the controller can turn sharing off, refusing a second viewer but not itself", async (t) => {
+test("an owner can say no to editing and take editing back", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
   await session.ready;
 
-  const controller = collectingViewer("controller");
-  session.attach(controller);
-  session.handleClientMessage(controller, {
-    type: "sharing",
-    allowView: false,
-    allowEdit: false,
+  const owner = collectingViewer("owner");
+  const guest = collectingViewer("guest");
+  session.attach(owner);
+  letIn(session, owner, guest);
+
+  session.handleClientMessage(guest, { type: "askEdit" });
+  session.handleClientMessage(owner, {
+    type: "answer",
+    viewer: "guest",
+    allow: false,
   });
-
-  assert.throws(
-    () => session.attach(collectingViewer("second")),
-    (err) => {
-      assert.ok(err instanceof AppError);
-      assert.equal(err.code, "E3007");
-      return true;
-    },
+  assert.equal(guest.role, "observer");
+  assert.ok(
+    guest.messages.some(
+      (message) => message.type === "error" && message.code === "E3011",
+    ),
   );
 
-  session.detach(controller);
-  const rejoined = collectingViewer("rejoined");
-  session.attach(rejoined);
-  assert.equal(
-    rejoined.role,
-    "controller",
-    "the first viewer back in is never locked out by its own setting",
-  );
+  session.handleClientMessage(guest, { type: "askEdit" });
+  session.handleClientMessage(owner, {
+    type: "answer",
+    viewer: "guest",
+    allow: true,
+  });
+  const status = owner.messages.at(-1);
+  assert.equal(status?.type === "status" ? status.editor : null, "127.0.0.1");
+
+  session.handleClientMessage(owner, { type: "stopEditing" });
+  assert.equal(guest.role, "observer");
+  assert.equal(guest.closed, false, "still watching");
 });
 
-test("an observer cannot change the sharing settings", async (t) => {
+test("stopping sharing sends every guest away, waiting or watching, and their passes stop working", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
   await session.ready;
 
-  const controller = collectingViewer("controller");
-  const observer = collectingViewer("observer");
-  session.attach(controller);
-  session.attach(observer);
+  const owner = collectingViewer("owner");
+  const watching = collectingViewer("watching");
+  const waiting = collectingViewer("waiting");
+  session.attach(owner);
+  letIn(session, owner, watching);
+  session.attach(waiting);
 
-  session.handleClientMessage(observer, {
-    type: "sharing",
-    allowView: false,
-    allowEdit: true,
-  });
+  session.handleClientMessage(owner, { type: "stopSharing" });
+  for (const guest of [watching, waiting]) {
+    const last = guest.messages.at(-1);
+    assert.equal(last?.type === "refused" ? last.code : "", "E3009");
+    assert.equal(guest.closed, true);
+  }
+  assert.deepEqual([...session.viewers], [owner]);
 
-  assert.equal(session.allowSharing, true, "an observer cannot touch it");
-  assert.equal(session.allowSharedEditing, false);
-  const error = observer.messages.at(-1);
-  assert.equal(error?.type, "error");
-  assert.equal(error?.type === "error" ? error.code : "", "E3006");
+  const back = { ...collectingViewer("back"), pass: watching.pass };
+  session.attach(back);
+  assert.equal(back.messages[0]?.type, "waiting", "it has to ask again");
 });
 
-test("turning shared editing on promotes every viewer, and off demotes everyone but the controller who did it", async (t) => {
+test("a guest cannot answer requests or stop sharing", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
   await session.ready;
 
-  const controller = collectingViewer("controller");
-  const observer = collectingViewer("observer");
-  session.attach(controller);
-  session.attach(observer);
-  assert.equal(observer.role, "observer");
-
-  session.handleClientMessage(controller, {
-    type: "sharing",
-    allowView: true,
-    allowEdit: true,
+  const owner = collectingViewer("owner");
+  const guest = collectingViewer("guest");
+  const other = collectingViewer("other");
+  session.attach(owner);
+  letIn(session, owner, guest);
+  session.handleClientMessage(guest, { type: "askEdit" });
+  session.handleClientMessage(owner, {
+    type: "answer",
+    viewer: "guest",
+    allow: true,
   });
-  assert.equal(session.allowSharedEditing, true);
-  assert.equal(
-    observer.role,
-    "controller",
-    "already attached, not just the next to join",
-  );
+  session.attach(other);
 
-  const third = collectingViewer("third");
-  session.attach(third);
-  assert.equal(
-    third.role,
-    "controller",
-    "a new viewer types too, once shared editing is on",
-  );
-
-  session.handleClientMessage(controller, {
-    type: "sharing",
-    allowView: true,
-    allowEdit: false,
+  session.handleClientMessage(guest, {
+    type: "answer",
+    viewer: "other",
+    allow: true,
   });
-  assert.equal(
-    observer.role,
-    "observer",
-    "demoted the moment shared editing is turned off",
-  );
-  assert.equal(third.role, "observer");
-  assert.equal(
-    controller.role,
-    "controller",
-    "the one who turned it off keeps control",
-  );
+  session.handleClientMessage(guest, { type: "stopSharing" });
+  assert.equal(session.waiting.size, 1, "even an editing guest cannot");
+  const error = guest.messages.at(-1);
+  assert.equal(error?.type === "error" ? error.code : "", "E3010");
 });
 
-test("hello and status report the session's sharing settings", async (t) => {
+test("the pass from hello lets the owner and a guest back in without asking", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
   await session.ready;
 
-  const controller = collectingViewer("controller");
-  session.attach(controller);
-  const hello = controller.messages[0];
-  assert.equal(hello?.type, "hello");
-  assert.equal(hello?.type === "hello" ? hello.allowSharing : null, true);
-  assert.equal(
-    hello?.type === "hello" ? hello.allowSharedEditing : null,
-    false,
-  );
+  const owner = collectingViewer("owner");
+  const guest = collectingViewer("guest");
+  session.attach(owner);
+  letIn(session, owner, guest);
+  const hello = owner.messages[0];
+  assert.equal(hello?.type === "hello" ? hello.owner : null, true);
 
-  session.handleClientMessage(controller, {
-    type: "sharing",
-    allowView: false,
-    allowEdit: false,
-  });
-  const status = controller.messages.at(-1);
-  assert.equal(status?.type, "status");
-  assert.equal(status?.type === "status" ? status.allowSharing : null, false);
+  session.detach(owner);
+  session.detach(guest);
+  assert.equal(guest.role, "observer");
+
+  const guestBack = { ...collectingViewer("guest2"), pass: guest.pass };
+  session.attach(guestBack);
+  assert.equal(guestBack.messages[0]?.type, "hello");
+  assert.equal(guestBack.owner, false, "a guest's pass is not an owner's");
+
+  const ownerBack = { ...collectingViewer("owner2"), pass: owner.pass };
+  session.attach(ownerBack);
+  assert.equal(ownerBack.owner, true);
+  assert.equal(ownerBack.role, "controller");
+});
+
+test("when the owner leaves, guests keep watching and nobody is made owner", async (t) => {
+  const session = new Session(testConfig());
+  t.after(() => session.close());
+  await session.ready;
+
+  const owner = collectingViewer("owner");
+  const guest = collectingViewer("guest");
+  session.attach(owner);
+  letIn(session, owner, guest);
+  session.detach(owner);
+
+  assert.equal(guest.role, "observer");
+  assert.equal(guest.owner, false);
+  const stranger = collectingViewer("stranger");
+  session.attach(stranger);
+  assert.equal(
+    stranger.messages[0]?.type,
+    "waiting",
+    "a stranger waits for the owner to come back",
+  );
+});
+
+test("a viewer that gives up waiting takes its request with it", async (t) => {
+  const session = new Session(testConfig());
+  t.after(() => session.close());
+  await session.ready;
+
+  const owner = collectingViewer("owner");
+  const guest = collectingViewer("guest");
+  session.attach(owner);
+  session.attach(guest);
+  session.detach(guest);
+
+  const status = owner.messages.at(-1);
+  assert.deepEqual(status?.type === "status" ? status.requests : null, []);
 });
 
 test("the viewer ceiling is enforced", async (t) => {
@@ -386,7 +505,7 @@ test("changing the model resizes the grid and tells every viewer before repainti
   const controller = collectingViewer("controller");
   const observer = collectingViewer("observer");
   session.attach(controller);
-  session.attach(observer);
+  letIn(session, controller, observer);
 
   session.handleClientMessage(controller, { type: "model", model: 2 });
   await waitUntil(
@@ -529,7 +648,7 @@ test("a refresh repaints only the viewer who asked, even an observer", async (t)
   const controller = collectingViewer("controller");
   const observer = collectingViewer("observer");
   session.attach(controller);
-  session.attach(observer);
+  letIn(session, controller, observer);
   assert.equal(observer.role, "observer");
 
   const before = controller.paints.length;
@@ -1198,7 +1317,7 @@ test("an observer cannot start or stop a recording", async (t) => {
   const controller = collectingViewer("controller");
   const observer = collectingViewer("observer");
   session.attach(controller);
-  session.attach(observer);
+  letIn(session, controller, observer);
 
   session.handleClientMessage(observer, { type: "recorder", action: "start" });
 

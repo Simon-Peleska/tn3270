@@ -111,10 +111,11 @@ for the first, start a new session for the second. A reconnect that gets as far
 as a `hello` reloads the page, so a server that came back with newer page code
 is actually picked up; the URL fragment is left alone, so the reloaded page
 attaches to the same sessions. The reload hangs off the `hello` and not the
-socket opening, because an attach the server refuses (E3007) opens a socket too
-and would otherwise reload forever.
+socket opening, because an attach the server refuses (E3003) opens a socket too
+and would otherwise reload forever. A viewer the owner sends away gets a
+`refused` message first, and its page does not reconnect at all.
 
-A `Viewer` is just `{ id, role, sendMessage }`. Nothing about it knows what a
+A `Viewer` is just `{ id, role, sendMessage, close }`. Nothing about it knows what a
 WebSocket is, which is why the tests attach a plain collector object and
 exercise the real broadcast path with nothing mocked. One paint object serves
 every viewer, because nothing in it depends on who is looking.
@@ -125,10 +126,9 @@ quiet.
 
 ### The multi-viewer seam
 
-Extra viewers are observers today. Making everyone a controller is the config
-flag `sessions.allowMultipleControllers`, and it is genuinely a one-line change
-in `Session#attach` rather than a redesign — because **there are no locks
-anywhere**. Concurrent input cannot corrupt anything: every keystroke from every
+Extra viewers come in only on the owner's yes, as observers, and at most one of
+them is let edit beside the owner (SPECIFICATION §3). Two controllers at once
+needed no redesign — because **there are no locks anywhere**. Concurrent input cannot corrupt anything: every keystroke from every
 viewer funnels into a single ordered stdin queue, and the resulting screen comes
 back to everyone identically.
 

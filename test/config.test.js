@@ -191,23 +191,22 @@ test("well-formed client messages are parsed", () => {
     host: null,
   });
   assert.deepEqual(
-    parseClientMessage('{"type":"sharing","allowView":false,"allowEdit":true}'),
-    {
-      type: "sharing",
-      allowView: false,
-      allowEdit: true,
-    },
+    parseClientMessage('{"type":"answer","viewer":"ab12cd34","allow":true}'),
+    { type: "answer", viewer: "ab12cd34", allow: true },
   );
+  assert.deepEqual(parseClientMessage('{"type":"stopSharing"}'), {
+    type: "stopSharing",
+  });
 });
 
-test("a sharing message without both booleans is refused", () => {
+test("an answer without a viewer and a yes or no is refused", () => {
   for (const body of [
-    { allowView: false },
-    { allowView: "no", allowEdit: true },
-    {},
+    { viewer: "ab12cd34" },
+    { viewer: 3, allow: true },
+    { allow: "yes" },
   ]) {
     assert.throws(
-      () => parseClientMessage(JSON.stringify({ type: "sharing", ...body })),
+      () => parseClientMessage(JSON.stringify({ type: "answer", ...body })),
       (err) => {
         assert.ok(err instanceof AppError);
         assert.equal(err.code, "E4002");

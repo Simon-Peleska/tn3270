@@ -5,7 +5,7 @@ import { AppError } from "./errors.js";
  * @typedef {object} Config
  * @property {{ host: string, port: number }} server
  * @property {{ path: string, model: number, defaultHost: string | null, settings: Record<string, string>, extraArgs: string[] }} b3270
- * @property {{ maxSessions: number, maxViewersPerSession: number, idleTimeoutMs: number, allowMultipleControllers: boolean }} sessions
+ * @property {{ maxSessions: number, maxViewersPerSession: number, idleTimeoutMs: number }} sessions
  * @property {{ allowedHosts: string[], trustProxyHeaders: boolean }} security
  * @property {'debug' | 'info' | 'warn' | 'error'} logLevel
  * @property {string} logFile Empty is stderr only.
@@ -103,7 +103,6 @@ const DEFAULTS = {
     maxSessions: 16,
     maxViewersPerSession: 8,
     idleTimeoutMs: 300000,
-    allowMultipleControllers: false,
   },
   security: { allowedHosts: [], trustProxyHeaders: false },
   logLevel: "info",
@@ -344,12 +343,6 @@ export function validateConfig(raw) {
         DEFAULTS.sessions.idleTimeoutMs,
         0,
         86400000,
-      ),
-      allowMultipleControllers: bool(
-        sessionsSection,
-        "sessions",
-        "allowMultipleControllers",
-        DEFAULTS.sessions.allowMultipleControllers,
       ),
     },
     security: {

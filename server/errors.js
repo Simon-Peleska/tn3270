@@ -20,7 +20,12 @@ const ERRORS = Object.freeze({
   E3004: "Screen indication referenced a cell outside the screen",
   E3005: "Host address is not allowed by config",
   E3006: "Input rejected: viewer is an observer",
-  E3007: "Session is not accepting new viewers",
+  // E3007 is spent.
+  E3008: "The session's owner did not let the viewer in",
+  E3009: "The session's owner stopped sharing it",
+  E3010: "Only the session's owner may answer requests or stop sharing",
+  E3011: "The session's owner did not let the viewer edit",
+  E3012: "The session's owner took editing back",
 
   E4001: "WebSocket message was not valid JSON",
   E4002: "WebSocket message had an unknown type",

@@ -570,7 +570,6 @@ const VALUE_WIDTH = 24;
  *   applyOversize: (value: string) => void,
  *   windowFit: (fontSize: number) => { cols: number, rows: number } | null,
  *   applyFieldBackground: (enabled: boolean) => void,
- *   applySharing: (allowView: boolean, allowEdit: boolean) => void,
  *   connect: (host: string | null) => void,
  *   persist: (settings: Partial<import('./store.js').StoredSettings>) => void,
  * }} SettingsDeps
@@ -621,10 +620,6 @@ export class SettingsPage extends Panel {
     this.hostLocked = false;
     /** @type {'controller' | 'observer'} Server-assigned, not a preference. */
     this.role = "controller";
-    /** @type {boolean} */
-    this.allowSharing = true;
-    /** @type {boolean} */
-    this.allowSharedEditing = false;
   }
 
   /**
@@ -690,21 +685,6 @@ export class SettingsPage extends Panel {
         this.fieldBackground,
       ),
     );
-    // Only the controller's call: it is their screen being shared and driven.
-    if (this.role === "controller") {
-      rows.push(
-        this.toggleRow("allowSharing", "Allow sharing", this.allowSharing),
-      );
-      if (this.allowSharing) {
-        rows.push(
-          this.toggleRow(
-            "allowSharedEditing",
-            "Shared editing",
-            this.allowSharedEditing,
-          ),
-        );
-      }
-    }
     return rows;
   }
 
@@ -743,17 +723,6 @@ export class SettingsPage extends Panel {
   setRole(role) {
     if (role === this.role) return;
     this.role = role;
-    if (this.open) this.draw();
-  }
-
-  /**
-   * @param {boolean} allowSharing
-   * @param {boolean} allowSharedEditing
-   * @returns {void}
-   */
-  setSharing(allowSharing, allowSharedEditing) {
-    this.allowSharing = allowSharing;
-    this.allowSharedEditing = allowSharedEditing;
     if (this.open) this.draw();
   }
 
@@ -1094,14 +1063,6 @@ export class SettingsPage extends Panel {
       this.fieldBackground = !this.fieldBackground;
       this.deps.applyFieldBackground(this.fieldBackground);
       this.save();
-    } else if (key === "allowSharing") {
-      this.allowSharing = !this.allowSharing;
-      // Nothing left to share editing with once sharing is off.
-      if (!this.allowSharing) this.allowSharedEditing = false;
-      this.deps.applySharing(this.allowSharing, this.allowSharedEditing);
-    } else if (key === "allowSharedEditing") {
-      this.allowSharedEditing = !this.allowSharedEditing;
-      this.deps.applySharing(this.allowSharing, this.allowSharedEditing);
     }
   }
 

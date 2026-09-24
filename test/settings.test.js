@@ -48,7 +48,6 @@ function fixture(fit = () => ({ cols: 158, rows: 60 })) {
     /** @type {string[]} */ went: [],
     /** @type {Partial<import('../public/store.js').StoredSettings>[]} */ saved:
       [],
-    /** @type {{ allowView: boolean, allowEdit: boolean }[]} */ sharing: [],
   };
   const page = new SettingsPage({
     ...defaultKeymapDeps,
@@ -61,8 +60,6 @@ function fixture(fit = () => ({ cols: 158, rows: 60 })) {
     applyOversize: (value) => calls.oversizes.push(value),
     windowFit: fit,
     applyFieldBackground: (on) => calls.fieldBackgrounds.push(on),
-    applySharing: (allowView, allowEdit) =>
-      calls.sharing.push({ allowView, allowEdit }),
     connect: (host) => calls.hosts.push(host),
     end: () => {
       calls.ends += 1;
@@ -269,44 +266,6 @@ test("a saved theme and font are taken up by name, and an unknown one is ignored
   );
 });
 
-test("the controller can toggle sharing and shared editing, and turning sharing off takes editing with it", () => {
-  const { page, calls } = fixture();
-  page.connected = true;
-  page.show();
-
-  assert.deepEqual(
-    page
-      .rows()
-      .map((row) => row.key)
-      .slice(-2),
-    ["allowSharing", "allowSharedEditing"],
-    "a controller is offered both, sharing on by default and editing off",
-  );
-
-  focus(page, "allowSharedEditing");
-  page.handleKey(key({ key: "ArrowRight" }));
-  assert.equal(page.allowSharedEditing, true);
-  assert.deepEqual(calls.sharing.at(-1), { allowView: true, allowEdit: true });
-
-  focus(page, "allowSharing");
-  page.handleKey(key({ key: "ArrowLeft" }));
-  assert.equal(page.allowSharing, false);
-  assert.equal(
-    page.allowSharedEditing,
-    false,
-    "nothing left to share with, nothing left to type into it",
-  );
-  assert.deepEqual(calls.sharing.at(-1), {
-    allowView: false,
-    allowEdit: false,
-  });
-  assert.deepEqual(
-    fieldKeys(page),
-    ["theme", "font", "model", "fit", "fieldBackground", "allowSharing"],
-    "shared editing is only offered while sharing is on",
-  );
-});
-
 test("the field background can be turned off, and comes back off next time", () => {
   const { page, calls } = fixture();
   page.connected = true;
@@ -325,21 +284,6 @@ test("the field background can be turned off, and comes back off next time", () 
   const { page: next } = fixture();
   next.restoreSaved({ fieldBackground: false });
   assert.equal(next.fieldBackground, false);
-});
-
-test("an observer is not offered the sharing rows at all — it is not their session to share", () => {
-  const { page } = fixture();
-  page.connected = true;
-  page.setRole("observer");
-  page.show();
-
-  assert.deepEqual(fieldKeys(page), [
-    "theme",
-    "font",
-    "model",
-    "fit",
-    "fieldBackground",
-  ]);
 });
 
 test("a screen size change waits for Enter and warns what it costs", () => {
@@ -376,14 +320,7 @@ test("the dynamic screen is one more choice after the models, asked for as an ov
   assert.equal(page.pendingOversize, "160x62");
   assert.deepEqual(
     fieldKeys(page),
-    [
-      "theme",
-      "font",
-      "model",
-      "fieldBackground",
-      "allowSharing",
-      "allowSharedEditing",
-    ],
+    ["theme", "font", "model", "fieldBackground"],
     "a size asked for by name has nothing to fit to the window",
   );
 
@@ -460,13 +397,13 @@ test("the text size appears with the fit and drives what it measures", () => {
   focus(page, "fit");
   assert.equal(
     fieldKeys(page).length,
-    7,
+    5,
     "the text size is not offered while the fit is off",
   );
 
   page.handleKey(key({ key: "ArrowRight" }));
   assert.equal(page.pendingOversize, "166x40");
-  assert.equal(fieldKeys(page).length, 8);
+  assert.equal(fieldKeys(page).length, 6);
   assert.equal(page.rows()[page.selected + 1]?.key, "fitSize");
   assert.equal(page.rows()[page.selected + 1]?.value, "16 px");
 

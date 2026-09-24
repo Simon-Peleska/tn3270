@@ -18,8 +18,22 @@ import { logger } from "./log.js";
  * @property {'controller' | 'observer'} role
  * @property {string} [ip]
  * @property {string} [user]
+ * @property {string} [pass] what the browser came back with, from an earlier hello
+ * @property {boolean} [owner] set on attach
+ * @property {boolean} [wantsEdit] an observer waiting for the owner's answer
  * @property {(message: import('./protocol.js').ServerMessage) => void} sendMessage
+ * @property {() => void} close ends the connection for good: the browser must not retry
  */
+
+/**
+ * What the owner is shown: the name the proxy vouched for, else the address.
+ *
+ * @param {Viewer} viewer
+ * @returns {string}
+ */
+export function nameOf(viewer) {
+  return viewer.user || viewer.ip || "Someone";
+}
 
 /** Deep enough for a screen's worth of typing, shallow enough to forget. */
 const HISTORY_LIMIT = 100;
@@ -62,10 +76,12 @@ export class Session {
 
     /** @type {string | null} */
     this.lastHost = null;
-    /** @type {boolean} */
-    this.allowSharing = true;
-    /** @type {boolean} */
-    this.allowSharedEditing = config.sessions.allowMultipleControllers;
+    /** @type {Set<Viewer>} Asked to watch, and waiting for an owner's answer. */
+    this.waiting = new Set();
+    /** @type {string} Handed to the owner in hello, so a reload is the owner again. */
+    this.ownerPass = randomUUID();
+    /** @type {Set<string>} Handed to each guest let in, so a reload need not ask again. */
+    this.guestPasses = new Set();
     /** @type {boolean} Whether REST calls over the proxy may drive this session. */
     /** @type {boolean} Any viewer's input sets this, and it is never cleared. */
     this.touched = false;
@@ -636,22 +652,50 @@ export class Session {
    * @returns {void}
    */
   attach(viewer) {
-    if (this.viewers.size >= this.config.sessions.maxViewersPerSession) {
+    if (
+      this.viewers.size + this.waiting.size >=
+      this.config.sessions.maxViewersPerSession
+    ) {
       throw new AppError(
         "E3003",
         `session ${this.id} already has ${this.viewers.size} viewers`,
       );
     }
-    if (!this.allowSharing && this.viewers.size > 0) {
-      throw new AppError("E3007", `session ${this.id} has sharing turned off`);
+
+    const isGuest =
+      viewer.pass !== undefined && this.guestPasses.has(viewer.pass);
+    // Nobody here to ask, so whoever opens an empty session owns it.
+    const empty = this.viewers.size === 0 && this.waiting.size === 0;
+    viewer.owner = viewer.pass === this.ownerPass || (empty && !isGuest);
+    viewer.role = viewer.owner ? "controller" : "observer";
+    viewer.wantsEdit = false;
+    if (viewer.owner) viewer.pass = this.ownerPass;
+    if (viewer.owner || isGuest) {
+      this.admit(viewer);
+      return;
     }
 
-    const hasController = [...this.viewers].some(
-      (other) => other.role === "controller",
-    );
-    viewer.role =
-      this.allowSharedEditing || !hasController ? "controller" : "observer";
+    viewer.pass = undefined;
+    this.waiting.add(viewer);
+    this.log.info("viewer asks to watch", {
+      viewer: viewer.id,
+      ip: viewer.ip ?? "",
+      user: viewer.user ?? "",
+      waiting: this.waiting.size,
+    });
+    viewer.sendMessage({ type: "waiting" });
+    this.broadcastStatus();
+  }
 
+  /**
+   * @param {Viewer} viewer
+   * @returns {void}
+   */
+  admit(viewer) {
+    if (viewer.pass === undefined) {
+      viewer.pass = randomUUID();
+      this.guestPasses.add(viewer.pass);
+    }
     this.viewers.add(viewer);
     this.stopIdleTimer();
     this.log.info("viewer attached", {
@@ -659,6 +703,7 @@ export class Session {
       ip: viewer.ip ?? "",
       user: viewer.user ?? "",
       role: viewer.role,
+      owner: viewer.owner === true,
       total: this.viewers.size,
     });
 
@@ -672,9 +717,9 @@ export class Session {
       oversize: this.oversize,
       hostLocked: this.config.b3270.defaultHost !== null,
       role: viewer.role,
+      owner: viewer.owner === true,
+      pass: viewer.pass,
       viewers: this.viewers.size,
-      allowSharing: this.allowSharing,
-      allowSharedEditing: this.allowSharedEditing,
       idleTimeoutMs: this.config.sessions.idleTimeoutMs,
     });
 
@@ -686,10 +731,36 @@ export class Session {
   }
 
   /**
+   * Sends a viewer away for good, with the reason on its screen.
+   *
+   * @param {Viewer} viewer
+   * @param {string} code
+   * @param {string} message
+   * @returns {void}
+   */
+  refuse(viewer, code, message) {
+    this.waiting.delete(viewer);
+    this.viewers.delete(viewer);
+    this.log.info("viewer sent away", {
+      viewer: viewer.id,
+      ip: viewer.ip ?? "",
+      user: viewer.user ?? "",
+      code,
+    });
+    viewer.sendMessage({ type: "refused", code, message });
+    viewer.close();
+  }
+
+  /**
    * @param {Viewer} viewer
    * @returns {void}
    */
   detach(viewer) {
+    if (this.waiting.delete(viewer)) {
+      this.log.info("viewer stopped asking", { viewer: viewer.id });
+      this.broadcastStatus();
+      return;
+    }
     if (!this.viewers.delete(viewer)) return;
     this.log.info("viewer detached", {
       viewer: viewer.id,
@@ -703,19 +774,6 @@ export class Session {
       if (waiting === viewer) this.pendingFieldReads.delete(tag);
     }
 
-    // Or the session would be permanently read-only.
-    if (viewer.role === "controller" && !this.allowSharedEditing) {
-      const next = this.viewers.values().next();
-      if (!next.done) {
-        next.value.role = "controller";
-        this.log.info("promoted viewer to controller", {
-          viewer: next.value.id,
-          ip: next.value.ip ?? "",
-          user: next.value.user ?? "",
-        });
-      }
-    }
-
     this.broadcastStatus();
     if (this.viewers.size === 0) this.startIdleTimer();
   }
@@ -726,9 +784,47 @@ export class Session {
    * @returns {void}
    */
   handleClientMessage(viewer, message) {
+    // Not let in yet: it may not even ask for a repaint of what it cannot see.
+    if (!this.viewers.has(viewer)) {
+      this.log.debug("message from a viewer not let in", {
+        viewer: viewer.id,
+        type: message.type,
+      });
+      return;
+    }
+
     // An observer may ask for this one: it changes only this viewer's own picture.
     if (message.type === "refresh") {
       this.repaint(viewer);
+      return;
+    }
+
+    if (message.type === "askEdit") {
+      if (viewer.role === "controller") return;
+      viewer.wantsEdit = true;
+      this.log.info("viewer asks to edit", {
+        viewer: viewer.id,
+        ip: viewer.ip ?? "",
+        user: viewer.user ?? "",
+      });
+      this.broadcastStatus();
+      return;
+    }
+
+    if (
+      message.type === "answer" ||
+      message.type === "stopSharing" ||
+      message.type === "stopEditing"
+    ) {
+      if (viewer.owner !== true) {
+        viewer.sendMessage({
+          type: "error",
+          code: "E3010",
+          message: "Only the session's owner decides who may watch or edit.",
+        });
+        return;
+      }
+      this.decideSharing(viewer, message);
       return;
     }
 
@@ -853,18 +949,99 @@ export class Session {
         viewer.sendMessage({ type: "hints", hints });
         return;
       }
-      case "sharing":
-        this.allowSharing = message.allowView;
-        this.allowSharedEditing = message.allowEdit;
-        for (const other of this.viewers) {
-          if (other !== viewer)
-            other.role = this.allowSharedEditing ? "controller" : "observer";
-        }
-        this.broadcastStatus();
-        return;
       case "recorder":
         this.recording = message.action === "start" ? { steps: [] } : null;
         return;
+    }
+  }
+
+  /**
+   * The owner letting someone in, letting them edit, or taking either back.
+   * One guest edits at a time: letting a second one edit takes it from the first.
+   *
+   * @param {Viewer} owner
+   * @param {import('./protocol.js').AnswerMessage | import('./protocol.js').StopSharingMessage | import('./protocol.js').StopEditingMessage} message
+   * @returns {void}
+   */
+  decideSharing(owner, message) {
+    const ownerName = nameOf(owner);
+
+    if (message.type === "stopSharing") {
+      this.log.info("owner stopped sharing", { viewer: owner.id });
+      this.guestPasses.clear();
+      for (const guest of [...this.waiting, ...this.viewers]) {
+        if (guest.owner === true) continue;
+        this.refuse(
+          guest,
+          "E3009",
+          `${ownerName} stopped sharing this session.`,
+        );
+      }
+      this.broadcastStatus();
+      return;
+    }
+
+    if (message.type === "stopEditing") {
+      this.takeEditingBack(ownerName);
+      this.broadcastStatus();
+      return;
+    }
+
+    const asking = [...this.waiting, ...this.viewers].find(
+      (candidate) => candidate.id === message.viewer,
+    );
+    // Gone, or already answered from the owner's other tab.
+    if (asking === undefined) return;
+
+    if (this.waiting.has(asking)) {
+      this.log.info("owner answered a request to watch", {
+        viewer: asking.id,
+        allow: message.allow,
+      });
+      if (!message.allow) {
+        this.refuse(asking, "E3008", `${ownerName} did not let you in.`);
+        this.broadcastStatus();
+        return;
+      }
+      this.waiting.delete(asking);
+      this.admit(asking);
+      return;
+    }
+
+    if (asking.wantsEdit !== true) return;
+    asking.wantsEdit = false;
+    this.log.info("owner answered a request to edit", {
+      viewer: asking.id,
+      allow: message.allow,
+    });
+    if (!message.allow) {
+      asking.sendMessage({
+        type: "error",
+        code: "E3011",
+        message: `${ownerName} did not let you edit.`,
+      });
+      this.broadcastStatus();
+      return;
+    }
+    this.takeEditingBack(ownerName);
+    asking.role = "controller";
+    this.broadcastStatus();
+  }
+
+  /**
+   * @param {string} ownerName
+   * @returns {void}
+   */
+  takeEditingBack(ownerName) {
+    for (const guest of this.viewers) {
+      if (guest.owner === true || guest.role !== "controller") continue;
+      guest.role = "observer";
+      this.log.info("editing taken back", { viewer: guest.id });
+      guest.sendMessage({
+        type: "error",
+        code: "E3012",
+        message: `${ownerName} took editing back.`,
+      });
     }
   }
 
@@ -917,6 +1094,25 @@ export class Session {
 
   /** @returns {void} */
   broadcastStatus() {
+    const everyone = [...this.viewers];
+    const requests = [
+      ...[...this.waiting].map((guest) => ({
+        viewer: guest.id,
+        name: nameOf(guest),
+        kind: /** @type {const} */ ("watch"),
+      })),
+      ...everyone
+        .filter((guest) => guest.wantsEdit === true)
+        .map((guest) => ({
+          viewer: guest.id,
+          name: nameOf(guest),
+          kind: /** @type {const} */ ("edit"),
+        })),
+    ];
+    const guests = everyone.filter((guest) => guest.owner !== true).length;
+    const editor = everyone.find(
+      (guest) => guest.owner !== true && guest.role === "controller",
+    );
     for (const viewer of this.viewers) {
       viewer.sendMessage({
         type: "status",
@@ -929,8 +1125,11 @@ export class Session {
         typeahead: this.oia.typeahead,
         role: viewer.role,
         viewers: this.viewers.size,
-        allowSharing: this.allowSharing,
-        allowSharedEditing: this.allowSharedEditing,
+        owner: viewer.owner === true,
+        guests,
+        editor: editor === undefined ? null : nameOf(editor),
+        requests: viewer.owner === true ? requests : [],
+        editRequested: viewer.wantsEdit === true,
       });
     }
   }
@@ -983,6 +1182,7 @@ export class Session {
     this.log.info("closing", { viewers: this.viewers.size });
     this.b3270.stop();
     this.viewers.clear();
+    this.waiting.clear();
     if (this.onClosed) this.onClosed();
   }
 }

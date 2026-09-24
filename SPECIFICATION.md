@@ -38,8 +38,9 @@ at it; `Ctrl-B` and a digit does the same from the keyboard.
 | Last viewer detaches                         | The session is kept alive for `sessions.idleTimeoutMs`, then closed. A viewer attaching inside that window cancels the reaping                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `b3270` exits                                | The session closes and every viewer is told (`E2002`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
-Sharing the URL is the whole sharing mechanism. There is no separate invite step;
-sharing a page that holds four sessions shares all four.
+Sharing the URL is how a session is shared: there is no invite step, and sharing
+a page that holds four sessions shares all four. But nobody gets in on the URL
+alone — the owner is asked first (§3).
 
 ## 3. Roles
 
@@ -48,14 +49,30 @@ sharing a page that holds four sessions shares all four.
 | **controller** | Type, press function keys, connect, disconnect |
 | **observer**   | Watch                                          |
 
-The first viewer to attach is the controller; the rest observe. If the controller
-leaves, another viewer is promoted immediately, so a session never becomes
-permanently read-only.
+Whoever opens a session with nobody in it is its **owner**, and a controller.
+Anyone else who opens the URL sees nothing but _Waiting for the session's owner
+to let you in_ on the status row, while the owner's status row says
+_alice wants to watch_ with **[Yes]** and **[No]**. The name is the user a
+trusted proxy vouched for (`X-Remote-User`), else the address. Yes lets them in
+as an observer; no sends them away with `E3008`, and their page does not try
+again on its own. Several requests queue, one on the row at a time.
 
-Setting `sessions.allowMultipleControllers` to `true` makes every viewer a
-controller. This is safe — all input is serialised through b3270's single stdin —
-but two people typing into one screen is inherently chaotic, so it is off by
-default.
+An observer has an **[Edit]** button, which asks the owner the same way
+(_alice wants to edit_). Yes makes them a controller; no tells them `E3011`.
+Only one guest edits at a time: letting a second one edit takes it from the
+first, who is told `E3012`.
+
+While guests are in, the owner has **[Stop sharing]**, which sends every guest
+away (`E3009`) and forgets that they were let in, and while one edits,
+**[Stop editing]**, which takes editing back (`E3012`) and leaves them
+watching. A guest trying either, or answering a request, gets `E3010`.
+
+The `hello` hands every viewer a pass, which the page keeps per tab (in
+`sessionStorage`, never in the URL) and sends back when it reconnects. A reload
+of the owner's page is the owner again; a reload of a guest's is let back in
+without asking, as an observer. When the owner leaves, the guests stay as they
+were and nobody is promoted: a newcomer waits until the owner comes back. A
+session nobody is in is owned by the next one to open it.
 
 An observer that tries to type gets error `E3006` in the page; nothing is sent to
 the host.
@@ -336,10 +353,12 @@ One WebSocket at `/ws/<session-id>`.
 **Server → browser.** Text frames only, each an object with a `type`:
 
 ```jsonc
-{"type":"hello","sessionId":"…","rows":43,"cols":80,"model":4,"oversize":"","models":[{"model":2,"rows":24,"columns":80}],"role":"controller","viewers":1,"idleTimeoutMs":300000}
+{"type":"hello","sessionId":"…","rows":43,"cols":80,"model":4,"oversize":"","models":[{"model":2,"rows":24,"columns":80}],"role":"controller","owner":true,"pass":"…","viewers":1,"idleTimeoutMs":300000}
 {"type":"screen","model":2,"rows":24,"cols":80,"oversize":""}
 {"type":"paint","full":false,"color":true,"rows":[{"row":1,"runs":[{"col":3,"text":"____","fg":"red","gr":"underline","editable":true}]}],"cursor":{"row":1,"col":8,"on":true}}
-{"type":"status","connection":"connected-tn3270e","host":"mainframe:23","lock":"system","insert":false,"typeahead":false,"role":"controller","viewers":2}
+{"type":"status","connection":"connected-tn3270e","host":"mainframe:23","lock":"system","insert":false,"typeahead":false,"role":"controller","viewers":2,"owner":true,"guests":1,"editor":null,"requests":[{"viewer":"ab12cd34","name":"alice","kind":"watch"}],"editRequested":false}
+{"type":"waiting"}
+{"type":"refused","code":"E3008","message":"bob did not let you in."}
 {"type":"error","code":"E3006","message":"This session is being controlled by someone else."}
 ```
 
@@ -374,7 +393,13 @@ reconnecting to it is worth trying.
 {"type":"disconnect"}
 {"type":"model","model":4}
 {"type":"oversize","value":"158x60"}
+{"type":"askEdit"}
+{"type":"answer","viewer":"ab12cd34","allow":true}
+{"type":"stopSharing"}
+{"type":"stopEditing"}
 ```
+
+`/ws/<session-id>?pass=…` brings back the pass from an earlier `hello`.
 
 ### HTTP
 
@@ -423,23 +448,22 @@ needs a narrower one puts authentication in front of it (section 8).
 `config.jsonc`, overridable with the `TN3270_CONFIG` environment variable. JSONC:
 `//` and `/* */` comments and trailing commas are accepted.
 
-| Setting                             | Default          | Meaning                                                                                                                                 |
-| ----------------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `server.host`                       | `127.0.0.1`      | Listen address                                                                                                                          |
-| `server.port`                       | `8017`           | Listen port                                                                                                                             |
-| `b3270.path`                        | `b3270`          | Executable, resolved from `PATH`                                                                                                        |
-| `b3270.model`                       | `2`              | 3270 model a session starts on, 2–5; changeable from the settings panel                                                                 |
-| `b3270.defaultHost`                 | `null`           | Connect new sessions here; `null` starts disconnected                                                                                   |
-| `b3270.extraArgs`                   | `[]`             | Appended verbatim, e.g. `["-cafile","/path/ca.pem"]`                                                                                    |
-| `sessions.maxSessions`              | `16`             | Refuses more with `E3002`                                                                                                               |
-| `sessions.maxViewersPerSession`     | `8`              | Refuses more with `E3003`                                                                                                               |
-| `sessions.idleTimeoutMs`            | `300000`         | Viewer-less session lifetime; `0` disables reaping                                                                                      |
-| `sessions.allowMultipleControllers` | `false`          | Let every viewer type                                                                                                                   |
-| `security.allowedHosts`             | `[]`             | Empty = any host. An entry with a port matches exactly; without one, any port on that host                                              |
-| `security.trustProxyHeaders`        | `false`          | Take the client's address from `X-Forwarded-For` and their name from `X-Remote-User`. Only with a reverse proxy in front that sets both |
-| `logLevel`                          | `info`           | `debug` logs every line exchanged with b3270                                                                                            |
-| `logFile`                           | `log/tn3270.log` | Kept as well as stderr, and rolled over to `<logFile>.1`; `""` is stderr only                                                           |
-| `logMaxBytes`                       | `10485760`       | Size at which the log rolls over, so the pair is never more than twice this                                                             |
+| Setting                         | Default          | Meaning                                                                                                                                 |
+| ------------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `server.host`                   | `127.0.0.1`      | Listen address                                                                                                                          |
+| `server.port`                   | `8017`           | Listen port                                                                                                                             |
+| `b3270.path`                    | `b3270`          | Executable, resolved from `PATH`                                                                                                        |
+| `b3270.model`                   | `2`              | 3270 model a session starts on, 2–5; changeable from the settings panel                                                                 |
+| `b3270.defaultHost`             | `null`           | Connect new sessions here; `null` starts disconnected                                                                                   |
+| `b3270.extraArgs`               | `[]`             | Appended verbatim, e.g. `["-cafile","/path/ca.pem"]`                                                                                    |
+| `sessions.maxSessions`          | `16`             | Refuses more with `E3002`                                                                                                               |
+| `sessions.maxViewersPerSession` | `8`              | Refuses more with `E3003`                                                                                                               |
+| `sessions.idleTimeoutMs`        | `300000`         | Viewer-less session lifetime; `0` disables reaping                                                                                      |
+| `security.allowedHosts`         | `[]`             | Empty = any host. An entry with a port matches exactly; without one, any port on that host                                              |
+| `security.trustProxyHeaders`    | `false`          | Take the client's address from `X-Forwarded-For` and their name from `X-Remote-User`. Only with a reverse proxy in front that sets both |
+| `logLevel`                      | `info`           | `debug` logs every line exchanged with b3270                                                                                            |
+| `logFile`                       | `log/tn3270.log` | Kept as well as stderr, and rolled over to `<logFile>.1`; `""` is stderr only                                                           |
+| `logMaxBytes`                   | `10485760`       | Size at which the log rolls over, so the pair is never more than twice this                                                             |
 
 ## 8. Error codes
 
@@ -468,7 +492,11 @@ browser, `E6xxx` server transport, `E7xxx` the REST proxy.
 | `E3004` | Screen indication referenced a cell outside the screen |
 | `E3005` | Host address is not allowed by config                  |
 | `E3006` | Input rejected: viewer is an observer                  |
-| `E3007` | Session is not accepting new viewers                   |
+| `E3008` | The session's owner did not let the viewer in          |
+| `E3009` | The session's owner stopped sharing it                 |
+| `E3010` | Only the session's owner may answer or stop sharing    |
+| `E3011` | The session's owner did not let the viewer edit        |
+| `E3012` | The session's owner took editing back                  |
 | `E4001` | WebSocket message was not valid JSON                   |
 | `E4002` | WebSocket message had an unknown type                  |
 | `E4003` | Pasted text is too large to type into a screen         |
