@@ -1372,7 +1372,12 @@ screenEl.addEventListener(
       return;
     }
     if (mapped.kind === "action") {
-      send({ type: "action", action: mapped.action, args: mapped.args });
+      send({
+        type: "action",
+        action: mapped.action,
+        args: mapped.args,
+        repeat: mapped.repeat,
+      });
       return;
     }
 

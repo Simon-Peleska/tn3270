@@ -196,6 +196,37 @@ test("what is typed while the host has the keyboard runs, in order, once it answ
   assert.equal(session.screen.rowText(4).slice(0, 14), " Note:     y  ");
 });
 
+test("a held-down PF key repeats only once the host has answered the last one", async (t) => {
+  const fixture = await startTracedSession("test/traces/fields.trc");
+  t.after(() => fixture.close());
+  const { session, host } = fixture;
+  const viewer = collectingViewer("viewer");
+  session.attach(viewer);
+  await waitUntil(() => session.screen.fieldsFormatted, "the field map");
+  const pf8 = { type: "action", action: "PF", args: ["8"], repeat: true };
+
+  session.handleClientMessage(viewer, {
+    type: "action",
+    action: "PF",
+    args: ["8"],
+  });
+  await waitUntil(() => session.oia.keyboardLocked, "the keyboard to lock");
+  session.handleClientMessage(viewer, pf8);
+  session.handleClientMessage(viewer, pf8);
+  assert.equal(
+    session.inputQueue.length,
+    0,
+    "repeats while the host works are dropped",
+  );
+
+  host.cursor = 0;
+  await host.sendRecords(1);
+  await settle(session);
+
+  session.handleClientMessage(viewer, pf8);
+  assert.notEqual(session.inputTag, null, "a repeat into an empty line runs");
+});
+
 test("Reset while the host has the keyboard throws away what was typed ahead", async (t) => {
   const fixture = await startTracedSession("test/traces/fields.trc");
   t.after(() => fixture.close());

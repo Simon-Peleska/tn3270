@@ -56,21 +56,27 @@ test("holding the Enter key down does not machine-gun the host", () => {
   );
 });
 
-test("holding down any other AID key is dropped the same way, but ordinary keys still repeat", () => {
-  // Attn, PF and PA are AIDs like Enter: a repeat can leave TSO locked on a blank screen.
+test("a held-down PF or PA key pages on, marked as a repeat for the server to pace", () => {
+  assert.deepEqual(
+    mapKey(key({ key: "F8", code: "F8", repeat: true }), lookup),
+    { kind: "action", action: "PF", args: ["8"], repeat: true },
+  );
+  assert.deepEqual(
+    mapKey(
+      key({ key: "Insert", code: "Insert", altKey: true, repeat: true }),
+      lookup,
+    ),
+    { kind: "action", action: "PA", args: ["1"], repeat: true },
+  );
+});
+
+test("holding down Attn or Clear is dropped the same way, but ordinary keys still repeat", () => {
   assert.equal(
     mapKey(key({ key: "Escape", code: "Escape", repeat: true }), lookup),
     null,
   );
   assert.equal(
-    mapKey(key({ key: "F3", code: "F3", repeat: true }), lookup),
-    null,
-  );
-  assert.equal(
-    mapKey(
-      key({ key: "Insert", code: "Insert", altKey: true, repeat: true }),
-      lookup,
-    ),
+    mapKey(key({ key: "Pause", code: "Pause", repeat: true }), lookup),
     null,
   );
 

@@ -963,6 +963,8 @@ export class Session {
    * Backspace and the typing nudge read a screen the last input must have
    * settled. Reset, Attn and SysReq are how a user gets out of a wait, so they
    * skip the line, and Reset throws away what was typed ahead, as a 3270 does.
+   * A held-down PF key only repeats into an empty line, so letting go of it
+   * stops the paging at once.
    *
    * @param {import('./protocol.js').ClientMessage} message
    * @returns {void}
@@ -978,6 +980,16 @@ export class Session {
         this.inputTag = null;
       }
       this.runInput(message);
+      return;
+    }
+    if (
+      message.type === "action" &&
+      message.repeat === true &&
+      (this.inputTag !== null || this.inputQueue.length > 0)
+    ) {
+      this.log.debug("held key repeats faster than the host answers", {
+        action: message.action,
+      });
       return;
     }
     this.inputQueue.push(message);

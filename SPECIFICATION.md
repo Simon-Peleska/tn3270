@@ -331,6 +331,10 @@ the host answers, each only after the one before it is done. Reset, Attn and
 SysReq skip the queue, since they are how a user gets out of a wait, and Reset
 throws away whatever was typed ahead, as it does on a 3270.
 
+A PF or PA key held down pages on as fast as the host answers: a repeat that
+comes while the last one is still out is dropped rather than queued, so letting
+go stops the paging at once. Enter, Clear, Attn and SysReq do not repeat.
+
 Plain Ctrl and Meta combinations are left to the browser, except Ctrl-B (the
 session prefix, below) and Ctrl-C/Ctrl-V, which copy and paste the system
 clipboard rather than reaching the host as 3270 actions. Alt is otherwise left

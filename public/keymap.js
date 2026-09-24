@@ -179,19 +179,27 @@ export const DEFAULT_BINDINGS = Object.freeze({
 });
 
 /**
- * AID keys must not auto-repeat: a second one mid-response can leave the host locked.
+ * Held down, a PF or PA key pages on as fast as the host answers (the server
+ * drops a repeat while the last one is still out). Enter, Clear, Attn and
+ * SysReq must never auto-repeat: nobody means to send those twice.
  *
  * @param {string} commandId
  * @returns {boolean}
  */
-function isAidCommand(commandId) {
+function repeatsAsPaging(commandId) {
+  return /^PF\d+$/.test(commandId) || /^PA\d+$/.test(commandId);
+}
+
+/**
+ * @param {string} commandId
+ * @returns {boolean}
+ */
+function neverRepeats(commandId) {
   return (
     commandId === "Enter" ||
     commandId === "Clear" ||
     commandId === "Attn" ||
-    commandId === "SysReq" ||
-    /^PF\d+$/.test(commandId) ||
-    /^PA\d+$/.test(commandId)
+    commandId === "SysReq"
   );
 }
 
@@ -464,7 +472,7 @@ export function commandForEvent(event, lookup) {
 /**
  * @param {KeyboardEvent} event
  * @param {Map<string, string>} lookup
- * @returns {{ kind: 'action', action: string, args: string[] }
+ * @returns {{ kind: 'action', action: string, args: string[], repeat?: true }
  *   | { kind: 'client', command: string }
  *   | { kind: 'text', value: string } | null}
  */
@@ -473,7 +481,11 @@ export function mapKey(event, lookup) {
 
   const commandId = commandForEvent(event, lookup);
   if (commandId !== null) {
-    if (event.repeat && isAidCommand(commandId)) return null;
+    if (event.repeat && repeatsAsPaging(commandId)) {
+      const { action, args } = commandToAction(commandId);
+      return { kind: "action", action, args, repeat: true };
+    }
+    if (event.repeat && neverRepeats(commandId)) return null;
     if (CLIENT_COMMANDS.has(commandId) || isMacroCommand(commandId))
       return { kind: "client", command: commandId };
     const { action, args } = commandToAction(commandId);

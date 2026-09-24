@@ -3,7 +3,7 @@ import { AppError } from "./errors.js";
 /**
  * Wire format: one ordered channel of JSON messages, screen paints among them.
  *
- * @typedef {{ type: 'action', action: string, args?: string[] }} ActionMessage
+ * @typedef {{ type: 'action', action: string, args?: string[], repeat?: boolean }} ActionMessage
  * @typedef {{ type: 'text', value: string }} TextMessage
  * @typedef {{ row: number, col: number, text: string }} PasteSegment
  * @typedef {{ type: 'paste', text: string, segments: PasteSegment[] }} PasteMessage
@@ -195,6 +195,8 @@ export function parseClientMessage(raw) {
         throw new AppError("E4002", "args must be an array");
       args = rawArgs.map((arg) => String(arg));
     }
+    if (message["repeat"] === true)
+      return { type: "action", action, args, repeat: true };
     return { type: "action", action, args };
   }
 
