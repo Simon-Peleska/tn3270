@@ -186,6 +186,9 @@ export function dotted(label, width) {
  *   itself is never lit
  * @property {number} [cursor] where in the value field the cursor belongs
  * @property {boolean} [selected] the line the cursor sits on
+ * @property {{ text: string, style: import('./grid.js').Style }[]} [sample]
+ *   drawn instead of the text: runs styled the way the host styles its own
+ *   screen, colour names and all, so a theme shows what it does to one
  */
 
 /**
@@ -279,6 +282,14 @@ function drawPanel(view) {
   view.body.forEach((line, index) => {
     const bodyRow = BODY_TOP + index;
     if (bodyRow >= rows) return;
+    if (line.sample !== undefined) {
+      let col = TEXT_LEFT;
+      for (const run of line.sample) {
+        place(bodyRow, col, run.style, run.text);
+        col += run.text.length;
+      }
+      return;
+    }
     const lit = line.selected === true && line.point !== true;
     const style = paint(lit ? foreground : dim, background, lit);
     if (line.option !== undefined)

@@ -742,3 +742,30 @@ test("every theme's status row is legible, and Host On-Demand's is white", () =>
   assert.equal(THEMES[0]?.colors.statusForeground, "#ffffff");
   assert.equal(THEMES[0]?.colors.statusBackground, "#000000");
 });
+
+test("a preview under the settings shows the theme on host colours, and the cursor never lands on it", () => {
+  const { page } = fixture();
+  page.connected = true;
+  page.show();
+
+  const grid = drawn(page);
+  const swatch = grid.cells.findIndex(
+    (cell, index) =>
+      cell.ch === "B" &&
+      grid.cells
+        .slice(index, index + 14)
+        .map((each) => each.ch)
+        .join("") === "Blue Red Pink ",
+  );
+  assert.notEqual(swatch, -1, "the colour line is drawn");
+  assert.equal(grid.cells[swatch]?.fg, "blue", "in the host's own colour name");
+  assert.equal(grid.cells[swatch + 5]?.fg, "red");
+
+  const field = grid.cells.find((cell) => cell.editable);
+  assert.ok(field, "a sample input field carries the field tint");
+
+  for (let step = 0; step < page.lines().length + 2; step++) {
+    page.handleKey(key({ key: "Tab" }));
+    assert.equal(page.lines()[page.selected]?.sample, undefined);
+  }
+});

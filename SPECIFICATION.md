@@ -179,6 +179,11 @@ underneath.
 - Body lines that can be picked carry a number in the left margin. A form panel
   — settings, keys — runs an ISPF dot leader from the label out to the value:
   `Screen model . . . . . Model 4 - 43x80`.
+- Settings ends in a **preview**: a few lines styled the way a host styles its
+  screen — a title, an input field, the seven 3270 colours, intensified,
+  underlined and reverse text, and the characters fonts disagree on (`0O 1lI`).
+  It is drawn with the host's colour names, so it shows at once what a theme or
+  font change does to a real screen, not just to the panel around it.
 - A panel opened from another one is stacked on it, so F3 comes back one level
   at a time and lands on the session at the bottom. F4 goes straight to the
   menu; an `Alt` shortcut starts again from the session.

@@ -563,6 +563,51 @@ export function modeOversize(mode) {
 const VALUE_WIDTH = 24;
 
 /**
+ * A few lines styled the way a host styles its own screen, so a theme or font
+ * is judged on what it does to one rather than on the panel around it.
+ *
+ * @type {readonly { text: string, style: import('./grid.js').Style }[][]}
+ */
+const PREVIEW = Object.freeze([
+  [
+    {
+      text: "ISPF Primary Option Menu",
+      style: { fg: "neutralWhite", gr: "highlight" },
+    },
+  ],
+  [
+    { text: "Option ===> ", style: { fg: "green" } },
+    { text: "3.4", style: { fg: "turquoise", editable: true } },
+    {
+      text: " ".repeat(21),
+      style: { fg: "turquoise", editable: true, gr: "underline" },
+    },
+  ],
+  [
+    { text: "0 ", style: { fg: "neutralWhite" } },
+    { text: "Settings", style: { fg: "turquoise" } },
+    { text: "   Terminal and user parameters", style: { fg: "deepBlue" } },
+  ],
+  [
+    { text: "Blue ", style: { fg: "blue" } },
+    { text: "Red ", style: { fg: "red" } },
+    { text: "Pink ", style: { fg: "pink" } },
+    { text: "Green ", style: { fg: "green" } },
+    { text: "Turquoise ", style: { fg: "turquoise" } },
+    { text: "Yellow ", style: { fg: "yellow" } },
+    { text: "White", style: { fg: "neutralWhite" } },
+  ],
+  [
+    { text: "Intensified", style: { fg: "green", gr: "highlight" } },
+    { text: " ", style: { fg: "green" } },
+    { text: "Underlined", style: { fg: "green", gr: "underline" } },
+    { text: " ", style: { fg: "green" } },
+    { text: "Reverse", style: { fg: "green", gr: "reverse" } },
+    { text: "  0O 1lI |{}[] $#@ ¢¬", style: { fg: "green" } },
+  ],
+]);
+
+/**
  * @typedef {import('./panel.js').PanelDeps & {
  *   applyTheme: (theme: Theme) => void,
  *   applyFont: (font: { name: string, family: string }) => void,
@@ -1137,7 +1182,8 @@ export class SettingsPage extends Panel {
    * @returns {import('./panel.js').PanelLine[]}
    */
   lines() {
-    return this.rows().map((row) => {
+    /** @type {import('./panel.js').PanelLine[]} */
+    const lines = this.rows().map((row) => {
       if (row.gap === true) return { text: row.label, gap: true };
       return {
         text: row.label,
@@ -1147,6 +1193,10 @@ export class SettingsPage extends Panel {
         field: true,
       };
     });
+    // After the rows, so a row's index is still its line's.
+    lines.push({ text: "", gap: true }, { text: "Preview", gap: true });
+    for (const sample of PREVIEW) lines.push({ sample, gap: true });
+    return lines;
   }
 
   /**
