@@ -241,7 +241,7 @@ named here are the commands' defaults.
 **Command line words**: `=n` to jump, a bare number to pick a line on this
 panel, `END`/`EXIT`/`X`, `CANCEL`/`CAN`, `RETURN`/`RET`/`MENU`, `HELP`/`?`, the
 name of any panel, and the words a panel adds of its own —
-`APPLY`, `RENAME`, `DELETE`, `EXPORT`, `IMPORT`, `MARK`, `RECORD`, `STOP`,
+`APPLY`, `RENAME`, `DELETE`, `EXPORT`, `RECORD`, `STOP`,
 `KEY`, `UNKEY`, `RESET`, `DEFAULTS`. A word that is none of these is answered on the panel.
 
 Settings and keys are saved in the browser as what differs from the defaults,
@@ -272,9 +272,8 @@ bound to a macro is taken from whatever had it, macro or command, and the Keys
 panel can add, remove and reset it like any other. Renaming a macro keeps its
 key; deleting it frees the key. On the screen that key plays the macro, and does
 nothing while a macro is already playing or a panel is open. `RESET` on the
-Keys panel takes every macro's key away with the rest. Macro keys are saved in
-this browser but are not part of an exported keymap file, nor of an exported
-macro file, which is Host On-Demand's format.
+Keys panel takes every macro's key away with the rest. Macros and keys are
+saved in this browser only; there is no file to import or export them.
 
 Opening a panel is a command like any other, so it is in the keymap of §5 and
 can be rebound there: `Menu`, `Settings`, `Macros`, `Recorder` and `Keys`,
@@ -561,9 +560,7 @@ browser, `E6xxx` server transport, `E7xxx` the REST proxy.
 | `E5006` | Another terminal session could not be opened           |
 | `E5008` | Macros could not be read from the browser database     |
 | `E5009` | Macros could not be saved to the browser database      |
-| `E5010` | A macro file could not be read                         |
 | `E5011` | The keymap could not be saved to the browser database  |
-| `E5012` | A keymap file could not be read                        |
 | `E5013` | The keymap could not be read from the browser database |
 | `E5014` | A dropped session could not be restarted               |
 | `E6001` | Static file not found                                  |

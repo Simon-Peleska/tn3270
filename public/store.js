@@ -73,7 +73,7 @@ export async function saveSettings(settings) {
 }
 
 /**
- * @returns {Promise<import('./macro-xml.js').Macro[]>} empty on a first visit
+ * @returns {Promise<import('./macros.js').Macro[]>} empty on a first visit
  */
 export async function loadMacros() {
   const db = await open();
@@ -89,7 +89,7 @@ export async function loadMacros() {
 }
 
 /**
- * @param {import('./macro-xml.js').Macro[]} macros
+ * @param {import('./macros.js').Macro[]} macros
  * @returns {Promise<void>}
  */
 export async function saveMacros(macros) {

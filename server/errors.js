@@ -41,9 +41,9 @@ const ERRORS = Object.freeze({
   // E5007 is spent.
   E5008: "Macros could not be read from the browser database",
   E5009: "Macros could not be saved to the browser database",
-  E5010: "A macro file could not be read",
+  // E5010 is spent.
   E5011: "The keymap could not be saved to the browser database",
-  E5012: "A keymap file could not be read",
+  // E5012 is spent.
   E5013: "The keymap could not be read from the browser database",
   E5014: "A dropped session could not be restarted",
 

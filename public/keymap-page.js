@@ -12,7 +12,6 @@ import {
   serializeCombo,
   withDefaults,
 } from "./keymap.js";
-import { keymapToText, parseKeymapText } from "./keymap-format.js";
 
 /** @typedef {import('./keymap.js').Bindings} Bindings */
 /** @typedef {import('./keymap.js').Combo} Combo */
@@ -32,13 +31,8 @@ function cloneBindings(bindings) {
 /**
  * @typedef {import('./panel.js').PanelDeps & {
  *   persist: (bindings: Bindings) => void,
- *   exportFile: (filename: string, content: string) => void,
- *   importFiles: () => Promise<string[]>,
- *   error: (code: string, message: string) => void,
  *   macroNames: () => string[],
  * }} KeymapDeps
- *
- * `importFiles` resolves empty when the picker was cancelled.
  */
 
 /** @extends {Panel<KeymapDeps>} */
@@ -207,40 +201,6 @@ export class KeymapPage extends Panel {
   }
 
   /**
-   * @returns {void}
-   */
-  exportKeymap() {
-    this.deps.exportFile("keymap.kmp", keymapToText(this.bindings));
-  }
-
-  /** @returns {Promise<void>} */
-  async importKeymap() {
-    const texts = await this.deps.importFiles();
-    if (texts.length === 0) return;
-    /** @type {Bindings} */
-    const merged = cloneBindings(this.bindings);
-    for (const text of texts) {
-      let imported;
-      try {
-        imported = parseKeymapText(text);
-      } catch (cause) {
-        this.deps.error(
-          "E5012",
-          `A keymap file could not be read: ${String(cause)}`,
-        );
-        continue;
-      }
-      for (const [commandId, combos] of Object.entries(imported))
-        merged[commandId] = combos;
-    }
-    this.bindings = merged;
-    this.commandIndex = 0;
-    this.mode = "commands";
-    this.persist();
-    if (this.open) this.draw();
-  }
-
-  /**
    * @override
    * @returns {import('./panel.js').PanelLine[]}
    */
@@ -299,7 +259,7 @@ export class KeymapPage extends Panel {
         "RESET puts this command's default keys back.",
       ];
     return [
-      `${this.deps.keyName("Enter")} opens a command. Commands: EXPORT, IMPORT, RESET.`,
+      `${this.deps.keyName("Enter")} opens a command. Commands: RESET.`,
       "RESET n, or RESET PF3, puts one command back; RESET alone puts them all.",
     ];
   }
@@ -370,14 +330,6 @@ export class KeymapPage extends Panel {
    * @returns {boolean}
    */
   word(word) {
-    if (word === "EXPORT" || word === "EXP") {
-      this.exportKeymap();
-      return true;
-    }
-    if (word === "IMPORT" || word === "IMP") {
-      this.importKeymap();
-      return true;
-    }
     if (word === "RESET" || word === "DEFAULTS") {
       const open = this.commands()[this.commandIndex];
       if (this.mode === "combos" && open !== undefined) {

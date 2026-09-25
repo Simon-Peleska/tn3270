@@ -395,8 +395,8 @@ indication has already been applied.
 
 ## Serving the page
 
-There is no bundler and no build step. The frontend is eighteen ES modules
-served as eighteen files — the same files `node --test` imports and the same
+There is no bundler and no build step. The frontend is nineteen ES modules
+served as nineteen files — the same files `node --test` imports and the same
 ones a browser gets opening `index.html` off disk. What a bundle would have
 bought is bought in `index.html` and `sendFile()` (`server/main.js`) instead,
 without anything standing between the source and what runs.

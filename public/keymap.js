@@ -228,13 +228,12 @@ export function keyIdentity(event) {
 
 /**
  * Uppercase so Shift is carried by the flag alone, except where a letter has no
- * single-character uppercase: German ß uppercases to SS. A saved keymap is read
- * back through this too, or an imported binding stops matching a live keypress.
+ * single-character uppercase: German ß uppercases to SS.
  *
  * @param {string} character one character
  * @returns {string}
  */
-export function normalizeKey(character) {
+function normalizeKey(character) {
   const upper = character.toUpperCase();
   return [...upper].length === 1 ? upper : character;
 }
@@ -304,10 +303,10 @@ export class ComboCapture {
 }
 
 /**
- * Keys that print nothing, so a saved map and the dialog name them by position.
+ * Keys that print nothing, so the dialog names them by position.
  * @type {Readonly<Record<string, string>>}
  */
-export const KEY_LABELS = Object.freeze({
+const KEY_LABELS = Object.freeze({
   ControlLeft: "LCtrl",
   ControlRight: "RCtrl",
   ShiftLeft: "LShift",

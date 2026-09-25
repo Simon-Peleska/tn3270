@@ -6,19 +6,16 @@ import { commandForEvent, mapKey } from "../public/keymap.js";
 import { THEMES } from "../public/settings.js";
 import { key, enterKey, defaultKeymapDeps, typeCommand } from "./keyevent.js";
 
-/** @typedef {import('../public/macro-xml.js').Macro} Macro */
+/** @typedef {import('../public/macros.js').Macro} Macro */
 
-/** @param {string[]} [files] */
-function fixture(files = []) {
+function fixture() {
   const calls = {
     /** @type {number} */ redraws: 0,
     /** @type {import('../server/protocol.js').ClientMessage[]} */ dispatched:
       [],
     /** @type {number} */ ends: 0,
     /** @type {string[]} */ went: [],
-    /** @type {import('../public/macro-xml.js').Macro[][]} */ saved: [],
-    /** @type {{ filename: string, content: string }[]} */ exported: [],
-    /** @type {{ code: string, message: string }[]} */ errors: [],
+    /** @type {import('../public/macros.js').Macro[][]} */ saved: [],
     /** @type {number} */ unlockWaits: 0,
     /** @type {import('../public/keymap.js').Bindings[]} */ keymaps: [],
   };
@@ -31,9 +28,6 @@ function fixture(files = []) {
     end: () => {},
     go: () => {},
     persist: (bindings) => calls.keymaps.push(bindings),
-    exportFile: () => {},
-    importFiles: async () => [],
-    error: () => {},
     macroNames: () => macroList.map((macro) => macro.name),
   });
   /** @type {(() => void)[]} */
@@ -56,10 +50,6 @@ function fixture(files = []) {
     },
     go: (id) => calls.went.push(id),
     persist: (values) => calls.saved.push(values),
-    exportFile: (filename, content) =>
-      calls.exported.push({ filename, content }),
-    importFiles: () => Promise.resolve(files),
-    error: (code, message) => calls.errors.push({ code, message }),
     keyCommand: (event) => commandForEvent(event, keymap.lookup()),
     keyName: (commandId) => keymap.labelFor(commandId),
     setKey: (commandId, combo) => keymap.setKey(commandId, combo),
@@ -233,14 +223,13 @@ test("renaming a macro to its own name is not treated as a collision with itself
   assert.equal(page.macros[0]?.name, "Keep");
 });
 
-test("deleting a macro removes it and persists, adjusting marks past it", () => {
+test("deleting a macro removes it and persists", () => {
   const { page, calls } = fixture();
   page.macros.push(
     { name: "A", steps: [] },
     { name: "B", steps: [] },
     { name: "C", steps: [] },
   );
-  page.marked.add(2);
   page.show();
   page.onCommand = false;
   page.selected = 1; // "A"
@@ -250,85 +239,7 @@ test("deleting a macro removes it and persists, adjusting marks past it", () => 
     page.macros.map((m) => m.name),
     ["B", "C"],
   );
-  assert.deepEqual(
-    [...page.marked],
-    [1],
-    "the mark on the old index 2 moved down with it",
-  );
   assert.deepEqual(calls.saved.at(-1), page.macros);
-});
-
-test("a slash marks a macro for export without disturbing others", () => {
-  const { page } = fixture();
-  page.macros.push({ name: "A", steps: [] }, { name: "B", steps: [] });
-  page.show();
-  page.onCommand = false;
-  page.selected = 1;
-  page.handleKey(key({ key: "/" }));
-  assert.deepEqual([...page.marked], [0]);
-  assert.match(
-    page.lines()[1]?.text ?? "",
-    /^\/ A/,
-    "the mark is shown against the line",
-  );
-  page.handleKey(key({ key: "/" }));
-  assert.deepEqual([...page.marked], []);
-});
-
-test("exporting with nothing marked exports the macro under the cursor", () => {
-  const { page, calls } = fixture();
-  page.macros.push({
-    name: "Solo",
-    steps: [{ text: "x", action: "Enter", args: [] }],
-  });
-  page.show();
-  page.selected = 1;
-  for (const char of "export") page.handleKey(key({ key: char }));
-  page.handleKey(enterKey());
-
-  assert.equal(calls.exported.length, 1);
-  assert.equal(calls.exported[0]?.filename, "Solo.xml");
-  assert.match(calls.exported[0]?.content ?? "", /<HAScript name="Solo"/);
-});
-
-test("exporting several marked macros produces one file with all of them", () => {
-  const { page, calls } = fixture();
-  page.macros.push({ name: "A", steps: [] }, { name: "B", steps: [] });
-  page.marked.add(0);
-  page.marked.add(1);
-  page.show();
-  for (const char of "export") page.handleKey(key({ key: char }));
-  page.handleKey(enterKey());
-
-  assert.equal(calls.exported.length, 1);
-  assert.equal(calls.exported[0]?.filename, "macros.xml");
-  assert.match(calls.exported[0]?.content ?? "", /<Macros>/);
-  assert.equal(page.marked.size, 0, "the marks are cleared once exported");
-});
-
-test("importing adds macros from every picked file and renames collisions", async () => {
-  const file1 =
-    '<HAScript name="Logon"><screen><actions><input value="x[enter]"/></actions></screen></HAScript>';
-  const file2 =
-    '<HAScript name="Other"><screen><actions></actions></screen></HAScript>';
-  const { page, calls } = fixture([file1, file2]);
-  page.macros.push({ name: "Logon", steps: [] });
-  page.show();
-
-  await page.importMacros();
-
-  assert.deepEqual(
-    page.macros.map((m) => m.name),
-    ["Logon", "Logon (2)", "Other"],
-  );
-  assert.deepEqual(calls.saved.at(-1), page.macros);
-});
-
-test("importing with the file picker cancelled changes nothing", async () => {
-  const { page, calls } = fixture([]);
-  await page.importMacros();
-  assert.equal(page.macros.length, 0);
-  assert.equal(calls.saved.length, 0);
 });
 
 test("playing a macro dispatches each step and waits for the keyboard to unlock between actions", async () => {

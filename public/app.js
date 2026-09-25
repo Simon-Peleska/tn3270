@@ -522,59 +522,13 @@ function waitForUnlock(slot) {
  * @returns {void}
  */
 function downloadFile(filename, content) {
-  const type = filename.endsWith(".json")
-    ? "application/json"
-    : filename.endsWith(".kmp")
-      ? "text/plain"
-      : "application/xml";
-  const blob = new Blob([content], { type });
+  const blob = new Blob([content], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(url);
-}
-
-/**
- * @param {string} accept
- * @returns {Promise<string[]>} the text of every file picked, or [] if cancelled
- */
-function pickFiles(accept) {
-  return new Promise((resolve) => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = accept;
-    input.multiple = true;
-    input.style.display = "none";
-    const done = (/** @type {string[]} */ result) => {
-      input.remove();
-      resolve(result);
-    };
-    input.addEventListener("cancel", () => done([]), { once: true });
-    input.addEventListener(
-      "change",
-      () => {
-        const files = Array.from(input.files ?? []);
-        Promise.all(files.map((file) => file.text())).then(done, () =>
-          done([]),
-        );
-      },
-      { once: true },
-    );
-    document.body.appendChild(input);
-    input.click();
-  });
-}
-
-/** @returns {Promise<string[]>} */
-function pickXmlFiles() {
-  return pickFiles(".xml,text/xml,application/xml");
-}
-
-/** @returns {Promise<string[]>} */
-function pickKeymapFiles() {
-  return pickFiles(".kmp,.txt,text/plain");
 }
 
 /**
@@ -630,9 +584,6 @@ const macros = new MacrosPage({
       );
     });
   },
-  exportFile: downloadFile,
-  importFiles: pickXmlFiles,
-  error: showError,
   setKey: (commandId, combo) => keymap.setKey(commandId, combo),
   renameKey: (from, to) => keymap.renameCommand(from, to),
 });
@@ -653,9 +604,6 @@ const keymap = new KeymapPage({
       );
     });
   },
-  exportFile: downloadFile,
-  importFiles: pickKeymapFiles,
-  error: showError,
   macroNames: () => macros.macros.map((macro) => macro.name),
 });
 

@@ -13,9 +13,6 @@ function fixture() {
     end: () => {},
     go: () => {},
     persist: (bindings) => saved.push(bindings),
-    exportFile: () => {},
-    importFiles: async () => [],
-    error: () => {},
     macroNames: () => [],
   });
   return { page, saved };

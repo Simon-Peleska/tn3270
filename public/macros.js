@@ -1,11 +1,9 @@
 /**
- * The macros panel: record, play back and trade keystroke sequences as Host
- * On-Demand XML. An ISPF list panel, so the lines are numbered and the work is
+ * The macros panel: record and play back keystroke sequences. An ISPF list panel, so the lines are numbered and the work is
  * done with line commands typed on the command line.
  */
 
 import { Panel, typeKey, keyLegend } from "./panel.js";
-import { macrosToXml, parseMacrosXml } from "./macro-xml.js";
 import {
   ComboCapture,
   comboLabel,
@@ -13,23 +11,12 @@ import {
   macroCommand,
 } from "./keymap.js";
 
-/** @typedef {import('./macro-xml.js').Macro} Macro */
-/** @typedef {import('./macro-xml.js').MacroStep} MacroStep */
+/**
+ * @typedef {{ text: string, action: string, args: string[] }} MacroStep
+ * @typedef {{ name: string, steps: MacroStep[] }} Macro
+ */
 
 const NAME_WIDTH = 24;
-
-/**
- * @param {string} name
- * @returns {string}
- */
-function sanitizeFilename(name) {
-  return (
-    name
-      .replace(/[^a-zA-Z0-9_-]+/g, "_")
-      .replace(/^_+|_+$/g, "")
-      .slice(0, 60) || "macro"
-  );
-}
 
 /**
  * @typedef {import('./panel.js').PanelDeps & {
@@ -37,9 +24,6 @@ function sanitizeFilename(name) {
  *   paste: (text: string) => void,
  *   waitForUnlock: () => Promise<void>,
  *   persist: (macros: Macro[]) => void,
- *   exportFile: (filename: string, content: string) => void,
- *   importFiles: () => Promise<string[]>,
- *   error: (code: string, message: string) => void,
  *   setKey: (commandId: string, combo: import('./keymap.js').Combo | null) => void,
  *   renameKey: (from: string, to: string) => void,
  * }} MacrosDeps
@@ -64,8 +48,6 @@ export class MacrosPage extends Panel {
     this.naming = null;
     /** @type {string} text being typed for this.naming */
     this.nameBuffer = "";
-    /** @type {Set<number>} indices marked for a batch export */
-    this.marked = new Set();
     /** @type {number | null} the macro waiting for its key to be pressed */
     this.listening = null;
     /** @type {ComboCapture} the key being picked, while listening */
@@ -216,59 +198,9 @@ export class MacrosPage extends Panel {
     const [removed] = this.macros.splice(index, 1);
     if (removed !== undefined)
       this.deps.setKey(macroCommand(removed.name), null);
-    this.marked = new Set(
-      [...this.marked]
-        .filter((i) => i !== index)
-        .map((i) => (i > index ? i - 1 : i)),
-    );
     this.persist();
     this.selected = Math.min(this.selected, this.lines().length - 1);
     this.draw();
-  }
-
-  /**
-   * @returns {void}
-   */
-  exportSelection() {
-    let indices = [...this.marked];
-    if (indices.length === 0) {
-      const index = this.macroIndexAt(this.selected);
-      if (index !== null) indices = [index];
-    }
-    const chosen = indices
-      .map((index) => this.macros[index])
-      .filter((macro) => macro !== undefined);
-    if (chosen.length === 0) return;
-    const filename =
-      chosen.length === 1
-        ? `${sanitizeFilename(chosen[0].name)}.xml`
-        : "macros.xml";
-    this.deps.exportFile(filename, macrosToXml(chosen));
-    this.marked.clear();
-    this.draw();
-  }
-
-  /** @returns {Promise<void>} */
-  async importMacros() {
-    const texts = await this.deps.importFiles();
-    /** @type {Macro[]} */
-    const imported = [];
-    for (const text of texts) {
-      try {
-        imported.push(...parseMacrosXml(text));
-      } catch (cause) {
-        this.deps.error(
-          "E5010",
-          `A macro file could not be read: ${String(cause)}`,
-        );
-      }
-    }
-    for (const macro of imported) {
-      macro.name = this.uniqueName(macro.name);
-      this.macros.push(macro);
-    }
-    if (imported.length > 0) this.persist();
-    if (this.open) this.draw();
   }
 
   /** @returns {void} */
@@ -345,7 +277,7 @@ export class MacrosPage extends Panel {
       else if (key !== "") bound = ` - ${key}`;
       lines.push({
         option: String(index + 1),
-        text: `${this.marked.has(index) ? "/" : " "} ${macro.name}`,
+        text: macro.name,
         value: steps + bound,
       });
     });
@@ -382,8 +314,8 @@ export class MacrosPage extends Panel {
         `Type a name and press ${this.deps.keyName("Enter")}. ${this.deps.keyName("PF12")} leaves it unsaved.`,
       ];
     return [
-      `${this.deps.keyName("Enter")} records, stops or plays the line the cursor is on. / marks a macro.`,
-      "Commands: RENAME, DELETE, EXPORT, IMPORT, MARK, KEY, UNKEY.",
+      `${this.deps.keyName("Enter")} records, stops or plays the line the cursor is on.`,
+      "Commands: RENAME, DELETE, KEY, UNKEY.",
     ];
   }
 
@@ -457,14 +389,6 @@ export class MacrosPage extends Panel {
    */
   word(word) {
     const index = this.macroIndexAt(this.selected);
-    if (word === "EXPORT" || word === "EXP") {
-      this.exportSelection();
-      return true;
-    }
-    if (word === "IMPORT" || word === "IMP") {
-      this.importMacros();
-      return true;
-    }
     if (word === "RECORD" || word === "REC") {
       if (this.recording === null && this.playing === null)
         this.startRecording();
@@ -481,7 +405,6 @@ export class MacrosPage extends Panel {
       word !== "REN" &&
       word !== "DELETE" &&
       word !== "DEL" &&
-      word !== "MARK" &&
       word !== "KEY" &&
       word !== "UNKEY"
     )
@@ -493,8 +416,7 @@ export class MacrosPage extends Panel {
     if (word === "RENAME" || word === "REN") this.rename(index);
     else if (word === "DELETE" || word === "DEL") this.removeMacro(index);
     else if (word === "KEY") this.listenForKey(index);
-    else if (word === "UNKEY") this.unbindKey(index);
-    else this.mark(index);
+    else this.unbindKey(index);
     return true;
   }
 
@@ -519,16 +441,6 @@ export class MacrosPage extends Panel {
     this.capture = new ComboCapture();
     this.onCommand = false;
     this.selected = index + 1;
-    this.draw();
-  }
-
-  /**
-   * @param {number} index
-   * @returns {void}
-   */
-  mark(index) {
-    if (this.marked.has(index)) this.marked.delete(index);
-    else this.marked.add(index);
     this.draw();
   }
 
@@ -622,10 +534,6 @@ export class MacrosPage extends Panel {
   typed(event) {
     const index = this.macroIndexAt(this.selected);
     if (index === null) return false;
-    if (event.key === "/") {
-      this.mark(index);
-      return true;
-    }
     if (this.deps.keyCommand(event) === "Delete") {
       this.removeMacro(index);
       return true;
