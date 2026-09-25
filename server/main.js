@@ -1,8 +1,7 @@
 import { createServer } from "node:http";
-import { readFile, stat } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { extname, join, normalize, resolve } from "node:path";
-import { createHash, randomUUID } from "node:crypto";
-import { gzipSync } from "node:zlib";
+import { randomUUID } from "node:crypto";
 import { WebSocketServer } from "ws";
 import { loadConfig } from "./config.js";
 import { setLogFile, setLogLevel, logger } from "./log.js";
@@ -34,18 +33,6 @@ const CONTENT_TYPES = Object.freeze({
 /** Vendored fonts, three quarters of the page's weight, and never edited. */
 const IMMUTABLE = new Set([".ttf", ".woff2"]);
 
-/** Raw TrueType is not compressed; it halves. A `.woff2` already is, so it is not here. */
-const COMPRESSIBLE = new Set([".html", ".js", ".json", ".ttf"]);
-
-/**
- * Every file is read, hashed and compressed once and then answered from here,
- * until a deploy replaces it: a changed mtime or size reads it again, so new
- * frontend code needs no restart, and the sessions it would end live on.
- *
- * @type {Map<string, { mtimeMs: number, size: number, content: Buffer, gzipped: Buffer | null, headers: Record<string, string> }>}
- */
-const STATIC_CACHE = new Map();
-
 /** @type {Readonly<Record<string, number>>} Anything not named here is a 500. */
 const ERROR_STATUS = Object.freeze({
   E3001: 404,
@@ -65,13 +52,12 @@ function sendJson(res, status, body) {
 }
 
 /**
- * @param {import('node:http').IncomingMessage} req
  * @param {import('node:http').ServerResponse} res
  * @param {string} dir
  * @param {string} relative
  * @returns {Promise<void>}
  */
-async function sendFile(req, res, dir, relative) {
+async function sendFile(res, dir, relative) {
   // Decode first: a percent-encoded `..` is still a traversal attempt.
   /** @type {string} */
   let decoded;
@@ -84,66 +70,24 @@ async function sendFile(req, res, dir, relative) {
   const file = join(dir, normalize(decoded));
   if (!file.startsWith(dir)) throw new AppError("E6001", relative);
 
-  /** @type {import('node:fs').Stats} */
-  let stats;
   /** @type {Buffer} */
   let content;
-  let entry = STATIC_CACHE.get(file);
   try {
-    stats = await stat(file);
-    if (
-      entry !== undefined &&
-      (entry.mtimeMs !== stats.mtimeMs || entry.size !== stats.size)
-    ) {
-      log.info(`${relative} changed on disk, reading it again`);
-      entry = undefined;
-    }
-    content = entry?.content ?? (await readFile(file));
+    content = await readFile(file);
   } catch (cause) {
     throw new AppError("E6001", relative, cause);
   }
 
-  if (entry === undefined) {
-    const ext = extname(file);
-    entry = {
-      mtimeMs: stats.mtimeMs,
-      size: stats.size,
-      content,
-      gzipped: COMPRESSIBLE.has(ext) ? gzipSync(content) : null,
-      headers: {
-        "content-type": CONTENT_TYPES[ext] ?? "application/octet-stream",
-        "cache-control": IMMUTABLE.has(ext)
-          ? "public, max-age=31536000, immutable"
-          : "no-cache",
-        etag: `"${createHash("sha1").update(content).digest("base64url")}"`,
-      },
-    };
-    STATIC_CACHE.set(file, entry);
-  }
-
-  // The page reloads itself after every reconnect, so the commonest request by
-  // far is a reload asking whether anything changed.
-  if (req.headers["if-none-match"] === entry.headers["etag"]) {
-    res.writeHead(304, entry.headers);
-    res.end();
-    return;
-  }
-
+  const ext = extname(file);
   /** @type {Record<string, string>} */
-  const headers = { ...entry.headers };
-  let body = entry.content;
-  if (entry.gzipped !== null) {
-    // Told even when this client took the plain copy: a cache in between must
-    // not hand the compressed one to a client that cannot read it.
-    headers["vary"] = "accept-encoding";
-    if (String(req.headers["accept-encoding"] ?? "").includes("gzip")) {
-      body = entry.gzipped;
-      headers["content-encoding"] = "gzip";
-    }
-  }
-  headers["content-length"] = String(body.byteLength);
+  const headers = {
+    "content-type": CONTENT_TYPES[ext] ?? "application/octet-stream",
+    "content-length": String(content.byteLength),
+  };
+  if (IMMUTABLE.has(ext))
+    headers["cache-control"] = "public, max-age=31536000, immutable";
   res.writeHead(200, headers);
-  res.end(body);
+  res.end(content);
 }
 
 /**
@@ -227,7 +171,7 @@ async function handleRequest(req, res) {
     return;
   }
 
-  await sendFile(req, res, PUBLIC_DIR, path === "/" ? "index.html" : path);
+  await sendFile(res, PUBLIC_DIR, path === "/" ? "index.html" : path);
 }
 
 const server = createServer((req, res) => {

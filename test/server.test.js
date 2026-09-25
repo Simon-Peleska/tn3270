@@ -244,49 +244,21 @@ test("static files and the session list are served", async (t) => {
   assert.ok(Array.isArray(list.sessions));
 });
 
-test("static files are compressed, revalidated, and fonts cached forever", async (t) => {
+test("fonts are cached forever, and the page's own code never", async (t) => {
   const server = await startServer();
   t.after(() => server.stop());
   const base = `http://127.0.0.1:${server.port}`;
 
-  const first = await fetch(`${base}/app.js`);
-  const source = readFileSync("public/app.js", "utf8");
-  assert.equal(first.status, 200);
-  assert.equal(first.headers.get("content-encoding"), "gzip");
-  assert.equal(first.headers.get("cache-control"), "no-cache");
-  assert.equal(await first.text(), source);
-  const onTheWire = Number(first.headers.get("content-length"));
-  assert.ok(
-    onTheWire > 0 && onTheWire < source.length / 2,
-    `gzip should more than halve ${source.length} bytes, sent ${onTheWire}`,
-  );
-
-  const etag = first.headers.get("etag") ?? "";
-  assert.match(etag, /^"[\w-]+"$/);
-  const again = await fetch(`${base}/app.js`, {
-    headers: { "if-none-match": etag },
-  });
-  assert.equal(again.status, 304);
-  assert.equal(await again.text(), "");
-
-  // A reload is the page's own reconnect path, so a changed file must win over
-  // the ETag the browser still holds.
-  const stale = await fetch(`${base}/app.js`, {
-    headers: { "if-none-match": '"not-the-one"' },
-  });
-  assert.equal(stale.status, 200);
+  const code = await fetch(`${base}/app.js`);
+  assert.equal(code.status, 200);
+  assert.equal(code.headers.get("cache-control"), null);
+  assert.equal(await code.text(), readFileSync("public/app.js", "utf8"));
 
   const font = await fetch(`${base}/fonts/3270-Regular.ttf`);
   assert.equal(font.status, 200);
   assert.equal(
     font.headers.get("cache-control"),
     "public, max-age=31536000, immutable",
-  );
-  assert.equal(font.headers.get("content-encoding"), "gzip");
-  assert.ok(
-    Number(font.headers.get("content-length")) <
-      readFileSync("public/fonts/3270-Regular.ttf").byteLength / 2,
-    "raw TrueType should more than halve",
   );
 });
 
@@ -336,10 +308,7 @@ test("a static file replaced by a deploy is served new, without a restart", asyn
   assert.equal(await before.text(), "export const version = 1;\n");
 
   await writeFile(`public/${name}`, "export const version = 22;\n");
-  const after = await fetch(url, {
-    headers: { "if-none-match": before.headers.get("etag") ?? "" },
-  });
-  assert.equal(after.status, 200, "the old ETag must not match the new file");
+  const after = await fetch(url);
   assert.equal(await after.text(), "export const version = 22;\n");
 });
 

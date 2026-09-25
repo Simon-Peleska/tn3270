@@ -398,8 +398,8 @@ indication has already been applied.
 There is no bundler and no build step. The frontend is eighteen ES modules
 served as eighteen files — the same files `node --test` imports and the same
 ones a browser gets opening `index.html` off disk. What a bundle would have
-bought is bought in `sendFile()` (`server/main.js`) instead, without anything
-standing between the source and what runs.
+bought is bought in `index.html` and `sendFile()` (`server/main.js`) instead,
+without anything standing between the source and what runs.
 
 - **Everything is preloaded**, by a list written out in `index.html`: a
   `modulepreload` per module and a `preload` per font. Without it a browser
@@ -409,19 +409,14 @@ standing between the source and what runs.
   server never sees. The list is in the file rather than generated, so the page
   is what it says it is; `test/server.test.js` walks the real import graph and
   fails if one is missing.
-- **gzip**, on anything that is text and on the raw TrueType, which halves.
-- **An ETag on everything**, because the page reloads itself after every
-  reconnect — that reload is the common request, and it costs a `304` per file
-  and no bodies.
 - **Fonts are immutable** for a year. They are vendored and never edited, they
   are three quarters of the page's weight, and they are the one thing a
   reconnect should never fetch twice.
-- **Read once, until it changes.** Each file is compressed and hashed on its
-  first request and served from memory after that, but every request checks
-  its mtime and size first, and a file that differs is read again. So a
-  deploy that only touches `public/` is a copy, not a restart, and the
-  sessions a restart would end carry on. Open pages keep their old code
-  until their next reload.
+- **Everything else is read from disk on every request**, with no compression
+  and no validators: neither made a noticeable difference, and both were code
+  to keep right. A deploy that only touches `public/` is a copy, not a
+  restart, and the sessions a restart would end carry on. Open pages keep
+  their old code until their next reload.
 
 777 KB of files reach a cold browser as 320 KB in one wave; a reconnect's
 reload transfers about 6 KB and no font traffic at all.
@@ -434,7 +429,7 @@ config.jsonc                settings (hand-parsed JSONC, no dependency)
 jsconfig.json               checkJs + strict → the "no any" gate
 
 server/
-  main.js       http, static files (gzip, ETag, cache), /api/sessions, ws upgrade
+  main.js       http, static files, /api/sessions, ws upgrade
   config.js     JSONC → validated Config
   errors.js     the stable error-code table
   log.js        structured logging to stderr and a rolling file
