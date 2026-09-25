@@ -20,11 +20,9 @@
     // https://x3270.miraheze.org/wiki/Category:Resources
     "settings": {
       // "codePage": "german",
-
       // Columns x rows, at least the model's own size; negotiates IBM-DYNAMIC.
       // Only a starting point: "Fit to window" changes it per session.
-      "oversize": "160x62",
-
+      // "oversize": "160x62",
       // "monoCase": true,
       // "typeahead": false,
       // "verifyHostCert": true,

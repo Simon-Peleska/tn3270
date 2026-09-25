@@ -356,6 +356,10 @@ async function createSession() {
     throw new Error(
       `[${body.code ?? "E0000"}] ${body.message ?? "could not create a session"}`,
     );
+  // This tab opened it, so the size saved here is its to ask for; one attached
+  // to by id belongs to whoever is in it. Kept past a reload, which comes
+  // before the hello that asks when the server was restarted.
+  sessionStorage.setItem(`tn3270.unsized.${body.id}`, "1");
   return body;
 }
 
@@ -387,8 +391,6 @@ async function liveSessionIds() {
  * @property {number | null} reconnectUntil null while connected, Infinity when
  *   the server never reaps
  * @property {number} idleTimeoutMs
- * @property {boolean} started this tab opened the session, so the size saved
- *   here is its to ask for; one attached to by id belongs to whoever is in it
  * @property {number} model
  * @property {string} oversize
  * @property {number} cols
@@ -437,18 +439,16 @@ function activePane() {
 
 /**
  * @param {string} id
- * @param {boolean} started
  * @param {number} cols
  * @param {number} rows the host's screen, without the status row
  * @returns {SessionSlot}
  */
-function newSlot(id, started = false, cols = 0, rows = 0) {
+function newSlot(id, cols = 0, rows = 0) {
   /** @type {SessionSlot} */
   const slot = {
     id,
     pane: null,
     socket: null,
-    started,
     attempt: 0,
     reconnectUntil: null,
     idleTimeoutMs: DEFAULT_IDLE_TIMEOUT_MS,
@@ -828,7 +828,9 @@ function fitSession(slot, model = slot.model) {
  * @returns {void}
  */
 function applySavedSize(slot) {
-  if (!slot.started) return;
+  const unsized = `tn3270.unsized.${slot.id}`;
+  if (sessionStorage.getItem(unsized) === null) return;
+  sessionStorage.removeItem(unsized);
 
   const model = settings.values.model ?? slot.model;
   if (model !== slot.model) sendQuietly(slot, { type: "model", model });
@@ -993,7 +995,6 @@ async function startFreshSession(slot) {
     return;
   }
   slot.id = created.id;
-  slot.started = true;
   slot.cols = created.cols;
   slot.rows = created.rows;
   writeHash();
@@ -1196,7 +1197,7 @@ async function ensureSlot(index) {
   const existing = sessions[index];
   if (existing != null) return existing;
   const created = await createSession();
-  const slot = newSlot(created.id, true, created.cols, created.rows);
+  const slot = newSlot(created.id, created.cols, created.rows);
   sessions[index] = slot;
   writeHash();
   connectSocket(slot);
@@ -1575,7 +1576,7 @@ if (wanted.some((id) => id !== null)) {
 
 if (!sessions.some((slot) => slot !== null)) {
   const created = await createSession();
-  sessions[0] = newSlot(created.id, true, created.cols, created.rows);
+  sessions[0] = newSlot(created.id, created.cols, created.rows);
 }
 writeHash();
 

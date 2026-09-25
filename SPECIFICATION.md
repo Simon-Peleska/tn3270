@@ -85,8 +85,10 @@ the host.
   copy of the table above. After model 5 the list offers **Dynamic - 62x160**:
   the model underneath it with a 160×62 oversize on top, which is the biggest
   screen an IBM host will bind. It sits with the models because it behaves like
-  one — a size asked for by name, with no window measured for it — and it is
-  what `b3270.oversize` starts every session at.
+  one — a size asked for by name, with no window measured for it. A browser
+  that never chose a size gets the server's: 24×80 unless `b3270.model` or
+  `b3270.oversize` says otherwise. One that did asks for it again for every
+  session it opens, including one opened just before a reload.
 - **Fit to window** is the last choice in the same list, after the dynamic
   screen. The browser measures how many cells the session's pane would hold at a
   chosen text size and asks for exactly that many columns and rows, which b3270
