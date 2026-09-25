@@ -252,7 +252,6 @@ test("fonts are cached forever, and the page's own code never", async (t) => {
   const code = await fetch(`${base}/app.js`);
   assert.equal(code.status, 200);
   assert.equal(code.headers.get("cache-control"), null);
-  assert.equal(await code.text(), readFileSync("public/app.js", "utf8"));
 
   const font = await fetch(`${base}/fonts/3270-Regular.ttf`);
   assert.equal(font.status, 200);

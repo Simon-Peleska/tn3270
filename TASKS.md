@@ -31,11 +31,11 @@ Status as of 2026-09-20.
       attach/detach, controller promotion, burst coalescing, idle reaping.
 - [x] **Server** — `server/main.js`: HTTP, static files, `/api/sessions`,
       WebSocket upgrade, graceful shutdown.
-- [x] **Static delivery** — no bundler, no build step: gzip, an ETag on every
-      file, and a year of `immutable` on the vendored fonts, with a preload list
-      written out in `index.html` so every module and every font arrives in one
-      wave. 777 KB of files reach a cold browser as 320 KB; a reconnect's reload
-      costs a few `304`s.
+- [x] **Static delivery** — no bundler, no build step: a year of `immutable`
+      on the vendored fonts, with a preload list written out in `index.html` so
+      every module and every font arrives in one wave. A cold browser fetches
+      about 810 KB; a reconnect's reload fetches the 230 KB of page code again
+      and no fonts.
 - [x] **REST** — `server/restproxy.js`: each session's b3270 runs its own
       `-httpd` on a loopback port guarded by a per-session cookie, and
       `/api/sessions/<id>/3270/…` is forwarded to it untouched. s3270's REST
@@ -99,8 +99,8 @@ Status as of 2026-09-20.
     the screen is asserted rather than looked at (`canvas.test.js`)
   - log rollover, and the session id, address and user on the lines, forwarded
     or not (`log.test.js`, `server.test.js`)
-  - what a browser is actually sent: gzip, the ETag and its `304`, the fonts'
-    `immutable` year, and the preload list held against the real import graph
+  - what a browser is actually sent: the fonts' `immutable` year, and the
+    preload list held against the real import graph
     (`server.test.js`)
 - [x] **Type gate** — `tsc -p jsconfig.json` with `checkJs` and `strict`, clean.
       No `any` anywhere.
@@ -200,11 +200,6 @@ Timing entries rather than from the server's side of it:
     `crossorigin` on its preload was missing. All eighteen modules start
     together and are done inside one wave; the fonts start with them instead of
     waiting for `app.js` to run.
-24. A reload — which is what a reconnect does — transfers about 6 KB: a `304`
-    per module and no font traffic at all.
-25. A gzipped TrueType arrives as 108,596 bytes, decodes to the full 255,248,
-    and `new FontFace(...)` parses it, so halving the fonts costs nothing at
-    the other end.
 
 The seams a fractional device-pixel ratio used to leave were looked for by
 reading the canvas back rather than by eye, with `devicePixelRatio` forced to
