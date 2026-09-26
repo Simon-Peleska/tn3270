@@ -26,6 +26,7 @@ import { AppError } from "./errors.js";
  * @property {number} rows
  * @property {number} cols
  * @property {number} model
+ * @property {string} codePage b3270's active host code-page name
  * @property {import('./b3270.js').ModelInfo[]} models
  * @property {string} oversize `<cols>x<rows>`, or '' for the model's own size
  * @property {boolean} hostLocked
@@ -44,6 +45,8 @@ import { AppError } from "./errors.js";
  * @property {number} rows
  * @property {number} cols
  * @property {string} oversize `<cols>x<rows>`, or '' for the model's own size
+ *
+ * @typedef {{ type: 'codePage', name: string }} CodePageMessage
  *
  * @typedef {object} StatusMessage
  * @property {'status'} type
@@ -111,15 +114,20 @@ import { AppError } from "./errors.js";
  *
  * @typedef {object} RecorderStep
  * @property {string[]} screen one plain-text line per row, as of just before this step
+ * @property {PaintMessage} [paint] the same full, styled screen sent to a client; absent in older recordings
+ * @property {{ row: number, col: number }} cursor 0-based position before this step
  * @property {string} [action] omitted for a password marker
  * @property {string[]} [args]
  * @property {true} [password] a whole run of password keystrokes, collapsed so none are recorded
+ * @property {true} [final] the last screen after the recorded inputs
  *
  * @typedef {object} RecorderStepMessage
  * @property {'recorderStep'} type
  * @property {RecorderStep} step
  *
- * @typedef {HelloMessage | ScreenMessage | PaintMessage | StatusMessage | ErrorMessage | RecorderStepMessage | WaitingMessage | RefusedMessage} ServerMessage
+ * @typedef {{ type: 'recorderStopped' }} RecorderStoppedMessage
+ *
+ * @typedef {HelloMessage | ScreenMessage | CodePageMessage | PaintMessage | StatusMessage | ErrorMessage | RecorderStepMessage | RecorderStoppedMessage | WaitingMessage | RefusedMessage} ServerMessage
  */
 
 /**
@@ -204,6 +212,11 @@ export function parseClientMessage(raw) {
     const value = message["value"];
     if (typeof value !== "string")
       throw new AppError("E4002", "text.value must be a string");
+    if (value.length > 16384)
+      throw new AppError(
+        "E4005",
+        `text of ${value.length} characters is too large`,
+      );
     return { type: "text", value };
   }
 

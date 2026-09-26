@@ -49,7 +49,7 @@ export function keyboardLocked(lock) {
  * as a real OIA shows it; the cursor is not.
  *
  * @param {OiaState} state
- * @param {{ row: number, col: number }} cursor 0-based
+ * @param {{ row: number, col: number } | null} cursor 0-based; null leaves the position for the caller
  * @param {number} width columns this line may use, buttons already deducted
  * @returns {string} exactly `width` characters
  */
@@ -63,7 +63,7 @@ export function renderOia(state, cursor, width) {
   const flags = [state.insert ? "Insert" : "", state.typeahead ? "TA" : ""]
     .filter(Boolean)
     .join(" ");
-  const position = `${String(cursor.row + 1).padStart(2, "0")}/${String(cursor.col + 1).padStart(3, "0")}`;
+  const position = cursor === null ? "" : cursorPosition(cursor);
   const right = [flags, position].filter(Boolean).join("  ");
 
   let line = left.slice(0, width);
@@ -84,4 +84,9 @@ export function renderOia(state, cursor, width) {
         .padEnd(width - right.length, " ") + right;
   }
   return line.slice(0, width).padEnd(width, " ");
+}
+
+/** @param {{ row: number, col: number }} cursor 0-based */
+export function cursorPosition(cursor) {
+  return `${String(cursor.row + 1).padStart(2, "0")}/${String(cursor.col + 1).padStart(3, "0")}`;
 }

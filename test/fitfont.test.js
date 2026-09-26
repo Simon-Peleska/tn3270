@@ -85,3 +85,17 @@ test("a pane with room to spare stops at the largest size on offer", () => {
   });
   assert.equal(chosen, MAX_FONT_SIZE);
 });
+
+test("a maximum font size caps a large pane but still shrinks in a small one", () => {
+  const fit = { measure: cell, cols: 80, rows: 44, start: 32, max: 16 };
+  assert.equal(
+    chooseFontSize({ ...fit, box: { width: 2000, height: 2000 } }),
+    16,
+  );
+  const box = { width: 600, height: 500 };
+  assert.equal(
+    chooseFontSize({ ...fit, box }),
+    Math.min(16, largestThatFits(fit.cols, fit.rows, box)),
+  );
+  assert.ok(chooseFontSize({ ...fit, box }) < 16);
+});

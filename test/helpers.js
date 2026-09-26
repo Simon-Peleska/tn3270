@@ -67,14 +67,14 @@ export function letIn(session, owner, guest) {
 }
 
 /**
- * @param {() => boolean} predicate
+ * @param {() => boolean | Promise<boolean>} predicate
  * @param {string} message
  * @param {number} [timeoutMs]
  * @returns {Promise<void>}
  */
 export async function waitUntil(predicate, message, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs;
-  while (!predicate()) {
+  while (!(await predicate())) {
     if (Date.now() >= deadline)
       throw new Error(`timed out waiting for ${message}`);
     await new Promise((resolve) => setTimeout(resolve, 10));

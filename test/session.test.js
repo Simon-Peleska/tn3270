@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { Session, SessionRegistry } from "../server/session.js";
+import { Session } from "../server/session.js";
+import { SessionRegistry } from "../server/registry.js";
 import { AppError } from "../server/errors.js";
 import { keyboardLocked } from "../public/oia.js";
 import { computeHints } from "../public/hints.js";
@@ -26,6 +27,49 @@ test("the first viewer controls and the rest observe", async (t) => {
 
   assert.equal(first.role, "controller");
   assert.equal(second.role, "observer");
+});
+
+test("a stalled host cannot grow the input queue without limit", async (t) => {
+  const session = new Session(testConfig());
+  t.after(() => session.close());
+  await session.ready;
+  const viewer = collectingViewer("controller");
+  session.attach(viewer);
+  session.inputTag = "host-stalled";
+
+  for (let i = 0; i < 300; i++)
+    session.handleClientMessage(viewer, { type: "text", value: "A" });
+
+  assert.equal(session.inputQueue.length, 256);
+  assert.ok(
+    viewer.messages.some(
+      (message) => message.type === "error" && message.code === "E3013",
+    ),
+  );
+});
+
+test("a viewer receives b3270's active code page and later changes", async (t) => {
+  const config = testConfig({
+    b3270: { path: "b3270", model: 4, settings: { codePage: "german" } },
+  });
+  const session = new Session(config);
+  t.after(() => session.close());
+  await session.ready;
+  await waitUntil(() => session.codePage === "cp273", "the code-page setting");
+
+  const viewer = collectingViewer("viewer");
+  session.attach(viewer);
+  const hello = viewer.messages.find((message) => message.type === "hello");
+  assert.equal(hello?.type === "hello" ? hello.codePage : "", "cp273");
+
+  session.handleIndication({
+    kind: "setting",
+    body: { name: "codePage", value: "cp1142" },
+  });
+  assert.deepEqual(viewer.messages.at(-1), {
+    type: "codePage",
+    name: "cp1142",
+  });
 });
 
 test("a viewer joining mid-stream gets a repaint matching what the first viewer sees", async (t) => {
@@ -203,6 +247,7 @@ test("a held-down PF key repeats only once the host has answered the last one", 
   const viewer = collectingViewer("viewer");
   session.attach(viewer);
   await waitUntil(() => session.screen.fieldsFormatted, "the field map");
+  /** @type {import('../server/protocol.js').ClientMessage} */
   const pf8 = { type: "action", action: "PF", args: ["8"], repeat: true };
 
   session.handleClientMessage(viewer, {
@@ -1266,6 +1311,22 @@ test("the registry refuses to exceed maxSessions", async () => {
   registry.closeAll();
 });
 
+test("the registry counts sessions still starting against maxSessions", async (t) => {
+  const registry = new SessionRegistry(
+    testConfig({ sessions: { maxSessions: 1, idleTimeoutMs: 0 } }),
+  );
+  t.after(() => registry.closeAll());
+
+  const first = registry.create();
+  await assert.rejects(registry.create(), (err) => {
+    assert.ok(err instanceof AppError);
+    assert.equal(err.code, "E3002");
+    return true;
+  });
+  await first;
+  assert.equal(registry.list().length, 1);
+});
+
 test("an unknown session id is a stable error, not a crash", () => {
   const registry = new SessionRegistry(testConfig());
   assert.throws(
@@ -1342,15 +1403,27 @@ test("recording captures the screen and each step, and stops cleanly", async (t)
     .filter((m) => m.type === "recorderStep")
     .map((m) => (m.type === "recorderStep" ? m.step : null));
   assert.equal(steps.length, 2);
-  assert.deepEqual(steps[0], {
+  const { paint: firstPaint, ...firstStep } =
+    /** @type {import('../server/protocol.js').RecorderStep} */ (steps[0]);
+  const { paint: secondPaint, ...secondStep } =
+    /** @type {import('../server/protocol.js').RecorderStep} */ (steps[1]);
+  assert.deepEqual(firstStep, {
     screen: session.recording?.steps[0].screen,
+    cursor: session.recording?.steps[0].cursor,
     action: "String",
     args: ["abc"],
   });
-  assert.deepEqual(steps[1], {
+  assert.deepEqual(secondStep, {
     screen: session.recording?.steps[1].screen,
+    cursor: session.recording?.steps[1].cursor,
     action: "Enter",
     args: [],
+  });
+  assert.equal(firstPaint?.full, true);
+  assert.equal(secondPaint?.full, true);
+  assert.deepEqual(firstPaint?.size, {
+    rows: session.screen.rows,
+    cols: session.screen.cols,
   });
   assert.ok(
     Array.isArray(steps[0]?.screen),
@@ -1364,8 +1437,183 @@ test("recording captures the screen and each step, and stops cleanly", async (t)
   const after = controller.messages.filter((m) => m.type === "recorderStep");
   assert.equal(
     after.length,
-    2,
-    "nothing more should have been recorded once stopped",
+    3,
+    "only the final frame should have been added on Stop",
+  );
+  assert.equal(after[2]?.type === "recorderStep" && after[2].step.final, true);
+});
+
+test("recording keeps a full colour paint beside the plain-text screen", async (t) => {
+  const session = new Session(testConfig());
+  t.after(() => session.close());
+  await session.ready;
+
+  session.screen.color = true;
+  session.screen.defaultFg = "green";
+  session.screen.defaultBg = "black";
+  const cell = session.screen.cellAt(0, 0);
+  cell.ch = "X";
+  cell.fg = "red";
+  cell.bg = "deepBlue";
+  cell.gr = "reverse,underscore";
+  cell.editable = true;
+  session.recording = { steps: [] };
+  session.record("Enter");
+
+  const step = session.recording.steps[0];
+  assert.equal(step?.screen[0]?.[0], "X");
+  assert.equal(step?.paint?.type, "paint");
+  assert.equal(step?.paint?.full, true);
+  assert.equal(step?.paint?.color, true);
+  assert.equal(step?.paint?.defaultFg, "green");
+  assert.equal(step?.paint?.defaultBg, "black");
+  assert.deepEqual(step?.paint?.size, {
+    rows: session.screen.rows,
+    cols: session.screen.cols,
+  });
+  assert.deepEqual(step?.paint?.rows[0]?.runs[0], {
+    col: 0,
+    text: "X",
+    fg: "red",
+    bg: "deepBlue",
+    gr: "reverse,underscore",
+    editable: true,
+  });
+});
+
+test("stopping a recording saves the final screen after the last input", async (t) => {
+  const session = new Session(testConfig());
+  t.after(() => session.close());
+  await session.ready;
+
+  const controller = collectingViewer("controller");
+  session.attach(controller);
+  session.handleClientMessage(controller, {
+    type: "recorder",
+    action: "start",
+  });
+  const cell = session.screen.cellAt(0, 0);
+  cell.ch = "Z";
+  cell.fg = "red";
+  session.handleClientMessage(controller, { type: "recorder", action: "stop" });
+
+  const recorded = controller.messages.filter(
+    (message) =>
+      message.type === "recorderStep" || message.type === "recorderStopped",
+  );
+  assert.equal(recorded.length, 2);
+  assert.equal(recorded[0]?.type, "recorderStep");
+  if (recorded[0]?.type !== "recorderStep") return;
+  assert.equal(recorded[0].step.final, true);
+  assert.equal(recorded[0].step.screen[0]?.[0], "Z");
+  assert.equal(recorded[0].step.paint?.rows[0]?.runs[0]?.fg, "red");
+  assert.equal(recorded[1]?.type, "recorderStopped");
+});
+
+test("recording captures cursor movement actions with their target", async (t) => {
+  const fixture = await startTracedSession("test/traces/reverse.trc");
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  await settle(session);
+
+  const controller = collectingViewer("controller");
+  session.attach(controller);
+  const start = {
+    row: session.screen.cursor.row,
+    col: session.screen.cursor.col,
+  };
+  session.handleClientMessage(controller, {
+    type: "recorder",
+    action: "start",
+  });
+  session.handleClientMessage(controller, {
+    type: "action",
+    action: "MoveCursor1",
+    args: ["5", "12"],
+  });
+  session.handleClientMessage(controller, { type: "action", action: "Left" });
+  await settle(session);
+  session.handleClientMessage(controller, { type: "recorder", action: "stop" });
+
+  const recorded = controller.messages.filter(
+    (message) => message.type === "recorderStep",
+  );
+  assert.deepEqual(
+    recorded
+      .slice(0, 2)
+      .map((message) => [
+        message.type === "recorderStep" ? message.step.action : undefined,
+        message.type === "recorderStep" ? message.step.args : undefined,
+        message.type === "recorderStep" ? message.step.cursor : undefined,
+      ]),
+    [
+      ["MoveCursor1", ["5", "12"], start],
+      ["Left", [], { row: 4, col: 11 }],
+    ],
+  );
+  assert.equal(
+    recorded[2]?.type === "recorderStep" && recorded[2].step.final,
+    true,
+  );
+  assert.equal(session.recording, null);
+  assert.equal(
+    controller.messages.some((message) => message.type === "recorderStopped"),
+    true,
+  );
+});
+
+test("Stop acknowledges a recorded cursor move without waiting for the host", async (t) => {
+  const session = new Session(testConfig());
+  t.after(() => session.close());
+  await session.ready;
+
+  const controller = collectingViewer("controller");
+  session.attach(controller);
+  session.handleClientMessage(controller, {
+    type: "recorder",
+    action: "start",
+  });
+  session.handleClientMessage(controller, {
+    type: "action",
+    action: "MoveCursor1",
+    args: ["5", "12"],
+  });
+  assert.notEqual(session.inputTag, null);
+  session.handleClientMessage(controller, { type: "recorder", action: "stop" });
+
+  assert.equal(session.recording, null);
+  assert.equal(
+    controller.messages.some((message) => message.type === "recorderStopped"),
+    true,
+  );
+});
+
+test("Stop acknowledges immediately even when typing is queued behind a busy host", async (t) => {
+  const session = new Session(testConfig());
+  t.after(() => session.close());
+  await session.ready;
+
+  const controller = collectingViewer("controller");
+  session.attach(controller);
+  session.handleClientMessage(controller, {
+    type: "recorder",
+    action: "start",
+  });
+  session.handleClientMessage(controller, {
+    type: "action",
+    action: "MoveCursor1",
+    args: ["5", "12"],
+  });
+  session.handleClientMessage(controller, { type: "text", value: "queued" });
+  assert.notEqual(session.inputTag, null);
+  assert.equal(session.inputQueue.length, 1);
+
+  session.handleClientMessage(controller, { type: "recorder", action: "stop" });
+
+  assert.equal(session.recording, null);
+  assert.equal(
+    controller.messages.some((message) => message.type === "recorderStopped"),
+    true,
   );
 });
 

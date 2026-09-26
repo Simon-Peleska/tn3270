@@ -192,37 +192,6 @@ export class Grid {
       text += this.cellAt(row, col)?.ch ?? " ";
     return text;
   }
-
-  /**
-   * The rectangle a 3270 selection is, rather than the stream of text a terminal
-   * selection would be. Trailing blanks are dropped per row: they are the shape
-   * of the screen, not something anybody meant to copy.
-   *
-   * @param {number} top 0-based, inclusive
-   * @param {number} left
-   * @param {number} bottom inclusive
-   * @param {number} right inclusive
-   * @returns {string}
-   */
-  text(top, left, bottom, right) {
-    /** @type {string[]} */
-    const lines = [];
-    for (
-      let row = Math.max(0, top);
-      row <= Math.min(bottom, this.rows - 1);
-      row++
-    ) {
-      let line = "";
-      for (
-        let col = Math.max(0, left);
-        col <= Math.min(right, this.cols - 1);
-        col++
-      )
-        line += this.cellAt(row, col)?.ch ?? " ";
-      lines.push(line.replace(/\s+$/, ""));
-    }
-    return lines.join("\n");
-  }
 }
 
 /**
@@ -240,6 +209,40 @@ export function visibleCell(host, overlay, row, col) {
   const above = overlay.cellAt(row, col);
   if (above !== null && above.ch !== null) return above;
   return host.cellAt(row, col);
+}
+
+/**
+ * The rectangle a 3270 selection is, rather than the stream of text a terminal
+ * selection would be, read off what the display shows: a panel, not the host
+ * screen under it. Trailing blanks are dropped per row: they are the shape of
+ * the screen, not something anybody meant to copy.
+ *
+ * @param {Grid} host
+ * @param {Grid} overlay
+ * @param {number} top 0-based, inclusive
+ * @param {number} left
+ * @param {number} bottom inclusive
+ * @param {number} right inclusive
+ * @returns {string}
+ */
+export function visibleText(host, overlay, top, left, bottom, right) {
+  /** @type {string[]} */
+  const lines = [];
+  for (
+    let row = Math.max(0, top);
+    row <= Math.min(bottom, host.rows - 1);
+    row++
+  ) {
+    let line = "";
+    for (
+      let col = Math.max(0, left);
+      col <= Math.min(right, host.cols - 1);
+      col++
+    )
+      line += visibleCell(host, overlay, row, col)?.ch ?? " ";
+    lines.push(line.replace(/\s+$/, ""));
+  }
+  return lines.join("\n");
 }
 
 /**

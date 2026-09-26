@@ -1,4 +1,4 @@
-import { Grid, visibleCell, visibleCursor } from "./grid.js";
+import { Grid, visibleCell, visibleCursor, visibleText } from "./grid.js";
 import { chooseFontSize } from "./fitfont.js";
 import {
   ansiColorIndex,
@@ -186,7 +186,14 @@ export class Pane {
   getSelection() {
     const box = this.selectionBox();
     if (box === null) return "";
-    return this.host.text(box.top, box.left, box.bottom, box.right);
+    return visibleText(
+      this.host,
+      this.overlay,
+      box.top,
+      box.left,
+      box.bottom,
+      box.right,
+    );
   }
 
   /**
@@ -295,9 +302,10 @@ export class Screen {
    * @param {readonly Rect[]} shares one per pane, fractions of the page
    * @param {{ width: number, height: number }} box the page, in CSS pixels
    * @param {string} fontFamily
+   * @param {number} [maxFontSize]
    * @returns {void}
    */
-  layout(panes, shares, box, fontFamily) {
+  layout(panes, shares, box, fontFamily, maxFontSize) {
     this.panes = [...panes];
     this.dpr = window.devicePixelRatio || 1;
     this.rect = { x: 0, y: 0, width: box.width, height: box.height };
@@ -324,6 +332,7 @@ export class Screen {
         rows: pane.displayRows,
         box: pane.box,
         start: pane.fontSize,
+        max: maxFontSize,
       });
       pane.metrics = this.measure(fontFamily, pane.fontSize);
       // Centred in its share, as the CSS that used to lay the panes out did.

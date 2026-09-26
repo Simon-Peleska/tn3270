@@ -270,6 +270,23 @@ export function validateConfig(raw) {
   const b3270Section = section(root, "b3270");
   const sessionsSection = section(root, "sessions");
   const securitySection = section(root, "security");
+  const rootSettings = root["settings"];
+  const codePageAtRoot =
+    typeof rootSettings === "object" &&
+    rootSettings !== null &&
+    !Array.isArray(rootSettings) &&
+    ("codePage" in rootSettings || "codepage" in rootSettings);
+
+  if (
+    codePageAtRoot ||
+    b3270Section["codepage"] !== undefined ||
+    b3270Section["codePage"] !== undefined
+  ) {
+    throw new AppError(
+      "E1006",
+      'put the code page under "b3270.settings.codePage"',
+    );
+  }
 
   const model = num(b3270Section, "b3270", "model", DEFAULTS.b3270.model, 2, 5);
   if (!Number.isInteger(model))

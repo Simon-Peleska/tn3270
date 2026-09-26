@@ -11,28 +11,7 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "lib": ["ES2023", "DOM"],
-    "types": ["node"],
-    // The frontend imports by URL, which the browser resolves against the
-    // server's static mounts. Point the type checker at the same files.
-    "baseUrl": ".",
-    "paths": {
-      "/keymap.js": ["public/keymap.js"],
-      "/keymap-format.js": ["public/keymap-format.js"],
-      "/keymap-page.js": ["public/keymap-page.js"],
-      "/grid.js": ["public/grid.js"],
-      "/colors.js": ["public/colors.js"],
-      "/canvas.js": ["public/canvas.js"],
-      "/oia.js": ["public/oia.js"],
-      "/panel.js": ["public/panel.js"],
-      "/menu.js": ["public/menu.js"],
-      "/settings.js": ["public/settings.js"],
-      "/macros.js": ["public/macros.js"],
-      "/recorder.js": ["public/recorder.js"],
-      "/sessions.js": ["public/sessions.js"],
-      "/reconnect.js": ["public/reconnect.js"],
-      "/fitfont.js": ["public/fitfont.js"],
-      "/store.js": ["public/store.js"]
-    }
+    "types": ["node"]
   },
   "include": ["server/**/*.js", "public/**/*.js", "test/**/*.js"],
   "exclude": ["node_modules"]

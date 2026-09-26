@@ -17,17 +17,29 @@
     <link rel="modulepreload" href="./paste.js" />
     <link rel="modulepreload" href="./fitfont.js" />
     <link rel="modulepreload" href="./grid.js" />
+    <link rel="modulepreload" href="./paint-runs.js" />
     <link rel="modulepreload" href="./keymap.js" />
-    <link rel="modulepreload" href="./keymap-page.js" />
     <link rel="modulepreload" href="./macros.js" />
-    <link rel="modulepreload" href="./menu.js" />
+    <link rel="modulepreload" href="./local-host.js" />
     <link rel="modulepreload" href="./oia.js" />
-    <link rel="modulepreload" href="./panel.js" />
+    <link rel="modulepreload" href="./panels.js" />
+    <link rel="modulepreload" href="./panel-settings.js" />
+    <link rel="modulepreload" href="./panel-theme.js" />
+    <link rel="modulepreload" href="./panel-font.js" />
+    <link rel="modulepreload" href="./codepages.js" />
+    <link rel="modulepreload" href="./panel-size.js" />
+    <link rel="modulepreload" href="./panel-macros.js" />
+    <link rel="modulepreload" href="./panel-recordings.js" />
+    <link rel="modulepreload" href="./panel-keys.js" />
+    <link rel="modulepreload" href="./panel-admin.js" />
+    <link rel="modulepreload" href="./panel-chars.js" />
     <link rel="modulepreload" href="./reconnect.js" />
     <link rel="modulepreload" href="./recorder.js" />
     <link rel="modulepreload" href="./screen-keyboard.js" />
     <link rel="modulepreload" href="./sessions.js" />
+    <link rel="modulepreload" href="./session-api.js" />
     <link rel="modulepreload" href="./settings.js" />
+    <link rel="modulepreload" href="./themes.js" />
     <link rel="modulepreload" href="./store.js" />
 
     <!-- Which font is wanted is a stored setting, so all three are asked for:
@@ -94,6 +106,12 @@
   <body>
     <!-- Errors show in place on the status line; a redirect would drop the session. -->
     <main id="screen" tabindex="0"><canvas id="canvas"></canvas></main>
+    <input
+      id="recording-import"
+      type="file"
+      accept=".json,application/json"
+      hidden
+    />
 
     <script type="module" src="./app.js"></script>
   </body>

@@ -8,6 +8,7 @@ const STORE_NAME = "settings";
 const KEY = "ui";
 const MACROS_KEY = "macros";
 const KEYMAP_KEY = "keymap";
+const RECORDINGS_KEY = "recordings";
 
 /**
  * @typedef {object} StoredSettings
@@ -17,8 +18,9 @@ const KEYMAP_KEY = "keymap";
  *   for, null until one has been chosen here
  * @property {'model' | 'fit' | 'dynamic' | null} screenSize what the model is
  *   stretched to, likewise null until chosen
- * @property {number} fitFontSize the size "fit to window" measures from, not
- *   the size on screen
+ * @property {number} fitFontSize the size "fit to window" measures from; also
+ *   the display cap when forceMaxFontSize is enabled
+ * @property {boolean} forceMaxFontSize cap display text at fitFontSize, shrinking further when needed
  * @property {boolean} fieldBackground whether a typeable field is tinted
  */
 
@@ -35,26 +37,46 @@ function open() {
     request.onsuccess = () => resolve(request.result);
     request.onerror = () =>
       reject(request.error ?? new Error("indexedDB.open failed"));
+  }).catch((error) => {
+    opening = null;
+    throw error;
   });
   return opening;
+}
+
+/** @param {string} key @returns {Promise<unknown>} */
+async function read(key) {
+  const db = await open();
+  return new Promise((resolve, reject) => {
+    const request = db
+      .transaction(STORE_NAME, "readonly")
+      .objectStore(STORE_NAME)
+      .get(key);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error("read failed"));
+  });
+}
+
+/** @param {string} key @param {unknown} value @returns {Promise<void>} */
+async function write(key, value) {
+  const db = await open();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, "readwrite");
+    transaction.objectStore(STORE_NAME).put(value, key);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () =>
+      reject(transaction.error ?? new Error("write failed"));
+  });
 }
 
 /**
  * @returns {Promise<Partial<StoredSettings>>} empty on a first visit
  */
 export async function loadSettings() {
-  const db = await open();
-  return new Promise((resolve, reject) => {
-    const request = db
-      .transaction(STORE_NAME, "readonly")
-      .objectStore(STORE_NAME)
-      .get(KEY);
-    request.onsuccess = () => {
-      const value = request.result;
-      resolve(typeof value === "object" && value !== null ? value : {});
-    };
-    request.onerror = () => reject(request.error ?? new Error("read failed"));
-  });
+  const value = await read(KEY);
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value
+    : {};
 }
 
 /**
@@ -62,30 +84,15 @@ export async function loadSettings() {
  * @returns {Promise<void>}
  */
 export async function saveSettings(settings) {
-  const db = await open();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, "readwrite");
-    transaction.objectStore(STORE_NAME).put(settings, KEY);
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () =>
-      reject(transaction.error ?? new Error("write failed"));
-  });
+  await write(KEY, settings);
 }
 
 /**
  * @returns {Promise<import('./macros.js').Macro[]>} empty on a first visit
  */
 export async function loadMacros() {
-  const db = await open();
-  return new Promise((resolve, reject) => {
-    const request = db
-      .transaction(STORE_NAME, "readonly")
-      .objectStore(STORE_NAME)
-      .get(MACROS_KEY);
-    request.onsuccess = () =>
-      resolve(Array.isArray(request.result) ? request.result : []);
-    request.onerror = () => reject(request.error ?? new Error("read failed"));
-  });
+  const value = await read(MACROS_KEY);
+  return Array.isArray(value) ? value : [];
 }
 
 /**
@@ -93,32 +100,33 @@ export async function loadMacros() {
  * @returns {Promise<void>}
  */
 export async function saveMacros(macros) {
-  const db = await open();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, "readwrite");
-    transaction.objectStore(STORE_NAME).put(macros, MACROS_KEY);
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () =>
-      reject(transaction.error ?? new Error("write failed"));
-  });
+  await write(MACROS_KEY, macros);
+}
+
+/**
+ * @returns {Promise<import('./recorder.js').Recording[]>} empty on a first visit
+ */
+export async function loadRecordings() {
+  const value = await read(RECORDINGS_KEY);
+  return Array.isArray(value) ? value : [];
+}
+
+/**
+ * @param {import('./recorder.js').Recording[]} recordings
+ * @returns {Promise<void>}
+ */
+export async function saveRecordings(recordings) {
+  await write(RECORDINGS_KEY, recordings);
 }
 
 /**
  * @returns {Promise<import('./keymap.js').Bindings>} empty on a first visit
  */
 export async function loadKeymap() {
-  const db = await open();
-  return new Promise((resolve, reject) => {
-    const request = db
-      .transaction(STORE_NAME, "readonly")
-      .objectStore(STORE_NAME)
-      .get(KEYMAP_KEY);
-    request.onsuccess = () => {
-      const value = request.result;
-      resolve(typeof value === "object" && value !== null ? value : {});
-    };
-    request.onerror = () => reject(request.error ?? new Error("read failed"));
-  });
+  const value = await read(KEYMAP_KEY);
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? /** @type {import('./keymap.js').Bindings} */ (value)
+    : {};
 }
 
 /**
@@ -126,12 +134,5 @@ export async function loadKeymap() {
  * @returns {Promise<void>}
  */
 export async function saveKeymap(bindings) {
-  const db = await open();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, "readwrite");
-    transaction.objectStore(STORE_NAME).put(bindings, KEYMAP_KEY);
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () =>
-      reject(transaction.error ?? new Error("write failed"));
-  });
+  await write(KEYMAP_KEY, bindings);
 }

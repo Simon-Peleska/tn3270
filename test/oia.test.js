@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { renderOia, keyboardLocked } from "../public/oia.js";
+import { renderOia, cursorPosition, keyboardLocked } from "../public/oia.js";
 import { OiaModel } from "../server/oia.js";
 
 /**
@@ -31,6 +31,16 @@ test("the OIA line is exactly as wide as it was given and shows the lock", () =>
     text.trimEnd().endsWith("05/010"),
     `expected the cursor position in ${JSON.stringify(text)}`,
   );
+});
+
+test("the cursor position can be placed after the buttons", () => {
+  const cursor = { row: 4, col: 9 };
+  const left = renderOia(state({ insert: true }), null, 24);
+  const position = cursorPosition(cursor);
+  assert.equal(left.length, 24);
+  assert.match(left, /Insert/);
+  assert.doesNotMatch(left, /05\/010/);
+  assert.equal(position, "05/010");
 });
 
 test("a lock b3270 has no wording for still shows as one", () => {

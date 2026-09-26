@@ -1,11 +1,12 @@
 // A code is an identity: append only, never renumber, never reuse. E1xxx config,
 // E2xxx b3270, E3xxx session, E4xxx client, E5xxx browser, E6xxx transport, E7xxx REST.
-const ERRORS = Object.freeze({
+export const ERRORS = Object.freeze({
   E1001: "Config file could not be read",
   E1002: "Config file is not valid JSONC",
   E1003: "Config value has the wrong type",
   E1004: "Config value is out of range",
   E1005: "Config value is not a usable b3270 resource name",
+  E1006: "Code page is in the wrong config section",
 
   E2001: "b3270 could not be spawned",
   E2002: "b3270 exited unexpectedly",
@@ -26,11 +27,13 @@ const ERRORS = Object.freeze({
   E3010: "Only the session's owner may answer requests or stop sharing",
   E3011: "The session's owner did not let the viewer edit",
   E3012: "The session's owner took editing back",
+  E3013: "Session input queue is full",
 
   E4001: "WebSocket message was not valid JSON",
   E4002: "WebSocket message had an unknown type",
   E4003: "Pasted text is too large to type into a screen",
   E4004: "Oversize screen has more cells than b3270 can hold",
+  E4005: "Typed text is too large for one input",
 
   E5001: "Terminal renderer failed to initialise",
   E5002: "WebSocket connection to the server failed",
@@ -46,6 +49,30 @@ const ERRORS = Object.freeze({
   // E5012 is spent.
   E5013: "The keymap could not be read from the browser database",
   E5014: "A dropped session could not be restarted",
+  E5015: "A panel's command line held a command that panel does not know",
+  E5016: "A line command was typed on a line that does not take it",
+  E5017: "The text size is not a whole number in range",
+  E5018: "A key was named that no key is called",
+  E5019: "Connect was asked for with no host to connect to",
+  E5020: "A macro was given a blank name",
+  E5021: "Field background must be Y or N",
+  E5022: "Force max font size must be Y or N",
+  E5023: "Macro cursor position is invalid",
+  E5024: "A macro step must be one key",
+  E5025: "A macro step cannot be typed as free text",
+  E5026: "Recording step number is invalid",
+  E5027: "Recording has no steps",
+  E5028: "Recordings could not be saved to the browser database",
+  E5029: "Recordings could not be read from the browser database",
+  E5030: "Recording could not be imported",
+  E5031: "Recording file could not be read",
+  E5032: "Open sessions could not be loaded",
+  E5033: "No character was selected",
+  E5034: "Character code is not two hex digits",
+  E5035: "Character is not printable in this code page",
+  E5036: "A recording was given a blank name",
+  E5037: "Server sent a malformed WebSocket message",
+  E5038: "First terminal session could not be opened",
 
   E6001: "Static file not found",
   E6002: "WebSocket upgrade path is not a session",
@@ -54,6 +81,7 @@ const ERRORS = Object.freeze({
   E6005: "Log file could not be opened",
   E6006: "Log file could not be written or rolled over",
   // E6007-E6009 were the page inliner's, which is gone. Retired, not free.
+  E6010: "Viewer is too slow to receive the screen",
 
   // E7001 is spent.
   E7002: "REST is not available for this session",

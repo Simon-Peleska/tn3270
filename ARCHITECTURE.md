@@ -273,9 +273,8 @@ in `app.js` are the browser's download and file-picker APIs, which take an
 element or nothing at all, and neither one is ever visible. **Every piece of
 chrome — the panels, the error banner, the buttons on the OIA line — is drawn
 as cells into that same canvas, never as native HTML/DOM/CSS.**
-`settings.js` explains why at its own top: a second focus model, a second
-keybinding set, and a second fit-to-window problem are exactly the complexity
-this rule avoids. One renderer, one input path, one thing to keep sized and
+A second focus model, a second keybinding set and a second fit-to-window
+problem are exactly the complexity this rule avoids. One renderer, one input path, one thing to keep sized and
 focused.
 
 There is **one** canvas on the page, and it is the whole of the page's drawing
@@ -303,34 +302,38 @@ point into a `{pane, row, col}` to compare against where the chrome was drawn.
 
 ## Panels
 
-Since everything is drawn into a 3270 screen anyway, the dialogs are shaped like
-the ones a 3270 user already knows: ISPF panels. That is not decoration — it is
-where the whole interaction model comes from, and copying it is cheaper than
-inventing one. A title, `Option ===>` / `Command ===>`, dot leaders,
-`More: - +`, F1/F3/F4/F7/F8/F12, point-and-shoot options and `=n` jumps are a
-design nobody has to be taught.
+Since everything is drawn into a 3270 screen anyway, the dialogs are host
+applications, the way a 3270 user already knows them: a title, `Command ===>`,
+a one-cell field in front of each list line for `S`/`E`/`D`/`R`, F3/F4/F7/F8
+and `=n` jumps. Copying that is cheaper than inventing an interaction model,
+and nobody has to be taught it.
 
-`public/panel.js` owns the shape and `Panel` owns the behaviour: the command
-line, the cursor and its stops, scrolling, the PF keys, click routing, copy and
-paste. A page — `settings.js`, `macros.js`, `recorder.js`, `keymap-page.js`,
-`menu.js` — says what its `lines()` are and what picking one does, and gets all
-of that for free. Two hooks exist for the awkward 10%: `typed()` for a page's
-own editable field, and `override()` for a modal state (naming a macro, waiting
-for a key to bind) that has to take every keystroke before the generic handling.
+The panels speak the server's protocol, as JavaScript objects instead of JSON.
+`public/local-host.js` is a small 3270 host that runs in the page: it takes the
+same `text`, `action` and `paste` messages `send()` would put on the socket and
+answers with a full paint message, which `Grid.applyPaint` draws like any other.
+It owns the field logic — typing, insert, Tab, the erase keys, the cursor — so
+an application only has to say what is on the screen (`screen(rows, cols)`:
+texts and named fields) and what an AID key does with the field values
+(`aid(aid, values)`).
 
-`public/app.js` is the registry: it holds the pages, the `trail` of how the
-current one was reached, and the clipboard and click wiring that hands `Ctrl-C`
-/ `Ctrl-V` / a mouse click to whichever panel is open instead of to the host.
-`F3` pops one level of the trail, `F4` unwinds to the menu, a panel command
-starts a fresh one. Opening a panel is a keymap command like any other
-(`PANEL_COMMANDS` in `public/keymap.js`), claimed in the window's capture
-handler so it works from inside another panel as well as from the session.
-Nothing about navigation lives in a page.
+`public/panels.js` is that application. It keeps a stack of screens, turns each
+one into texts and fields, and on Enter commits any open edit field, then runs
+the command line or the line letters from top to bottom. Every screen is a list
+of items. An item says what each letter does on its line (`s`, `e`, `d`, `r`,
+or an `edit` that opens a field), so a new setting is one entry in `items()`.
+The state it changes lives outside it, in plain classes: `Settings`
+(`settings.js`), `Keymap` (`keymap.js`), `Macros` (`macros.js`) and `Recorder`
+(`recorder.js`). They know nothing about screens.
 
-Ctrl and Meta deliberately fall through `Panel.handleKey`, which is what keeps
-reload, devtools, copy and paste working while a panel is open. `panel.js` has
-no runtime import from `settings.js` — only an erased JSDoc `import()` for the
-`Theme` type — because the pages import it, and a cycle would be a real one.
+`public/app.js` coordinates sessions, drawing, and input. While a panel is open, typed text, actions,
+pastes and clicks go to `panels.receive` instead of `send`, copy reads the
+panel's grid, and `drawChrome()` puts `panels.paint()` on the overlay. The
+status row is drawn on top as always. Opening a panel is a keymap command like
+any other (`PANEL_COMMANDS` in `public/keymap.js`), claimed in the window's
+capture handler so it works from inside another panel as well as from the
+session. Ctrl and Meta combinations nothing binds fall through to the browser,
+which keeps reload and devtools working while a panel is open.
 
 ## Errors
 
@@ -395,8 +398,8 @@ indication has already been applied.
 
 ## Serving the page
 
-There is no bundler and no build step. The frontend is nineteen ES modules
-served as nineteen files — the same files `node --test` imports and the same
+There is no bundler and no build step. The frontend is eighteen ES modules
+served as eighteen files — the same files `node --test` imports and the same
 ones a browser gets opening `index.html` off disk. What a bundle would have
 bought is bought in `index.html` and `sendFile()` (`server/main.js`) instead,
 without anything standing between the source and what runs.
@@ -437,23 +440,27 @@ server/
   screen.js     ScreenModel: the authoritative shadow buffer
   paint.js      ScreenModel → paint messages (paintDelta and fullPaint)
   oia.js        OIA field state, as fields
-  session.js    Session, Viewer, SessionRegistry
+  session.js    Session and Viewer
+  registry.js   session creation, lookup, and limits
   protocol.js   wire typedefs and the action allow-list
   restproxy.js  forwards /3270/ to the session's own b3270 httpd
 
 public/
   index.html    the canvas, the inlined CSS, the preloads, and nothing else
-  app.js        sessions, panes, the panel registry, clipboard and clicks
+  app.js        sessions, panes, clipboard and clicks, routed to a panel when one is open
   grid.js       the cell buffer: applyPaint, put, rectangular text, the field under a cell
   hints.js      Ctrl-B's field hint letters
   paste.js      a paste split into one segment per stretch of editable cells
   canvas.js     Pane: two grids and a rectangle; Screen: the page's one canvas
   colors.js     3270 colour name → ANSI slot, gr → flags
   oia.js        the status line, composed from the last status and cursor
-  keymap.js     KeyboardEvent → 3270 action
-  panel.js      the ISPF panel frame and the Panel base class
-  menu.js       the primary option menu and the help panel
-  settings.js   macros.js  recorder.js  keymap-page.js   the panels
+  keymap.js     KeyboardEvent → 3270 action, and the Keymap the Keys panel edits
+  local-host.js a 3270 host in the page: messages in, paint messages out
+  paint-runs.js groups equal-style cells for host and panel paints
+  panels.js     the panels, a host application on local-host.js
+  settings.js   settings behavior; themes.js holds the static palettes
+  session-api.js browser calls to create and list sessions
+  macros.js  recorder.js   what the panels change
   sessions.js   the Ctrl-B prefix, the URL fragment, and how panes split the page
   reconnect.js  fitfont.js  store.js
 test/           fakehost.js, helpers.js, traces/, *.test.js

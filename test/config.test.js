@@ -109,6 +109,24 @@ test("any b3270 resource can be set, and reaches b3270 as a string", () => {
   });
 });
 
+test("a code page outside b3270.settings is rejected instead of ignored", () => {
+  for (const raw of [
+    { b3270: { codepage: "german" } },
+    { b3270: { codePage: "german" } },
+    { settings: { codePage: "german" } },
+  ]) {
+    assert.throws(
+      () => validateConfig(raw),
+      (err) => {
+        assert.ok(err instanceof AppError);
+        assert.equal(err.code, "E1006");
+        assert.match(err.message, /b3270\.settings\.codePage/);
+        return true;
+      },
+    );
+  }
+});
+
 test("a quiet host connection is kept open with a NOP every minute, unless the config says otherwise", () => {
   assert.deepEqual(validateConfig({}).b3270.settings, { nopSeconds: "60" });
   assert.deepEqual(
@@ -173,6 +191,17 @@ test("well-formed client messages are parsed", () => {
     type: "text",
     value: "abc",
   });
+  assert.throws(
+    () =>
+      parseClientMessage(
+        JSON.stringify({ type: "text", value: "x".repeat(16385) }),
+      ),
+    (err) => {
+      assert.ok(err instanceof AppError);
+      assert.equal(err.code, "E4005");
+      return true;
+    },
+  );
   const paste = {
     type: "paste",
     text: "a\nb",

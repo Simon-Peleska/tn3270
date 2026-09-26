@@ -3,12 +3,125 @@ import assert from "node:assert/strict";
 import {
   mapKey,
   buildLookup,
+  comboLabel,
+  parseCombo,
+  Keymap,
+  ComboCapture,
+  macroInputForEvent,
   withDefaults,
   DEFAULT_BINDINGS,
 } from "../public/keymap.js";
 import { key } from "./keyevent.js";
 
 const lookup = buildLookup(DEFAULT_BINDINGS);
+
+test("the menu, keyboard, and recorder shortcuts are client commands", () => {
+  for (const [letter, command] of [
+    ["m", "Menu"],
+    ["k", "ToggleKeyboard"],
+    ["e", "ToggleRecording"],
+  ]) {
+    assert.deepEqual(
+      mapKey(
+        key({ key: letter, code: `Key${letter.toUpperCase()}`, ctrlKey: true }),
+        lookup,
+      ),
+      { kind: "client", command },
+    );
+  }
+  const keymap = new Keymap(() => {});
+  assert.equal(keymap.labelFor("Menu"), "Ctrl+M");
+  assert.equal(keymap.labelFor("ToggleKeyboard"), "Ctrl+K");
+  assert.equal(keymap.labelFor("ToggleRecording"), "Ctrl+E");
+});
+
+test("Alt-C opens the character picker as an editable client command", () => {
+  assert.deepEqual(
+    mapKey(key({ key: "c", code: "KeyC", altKey: true }), lookup),
+    { kind: "client", command: "OpenChars" },
+  );
+  const keymap = new Keymap(() => {});
+  assert.equal(keymap.labelFor("OpenChars"), "Alt+C");
+});
+
+test("Ctrl-Y and Ctrl-N answer sharing requests as client commands", () => {
+  for (const [letter, command] of [
+    ["y", "AnswerYes"],
+    ["n", "AnswerNo"],
+  ]) {
+    assert.deepEqual(
+      mapKey(
+        key({ key: letter, code: `Key${letter.toUpperCase()}`, ctrlKey: true }),
+        lookup,
+      ),
+      { kind: "client", command },
+    );
+  }
+  const keymap = new Keymap(() => {});
+  assert.equal(keymap.labelFor("AnswerYes"), "Ctrl+Y");
+  assert.equal(keymap.labelFor("AnswerNo"), "Ctrl+N");
+});
+
+test("sharing controls have editable client key bindings", () => {
+  for (const [letter, command] of [
+    ["e", "AskEdit"],
+    ["s", "StopSharing"],
+    ["x", "StopEditing"],
+  ]) {
+    assert.deepEqual(
+      mapKey(
+        key({
+          key: letter.toUpperCase(),
+          code: `Key${letter.toUpperCase()}`,
+          ctrlKey: true,
+          shiftKey: true,
+        }),
+        lookup,
+      ),
+      { kind: "client", command },
+    );
+  }
+  const keymap = new Keymap(() => {});
+  assert.equal(keymap.labelFor("AskEdit"), "Ctrl+Shift+E");
+  assert.equal(keymap.labelFor("StopSharing"), "Ctrl+Shift+S");
+  assert.equal(keymap.labelFor("StopEditing"), "Ctrl+Shift+X");
+});
+
+test("macro capture takes printable keys and host actions, with F5 reserved for exit", () => {
+  assert.deepEqual(
+    macroInputForEvent(key({ key: "a", code: "KeyA" }), lookup),
+    {
+      kind: "text",
+      value: "a",
+    },
+  );
+  assert.deepEqual(
+    macroInputForEvent(key({ key: "ü", code: "BracketLeft" }), lookup),
+    {
+      kind: "text",
+      value: "ü",
+    },
+  );
+  assert.deepEqual(
+    macroInputForEvent(key({ key: "Tab", code: "Tab" }), lookup),
+    {
+      kind: "action",
+      action: "Tab",
+      args: [],
+    },
+  );
+  assert.deepEqual(macroInputForEvent(key({ key: "F5", code: "F5" }), lookup), {
+    kind: "exit",
+  });
+  assert.deepEqual(
+    macroInputForEvent(key({ key: "F5", code: "F5", shiftKey: true }), lookup),
+    { kind: "action", action: "PF", args: ["5"] },
+  );
+  assert.equal(
+    macroInputForEvent(key({ key: "F5", code: "F5", repeat: true }), lookup),
+    null,
+  );
+});
 
 test("the 3270 key positions are kept: right Ctrl is Enter, Enter is New line", () => {
   assert.deepEqual(
@@ -124,10 +237,10 @@ test("a binding follows the character printed on the key, not its place on the b
     mapKey(key({ key: "z", code: "KeyY", ctrlKey: true }), lookup),
     { kind: "action", action: "Undo", args: [] },
   );
-  // And the key marked Y, in the US Z position, is not it.
-  assert.equal(
+  // And the key marked Y, in the US Z position, answers a request, not Undo.
+  assert.deepEqual(
     mapKey(key({ key: "y", code: "KeyZ", ctrlKey: true }), lookup),
-    null,
+    { kind: "client", command: "AnswerYes" },
   );
 });
 
@@ -427,4 +540,125 @@ test("rebinding a combo to a new command steals it from whatever had it, at the 
     action: "Clear",
     args: [],
   });
+});
+
+test("every default key typed in by the name it is shown by comes back as the same key", () => {
+  for (const combos of Object.values(DEFAULT_BINDINGS))
+    for (const combo of combos)
+      assert.deepEqual(parseCombo(comboLabel(combo)), combo, comboLabel(combo));
+});
+
+test("a key name is read without regard to case, and one nobody knows is refused", () => {
+  assert.deepEqual(parseCombo("rctrl"), {
+    key: "ControlRight",
+    ctrl: true,
+    shift: false,
+    alt: false,
+  });
+  assert.deepEqual(parseCombo("ctrl+shift+f1"), {
+    key: "F1",
+    ctrl: true,
+    shift: true,
+    alt: false,
+  });
+  assert.deepEqual(parseCombo("Alt++"), {
+    key: "+",
+    ctrl: false,
+    shift: false,
+    alt: true,
+  });
+  assert.equal(parseCombo("Ctrl+Nope"), null);
+  assert.equal(parseCombo("Hyper+A"), null);
+  assert.equal(parseCombo(""), null);
+});
+
+test("a key given to a command is taken from whatever had it, and only changes are saved", () => {
+  /** @type {import('../public/keymap.js').Bindings[]} */
+  const saved = [];
+  const keymap = new Keymap((bindings) => saved.push(bindings));
+  const escape = { key: "Escape", ctrl: false, shift: false, alt: false };
+
+  keymap.setCombo("Clear", 1, escape);
+  assert.deepEqual(keymap.combosFor("Attn"), []);
+  assert.equal(keymap.lookup().get(":Escape"), "Clear");
+  assert.deepEqual(saved.at(-1), {
+    Attn: [],
+    Clear: [DEFAULT_BINDINGS.Clear[0], escape],
+  });
+
+  keymap.removeCombo("Clear", 0);
+  assert.deepEqual(keymap.combosFor("Clear"), [escape]);
+
+  keymap.resetCommand("Clear");
+  keymap.resetCommand("Attn");
+  assert.deepEqual(saved.at(-1), {});
+});
+
+test("unbinding a command empties it, and a macro's entry goes altogether", () => {
+  const keymap = new Keymap(() => {});
+  const f5 = { key: "F5", ctrl: true, shift: false, alt: false };
+  keymap.setCombo("Macro:Logon", 0, f5);
+  keymap.unbind("Macro:Logon");
+  assert.equal("Macro:Logon" in keymap.bindings, false);
+  keymap.unbind("Attn");
+  assert.deepEqual(keymap.combosFor("Attn"), []);
+  keymap.resetAll();
+  assert.equal(keymap.labelFor("Attn"), "Esc");
+});
+
+test("a key pressed into a key field is picked whole, modifiers and all", () => {
+  const capture = new ComboCapture();
+  assert.equal(
+    capture.keydown(
+      key({ key: "Control", code: "ControlLeft", ctrlKey: true }),
+      lookup,
+    ),
+    "held",
+  );
+  assert.deepEqual(
+    capture.keydown(key({ key: "F1", ctrlKey: true, shiftKey: true }), lookup),
+    { key: "F1", ctrl: true, shift: true, alt: false },
+  );
+  assert.equal(
+    capture.keyup(key({ key: "Control", code: "ControlLeft" })),
+    null,
+    "Ctrl went down on the way to F1, so it is not a key of its own",
+  );
+  assert.deepEqual(
+    capture.keydown(key({ key: "m", code: "KeyM", altKey: true }), lookup),
+    { key: "M", ctrl: false, shift: false, alt: true },
+    "a panel shortcut is picked, not obeyed",
+  );
+});
+
+test("a modifier let go on its own is picked on its keyup", () => {
+  const capture = new ComboCapture();
+  capture.keydown(key({ key: "Alt", code: "AltLeft", altKey: true }), lookup);
+  assert.deepEqual(capture.keyup(key({ key: "Alt", code: "AltLeft" })), {
+    key: "AltLeft",
+    ctrl: false,
+    shift: false,
+    alt: true,
+  });
+});
+
+test("in a key field, typing, editing, Enter and leaving still work", () => {
+  const capture = new ComboCapture();
+  for (const init of [
+    { key: "a", code: "KeyA" },
+    { key: "A", code: "KeyA", shiftKey: true },
+    { key: "Backspace" },
+    { key: "ArrowLeft" },
+    { key: "Tab" },
+    { key: "End" },
+    { key: "Escape" },
+    { key: "F3" },
+    { key: "Control", code: "ControlRight", ctrlKey: true },
+    { key: "\\", code: "Minus", ctrlKey: true, altKey: true, altGraph: true },
+  ])
+    assert.equal(
+      capture.keydown(key(init), lookup),
+      null,
+      JSON.stringify(init),
+    );
 });

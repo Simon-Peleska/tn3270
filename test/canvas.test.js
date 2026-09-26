@@ -190,6 +190,25 @@ const THEME = {
 
 const PAGE = { width: 1600, height: 900 };
 
+test("screen layout respects a font size cap but shrinks further when needed", () => {
+  const screen = new Screen({
+    canvas: fakeCanvas(),
+    theme: THEME,
+    fieldBackground: true,
+  });
+  const pane = new Pane(80, 24);
+  screen.layout([pane], paneShares(1), PAGE, "monospace", 16);
+  assert.equal(pane.fontSize, 16);
+  screen.layout(
+    [pane],
+    paneShares(1),
+    { width: 700, height: 350 },
+    "monospace",
+    16,
+  );
+  assert.ok(pane.fontSize < 16);
+});
+
 /**
  * @param {number} count how many panes share the page
  * @returns {{ screen: Screen, panes: Pane[] }} laid out, with text on each
@@ -471,6 +490,19 @@ test("a drag of more than one cell is a selection, blank or not", () => {
     true,
     "blank cells are still a selection",
   );
+});
+
+test("a selection copies what is on screen, a panel over the host included", () => {
+  const { screen, panes } = pageOf(1);
+  panes[0].overlay.put(2, 0, "PA", { fg: "red", bg: "blue", gr: null });
+
+  mouse(screen, "mousedown", panes[0], 2, 0);
+  mouse(screen, "mousemove", panes[0], 2, 3);
+  mouse(screen, "mouseup", panes[0], 2, 3);
+
+  assert.equal(panes[0].getSelection(), "PANE");
+  panes[0].overlay.put(2, 0, "XY", { fg: "red", bg: "blue", gr: null });
+  assert.equal(panes[0].getSelection(), "XYNE");
 });
 
 test("a new press takes the previous selection off the screen", () => {

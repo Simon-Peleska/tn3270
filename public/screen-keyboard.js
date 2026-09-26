@@ -1,5 +1,5 @@
 /**
- * The on-screen keyboard: the host keys a PC keyboard has no key for, as rows of
+ * The on-screen keyboard: host keys and the character picker as rows of
  * buttons drawn over the screen. Laid out here and nowhere else, so the keys
  * that are drawn and the keys that are clicked cannot drift apart.
  *
@@ -7,7 +7,7 @@
  * @typedef {HostKey & { row: number, col: number }} PlacedKey
  */
 
-/** Every key is one or two cells of this many columns, so the rows line up. */
+/** PF keys use fixed cells; the other rows fit their labels with one gap. */
 const CELL = 6;
 const KEYBOARD_WIDTH = 12 * CELL;
 
@@ -18,13 +18,19 @@ const KEYBOARD_WIDTH = 12 * CELL;
  * @returns {HostKey}
  */
 function hostKey(label, action, args = []) {
-  const cells = `[${label}]`.length > CELL ? 2 : 1;
-  return { label, action, args, width: cells * CELL };
+  const width =
+    action === "PF"
+      ? CELL
+      : action === "OpenChars"
+        ? 12
+        : Math.max(CELL, `[${label}]`.length + 1);
+  return { label, action, args, width };
 }
 
 /** @type {readonly (readonly HostKey[])[]} */
 export const KEY_ROWS = Object.freeze([
   [
+    hostKey("Chars", "OpenChars"),
     hostKey("Enter", "Enter"),
     hostKey("Clear", "Clear"),
     hostKey("Reset", "Reset"),
@@ -53,15 +59,15 @@ export const KEY_ROWS = Object.freeze([
 ]);
 
 /**
- * The keyboard sits on the bottom rows of the screen, and moves to the top when
- * the cursor is under it, so what is being typed stays in view.
+ * The keyboard leaves the last screen row visible for the panel's key hints,
+ * and moves to the top when the cursor is under it.
  *
  * @param {number} rows the host screen's rows
  * @param {number} cursorRow
  * @returns {number} the first screen row the keyboard covers
  */
 export function keyboardTop(rows, cursorRow) {
-  const bottom = rows - KEY_ROWS.length;
+  const bottom = rows - KEY_ROWS.length - 1;
   return cursorRow >= bottom ? 0 : bottom;
 }
 
@@ -75,7 +81,8 @@ export function placeKeys(cols, top) {
   /** @type {PlacedKey[]} */
   const placed = [];
   KEY_ROWS.forEach((keys, index) => {
-    let col = left;
+    const width = keys.reduce((total, key) => total + key.width, 0);
+    let col = left + Math.floor((KEYBOARD_WIDTH - width) / 2);
     for (const key of keys) {
       placed.push({ ...key, row: top + index, col });
       col += key.width;
@@ -100,8 +107,14 @@ export function keyAt(placed, row, col) {
 
 /**
  * @param {PlacedKey} key
+ * @param {string} [hint]
  * @returns {string} `[label]`, like the buttons on the status row
  */
-export function keyFace(key) {
-  return `[${key.label}]`.padEnd(key.width);
+export function keyFace(key, hint = "") {
+  const withHint = hint === "" ? "" : `[${key.label} ${hint}]`;
+  const face =
+    withHint !== "" && withHint.length <= key.width
+      ? withHint
+      : `[${key.label}]`;
+  return face.padEnd(key.width);
 }

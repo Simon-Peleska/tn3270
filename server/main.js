@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { WebSocketServer } from "ws";
 import { loadConfig } from "./config.js";
 import { setLogFile, setLogLevel, logger } from "./log.js";
-import { SessionRegistry } from "./session.js";
+import { SessionRegistry } from "./registry.js";
 import { parseClientMessage } from "./protocol.js";
 import { AppError, describeError } from "./errors.js";
 import { proxyRestRequest } from "./restproxy.js";
@@ -175,6 +175,13 @@ async function handleRequest(req, res) {
 }
 
 const server = createServer((req, res) => {
+  res.on("finish", () => {
+    log.info("response", {
+      method: req.method ?? "",
+      path: req.url ?? "",
+      status: res.statusCode,
+    });
+  });
   handleRequest(req, res).catch((err) => {
     const { code, summary } = describeError(err);
     log.error(err, { path: req.url ?? "" });
@@ -186,7 +193,8 @@ const server = createServer((req, res) => {
   });
 });
 
-const wss = new WebSocketServer({ noServer: true });
+const wss = new WebSocketServer({ noServer: true, maxPayload: 65536 });
+const MAX_VIEWER_BUFFERED_BYTES = 1024 * 1024;
 
 server.on("upgrade", (req, socket, head) => {
   const url = new URL(
@@ -241,7 +249,15 @@ function attachViewer(session, ws, client, pass) {
     user: client.user,
     pass,
     sendMessage(message) {
-      if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(message));
+      if (ws.readyState !== ws.OPEN) return;
+      if (ws.bufferedAmount > MAX_VIEWER_BUFFERED_BYTES) {
+        viewerLog.error(new AppError("E6010", viewer.id), {
+          bufferedBytes: ws.bufferedAmount,
+        });
+        ws.close(1013, "E6010");
+        return;
+      }
+      ws.send(JSON.stringify(message));
     },
     close() {
       ws.close(1008, "refused");

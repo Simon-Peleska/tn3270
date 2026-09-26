@@ -1,23 +1,26 @@
 import { Pane, Screen } from "./canvas.js";
-import { renderOia, keyboardLocked } from "./oia.js";
+import { renderOia, cursorPosition, keyboardLocked } from "./oia.js";
 import {
+  ComboCapture,
+  Keymap,
   PANEL_COMMANDS,
   commandForEvent,
   isMacroCommand,
+  macroInputForEvent,
   mapKey,
 } from "./keymap.js";
-import { paint } from "./panel.js";
 import { keyAt, keyFace, keyboardTop, placeKeys } from "./screen-keyboard.js";
-import { HelpPage, MenuPage } from "./menu.js";
-import { SettingsPage, modeOversize } from "./settings.js";
-import { MacrosPage } from "./macros.js";
-import { RecorderPage } from "./recorder.js";
-import { KeymapPage } from "./keymap-page.js";
+import { Settings, modeOversize } from "./settings.js";
+import { Macros } from "./macros.js";
+import { Recorder } from "./recorder.js";
+import { Panels } from "./panels.js";
 import {
   loadSettings,
   saveSettings,
   loadMacros,
   saveMacros,
+  loadRecordings,
+  saveRecordings,
   loadKeymap,
   saveKeymap,
 } from "./store.js";
@@ -30,8 +33,23 @@ import {
   switcherText,
 } from "./sessions.js";
 import { backoffDelay, reconnectStep } from "./reconnect.js";
+import {
+  createSessionRequest,
+  listSessions,
+  liveSessionIds,
+} from "./session-api.js";
 import { computeHints } from "./hints.js";
 import { pasteMessage } from "./paste.js";
+
+/**
+ * @param {string} fg
+ * @param {string} bg
+ * @param {boolean} [bold]
+ * @returns {import('./grid.js').Style}
+ */
+function paint(fg, bg, bold = false) {
+  return { fg, bg, gr: bold ? "highlight" : null };
+}
 
 /**
  * @param {string} id
@@ -50,6 +68,9 @@ const screenEl = element("screen");
 const canvasEl = element("canvas");
 if (!(canvasEl instanceof HTMLCanvasElement))
   throw new Error("#canvas is not a canvas");
+const importInput = element("recording-import");
+if (!(importInput instanceof HTMLInputElement))
+  throw new Error("#recording-import is not a file input");
 
 /**
  * One canvas for the whole page. Every session is a rectangle on it, and every
@@ -69,10 +90,28 @@ let keyboardShown = false;
  * @property {() => void} press
  */
 
+/** @param {string} command */
+function shortKey(command) {
+  return keymap
+    .labelFor(command)
+    .toLowerCase()
+    .replaceAll("+", "-")
+    .replace("ctrl", "c")
+    .replace("shift", "s")
+    .replace("alt", "a");
+}
+
+/** @param {string} command @param {string} label */
+function statusLabel(command, label) {
+  const key = shortKey(command);
+  return key === "" ? label : `${key}=${label}`;
+}
+
 /**
  * The buttons at the right end of the status row, which this page lays out
  * whole. The menu is the way to every panel, so one button reaches all of
- * them; left of it come whatever sharing asks of this viewer. `drawChrome`
+ * them; then the keyboard and the recorder, and left of those whatever
+ * sharing asks of this viewer. `drawChrome`
  * puts them where this says and `canvasClicked` hit-tests the same list, so
  * the row that is drawn and the row that is clickable cannot drift apart.
  *
@@ -83,13 +122,21 @@ let keyboardShown = false;
 function statusButtons(slot, cols) {
   /** @type {{ label: string, press: () => void }[]} */
   const wanted = [
-    { label: "[Menu]", press: () => startPanel("menu") },
     {
-      label: "[Kbd]",
-      press: () => {
-        keyboardShown = !keyboardShown;
-        redraw();
-      },
+      label: statusLabel("Menu", "Menu"),
+      press: () => panels.toggle("menu"),
+    },
+    {
+      label: statusLabel("ToggleKeyboard", "Kbd"),
+      press: toggleKeyboard,
+    },
+    {
+      label: recorder.stopping
+        ? "Saving"
+        : recorder.active
+          ? statusLabel("ToggleRecording", "Stop")
+          : statusLabel("ToggleRecording", "Rec"),
+      press: toggleRecording,
     },
   ];
   const request = slot.requests[0];
@@ -97,40 +144,54 @@ function statusButtons(slot, cols) {
     // Nothing to share and nothing to ask for.
   } else if (request !== undefined) {
     wanted.push({
-      label: "[No]",
+      label: statusLabel("AnswerNo", "No"),
       press: () => answerRequest(slot, request, false),
     });
     wanted.push({
-      label: "[Yes]",
+      label: statusLabel("AnswerYes", "Yes"),
       press: () => answerRequest(slot, request, true),
     });
   } else if (slot.owner) {
     if (slot.editor !== null)
       wanted.push({
-        label: "[Stop editing]",
+        label: statusLabel("StopEditing", "X edit"),
         press: () => sendTo(slot, { type: "stopEditing" }),
       });
     if (slot.guests > 0)
       wanted.push({
-        label: "[Stop sharing]",
+        label: statusLabel("StopSharing", "X shr"),
         press: () => sendTo(slot, { type: "stopSharing" }),
       });
   } else if (slot.role === "observer" && !slot.editRequested) {
     wanted.push({
-      label: "[Edit]",
+      label: statusLabel("AskEdit", "Edit"),
       press: () => sendTo(slot, { type: "askEdit" }),
     });
   }
 
   /** @type {StatusButton[]} */
   const placed = [];
-  let col = cols;
+  const cursor = slot.pane?.overlay.cursor ??
+    slot.pane?.host.cursor ?? { row: 0, col: 0 };
+  let col = cols - cursorPosition(cursor).length - 2;
   for (const button of wanted) {
     col -= button.label.length;
     placed.push({ ...button, col });
     col -= 1;
   }
   return placed;
+}
+
+function toggleKeyboard() {
+  keyboardShown = !keyboardShown;
+  redraw();
+}
+
+function toggleRecording() {
+  if (recorder.stopping) return;
+  if (recorder.active) recorder.stop();
+  else recorder.start();
+  redraw();
 }
 
 /**
@@ -171,7 +232,9 @@ function answerRequest(slot, request, allow) {
  * @returns {import('./screen-keyboard.js').PlacedKey[]}
  */
 function keyboardKeys(canvas) {
-  const cursorRow = canvas.host.cursor?.row ?? 0;
+  const cursorRow = panels.isOpen()
+    ? (canvas.overlay.cursor?.row ?? 0)
+    : (canvas.host.cursor?.row ?? 0);
   return placeKeys(canvas.cols, keyboardTop(canvas.rows, cursorRow));
 }
 
@@ -181,9 +244,9 @@ let activeError = null;
 let errorTimer;
 
 /**
- * Everything this page draws over the screen: a panel across all of it, or the
- * status row under it, and then the switcher bar, an error and the hint letters
- * on top of either. The host's own grid is never touched, so taking the overlay
+ * Everything this page draws over the screen: the panels' own host screen
+ * across all of it, the status row under it, and then the switcher bar, an
+ * error and the hint letters on top. The host's own grid is never touched, so taking the overlay
  * off puts the screen back without asking the server for it again.
  *
  * @param {SessionSlot} slot
@@ -194,8 +257,6 @@ function drawChrome(slot) {
   if (canvas === null) return;
   const overlay = canvas.overlay;
   const bottom = canvas.statusRow;
-  const buttons = statusButtons(slot, canvas.cols);
-  const buttonsStart = buttons.at(-1)?.col ?? canvas.cols;
   const colors = settings.theme().colors;
   const background = colors["background"] ?? "#000000";
   const foreground = colors["foreground"] ?? "#00ff00";
@@ -203,30 +264,59 @@ function drawChrome(slot) {
   const statusBar = colors.statusBackground;
   /** @param {string} text */
   const wide = (text) => text.slice(0, canvas.cols).padEnd(canvas.cols, " ");
+  const statusWidth = Math.max(0, canvas.cols - 2);
+  /** @param {string} text */
+  const statusText = (text) =>
+    text.slice(0, statusWidth).padEnd(statusWidth, " ");
 
   overlay.clear();
   const onScreen = slot === activeSession();
-  const panel = onScreen ? openPanel() : null;
-
-  if (panel !== null) panel.drawInto(overlay);
-  else {
-    const style = paint(statusInk, statusBar);
-    const loud = paint(statusInk, statusBar, true);
-    const cursor = canvas.host.cursor ?? { row: 0, col: 0 };
-    const width = buttonsStart - 1;
-    const said = sharingText(slot);
-    overlay.put(bottom, 0, wide(""), style);
-    if (said === null)
-      overlay.put(bottom, 0, renderOia(oiaState(slot), cursor, width), style);
-    else overlay.put(bottom, 0, said.slice(0, width), loud);
-    for (const button of buttons)
-      overlay.put(bottom, button.col, button.label, loud);
+  const panel = onScreen && panels.isOpen();
+  if (panel) {
+    const painted = panels.paint(canvas.rows, canvas.cols);
+    overlay.applyPaint(
+      panels.pickingMacroCursor()
+        ? {
+            ...painted,
+            full: false,
+            rows: painted.rows.filter(
+              (row) =>
+                row.row < 3 ||
+                (panels.message !== "" && row.row === canvas.rows - 3),
+            ),
+          }
+        : painted,
+    );
   }
+  const insert = panel ? panels.host.insert : slot.insert;
+  canvas.cursorStyle = insert ? "underline" : "block";
+
+  const style = paint(statusInk, statusBar);
+  const loud = paint(statusInk, statusBar, true);
+  const cursor = overlay.cursor ?? canvas.host.cursor ?? { row: 0, col: 0 };
+  const position = cursorPosition(cursor);
+  const positionCol = canvas.cols - position.length - 1;
+  const buttons = statusButtons(slot, canvas.cols);
+  const buttonsStart = buttons.at(-1)?.col ?? positionCol - 1;
+  const width = Math.max(0, buttonsStart - 2);
+  const said = sharingText(slot);
+  overlay.put(bottom, 0, wide(""), style);
+  if (said === null)
+    overlay.put(
+      bottom,
+      1,
+      renderOia({ ...oiaState(slot), insert }, null, width),
+      style,
+    );
+  else overlay.put(bottom, 1, said.slice(0, width), loud);
+  for (const button of buttons)
+    overlay.put(bottom, button.col, button.label, loud);
+  overlay.put(bottom, positionCol, position, style);
 
   // Everything below belongs to the session being looked at, not to every pane.
   if (!onScreen) return;
 
-  if (keyboardShown && panel === null) {
+  if (keyboardShown) {
     const keys = keyboardKeys(canvas);
     const rows = new Set(keys.map((key) => key.row));
     for (const row of rows)
@@ -235,30 +325,35 @@ function drawChrome(slot) {
       overlay.put(
         key.row,
         key.col,
-        keyFace(key),
+        keyFace(key, key.action === "OpenChars" ? shortKey("OpenChars") : ""),
         paint(foreground, background, true),
       );
   }
 
-  if (activeError !== null)
+  if (activeError !== null) {
+    const errorStyle = paint("#ffd9d9", "#3a1d20", true);
+    overlay.put(bottom, 0, wide(""), errorStyle);
     overlay.put(
       bottom,
-      0,
-      wide(`[${activeError.code}] ${activeError.message}`),
-      paint("#ffd9d9", "#3a1d20", true),
+      1,
+      statusText(`[${activeError.code}] ${activeError.message}`),
+      errorStyle,
     );
-  else if (prefix.armed)
+  } else if (prefix.armed) {
+    const switcherStyle = paint(background, foreground, true);
+    overlay.put(bottom, 0, wide(""), switcherStyle);
     overlay.put(
       bottom,
-      0,
-      wide(
+      1,
+      statusText(
         switcherText(
           sessions.map((each) => each?.id ?? null),
           active,
         ),
       ),
-      paint(background, foreground, true),
+      switcherStyle,
     );
+  }
 
   if (prefix.armed)
     for (const hint of hints)
@@ -327,10 +422,12 @@ function oiaState(slot) {
 /**
  * @param {string} code
  * @param {string} message
+ * @param {unknown} [cause]
  * @returns {void}
  */
-function showError(code, message) {
-  console.error(`[${code}] ${message}`);
+function showError(code, message, cause) {
+  if (cause === undefined) console.error(`[${code}] ${message}`);
+  else console.error(`[${code}] ${message}`, cause);
   activeError = { code, message };
   if (errorTimer !== undefined) clearTimeout(errorTimer);
   errorTimer = setTimeout(clearError, 6000);
@@ -350,31 +447,12 @@ const DEFAULT_IDLE_TIMEOUT_MS = 300000;
 
 /** @returns {Promise<{ id: string, rows: number, cols: number }>} */
 async function createSession() {
-  const response = await fetch("./api/sessions", { method: "POST" });
-  const body = await response.json();
-  if (!response.ok)
-    throw new Error(
-      `[${body.code ?? "E0000"}] ${body.message ?? "could not create a session"}`,
-    );
+  const body = await createSessionRequest();
   // This tab opened it, so the size saved here is its to ask for; one attached
   // to by id belongs to whoever is in it. Kept past a reload, which comes
   // before the hello that asks when the server was restarted.
   sessionStorage.setItem(`tn3270.unsized.${body.id}`, "1");
   return body;
-}
-
-/** @returns {Promise<Set<string> | null>} null when the server did not answer */
-async function liveSessionIds() {
-  try {
-    const response = await fetch("./api/sessions");
-    if (!response.ok) return null;
-    const body = await response.json();
-    return new Set(
-      (body.sessions ?? []).map((/** @type {{ id: string }} */ s) => s.id),
-    );
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -392,6 +470,9 @@ async function liveSessionIds() {
  *   the server never reaps
  * @property {number} idleTimeoutMs
  * @property {number} model
+ * @property {import('../server/b3270.js').ModelInfo[]} models
+ * @property {boolean} hostLocked
+ * @property {string} codePage
  * @property {string} oversize
  * @property {number} cols
  * @property {number} rows the host's screen; the status row is not the host's
@@ -437,6 +518,15 @@ function activePane() {
   return activeSession()?.pane ?? null;
 }
 
+/** @param {SessionSlot} slot */
+function syncActiveSettings(slot) {
+  settings.model = slot.model;
+  settings.oversize = slot.oversize;
+  settings.connected = slot.connected === true;
+  settings.models = slot.models;
+  settings.hostLocked = slot.hostLocked;
+}
+
 /**
  * @param {string} id
  * @param {number} cols
@@ -453,6 +543,9 @@ function newSlot(id, cols = 0, rows = 0) {
     reconnectUntil: null,
     idleTimeoutMs: DEFAULT_IDLE_TIMEOUT_MS,
     model: 0,
+    models: [],
+    hostLocked: false,
+    codePage: "bracket",
     oversize: "",
     cols,
     rows,
@@ -487,10 +580,6 @@ function writeHash() {
 function connectHost(host) {
   if (host === null) {
     send({ type: "connect", host: null });
-    return;
-  }
-  if (host === "") {
-    showError("E5002", "Enter a host as name:port first.");
     return;
   }
   localStorage.setItem("tn3270.host", host);
@@ -531,23 +620,59 @@ function downloadFile(filename, content) {
   URL.revokeObjectURL(url);
 }
 
-/**
- * What every panel needs to draw itself and to hand the screen on: the rest of
- * each page's deps are its own.
- *
- * @type {import('./panel.js').PanelDeps}
- */
-const panelIo = {
-  redraw,
-  theme: () => settings.theme(),
-  end: () => endPanel(),
-  go: (id) => goPanel(id),
-  keyCommand: (event) => commandForEvent(event, keymap.lookup()),
-  keyName: (commandId) => keymap.labelFor(commandId),
-};
+const settings = new Settings((values) => {
+  saveSettings(values).catch((cause) => {
+    showError("E5004", "Settings could not be saved in this browser.", cause);
+  });
+});
 
-const settings = new SettingsPage({
-  ...panelIo,
+const keymap = new Keymap((bindings) => {
+  saveKeymap(bindings).catch((cause) => {
+    showError("E5011", "The keymap could not be saved in this browser.", cause);
+  });
+});
+
+const macros = new Macros({
+  dispatch: (message) => sendTo(activeSession(), message),
+  paste: (text) => sendTo(activeSession(), pasteFor(activeSession(), text)),
+  waitForUnlock: () => waitForUnlock(activeSession()),
+  persist: (values) => {
+    saveMacros(values).catch((cause) => {
+      showError("E5009", "Macros could not be saved in this browser.", cause);
+    });
+  },
+  keymap,
+  redraw,
+});
+
+/** @type {SessionSlot | null} */
+let recordingSlot = null;
+const recorder = new Recorder({
+  dispatch: (message) => {
+    if (message.type === "recorder" && message.action === "start")
+      recordingSlot = activeSession();
+    sendTo(recordingSlot, message);
+  },
+  exportFile: downloadFile,
+  persist: (values) => {
+    saveRecordings(values).catch((cause) => {
+      showError(
+        "E5028",
+        "Recordings could not be saved in this browser.",
+        cause,
+      );
+    });
+  },
+});
+
+const capture = new ComboCapture();
+const panels = new Panels({
+  settings,
+  codePage: () => activeSession()?.codePage ?? "bracket",
+  keymap,
+  macros,
+  recorder,
+  redraw,
   applyTheme,
   applyFont,
   applyFieldBackground: (enabled) => {
@@ -561,126 +686,43 @@ const settings = new SettingsPage({
     return slot === null ? null : paneFit(slot, fontSize);
   },
   connect: connectHost,
-  persist: (values) => {
-    saveSettings(values).catch((cause) => {
-      showError(
-        "E5004",
-        `Settings could not be saved in this browser: ${String(cause)}`,
-      );
-    });
+  importRecording: () => importInput.click(),
+  listSessions,
+  joinSession: (id) => {
+    window.open(`./#${id}`, "_blank", "noopener");
+  },
+  insertCharacter: (character) => {
+    if (panels.isOpen()) panels.receive({ type: "text", value: character });
+    else send({ type: "text", value: character });
   },
 });
 
-const macros = new MacrosPage({
-  ...panelIo,
-  dispatch: (message) => sendTo(activeSession(), message),
-  paste: (text) => sendTo(activeSession(), pasteFor(activeSession(), text)),
-  waitForUnlock: () => waitForUnlock(activeSession()),
-  persist: (values) => {
-    saveMacros(values).catch((cause) => {
-      showError(
-        "E5009",
-        `Macros could not be saved in this browser: ${String(cause)}`,
-      );
-    });
-  },
-  setKey: (commandId, combo) => keymap.setKey(commandId, combo),
-  renameKey: (from, to) => keymap.renameCommand(from, to),
-});
-
-const recorder = new RecorderPage({
-  ...panelIo,
-  dispatch: (message) => sendTo(activeSession(), message),
-  exportFile: downloadFile,
-});
-
-const keymap = new KeymapPage({
-  ...panelIo,
-  persist: (bindings) => {
-    saveKeymap(bindings).catch((cause) => {
-      showError(
-        "E5011",
-        `The keymap could not be saved in this browser: ${String(cause)}`,
-      );
-    });
-  },
-  macroNames: () => macros.macros.map((macro) => macro.name),
-});
-
-const menu = new MenuPage(panelIo);
-const help = new HelpPage(panelIo);
-
-const panels = [menu, settings, macros, recorder, keymap, help];
-
-/** @type {string[]} the panels walked through to get here, oldest first */
-const trail = [];
-
-/**
- * @param {string} id
- * @returns {typeof panels[number] | null}
- */
-function panelById(id) {
-  return panels.find((page) => page.id === id) ?? null;
-}
-
-/** @returns {typeof panels[number] | null} */
-function openPanel() {
-  return panels.find((page) => page.open) ?? null;
-}
-
-/**
- * Navigation inside the panels: an option number, F4, or a name on the action
- * bar. Going back to a panel already behind us unwinds to it instead of piling
- * the same two panels up.
- *
- * @param {string} id
- * @returns {void}
- */
-function goPanel(id) {
-  const next = panelById(id);
-  const current = openPanel();
-  if (next === null || next === current) return;
-  const seen = trail.indexOf(id);
-  if (seen !== -1) trail.length = seen;
-  else if (current !== null) trail.push(current.id);
-  current?.hide();
-  next.show();
-}
-
-/** @returns {void} F3: back one level, and out to the session at the bottom. */
-function endPanel() {
-  const previous = panelById(trail.pop() ?? "");
-  // The screen was never painted over, only covered, so the overlay coming off
-  // is the whole of giving it back.
-  if (previous === null) redraw();
-  else previous.show();
-}
-
-/**
- * @param {string} id
- * @returns {void} An Alt shortcut starts a fresh trail: it came from the session.
- */
-function startPanel(id) {
-  const wanted = panelById(id);
-  if (wanted === null) return;
-  const current = openPanel();
-  trail.length = 0;
-  if (current === wanted) {
-    wanted.close();
+importInput.addEventListener("change", async () => {
+  const file = importInput.files?.[0];
+  importInput.value = "";
+  if (file === undefined) return;
+  let content;
+  try {
+    content = await file.text();
+  } catch (cause) {
+    showError("E5031", "The recording file could not be read.", cause);
+    screenEl.focus();
     return;
   }
-  current?.hide();
-  wanted.show();
-}
-
-/** @returns {void} Give the screen back without walking the trail out. */
-function closePanels() {
-  const current = openPanel();
-  trail.length = 0;
-  if (current === null) return;
-  current.hide();
-  redraw();
-}
+  try {
+    const recording = recorder.importRecording(content);
+    panels.message = `Imported ${recording.name}`;
+    redraw();
+    screenEl.focus();
+  } catch (cause) {
+    showError(
+      "E5030",
+      `The recording could not be imported: ${String(cause)}`,
+      cause,
+    );
+    screenEl.focus();
+  }
+});
 
 /**
  * Build the session's pane, or resize the one it has to the geometry the server
@@ -725,7 +767,6 @@ async function applyFont(font) {
     console.warn(`could not preload ${font.name}`, cause);
   }
   applyLayout();
-  if (settings.open) settings.draw();
 }
 
 /**
@@ -809,7 +850,7 @@ function fitIdleSessions() {
 let fitScheduled = false;
 /** @type {ReturnType<typeof setTimeout> | undefined} */
 let settleTimer;
-new ResizeObserver(() => {
+const resizeObserver = new ResizeObserver(() => {
   if (!fitScheduled) {
     fitScheduled = true;
     requestAnimationFrame(() => {
@@ -820,14 +861,14 @@ new ResizeObserver(() => {
   // A refit costs a host round trip, so wait for the drag to settle.
   clearTimeout(settleTimer);
   settleTimer = setTimeout(fitIdleSessions, 400);
-}).observe(screenEl);
+});
 
 /**
  * @param {import('../server/protocol.js').ClientMessage} message
  * @returns {void}
  */
 function send(message) {
-  if (macros.isRecording()) macros.record(message);
+  macros.record(message);
   sendTo(activeSession(), message);
 }
 
@@ -881,7 +922,15 @@ function connectSocket(slot) {
   slot.socket = ws;
 
   ws.addEventListener("message", (event) => {
-    handleServerMessage(slot, JSON.parse(String(event.data)));
+    try {
+      handleServerMessage(slot, JSON.parse(String(event.data)));
+    } catch (cause) {
+      showError(
+        "E5037",
+        "The server sent a message this page could not read.",
+        cause,
+      );
+    }
   });
 
   // A failed connect fires error then close; close decides the retry.
@@ -889,8 +938,10 @@ function connectSocket(slot) {
     showError("E5002", "The connection to the server failed.");
   });
 
-  ws.addEventListener("close", () => {
+  ws.addEventListener("close", (event) => {
     slot.socket = null;
+    if (event.reason === "E6010")
+      showError("E6010", "This viewer fell behind the screen; reconnecting.");
     // Coming back on our own would only ask again after a no.
     if (slot.refusal !== null) return;
     // Measured from the first drop: the server started reaping then.
@@ -938,7 +989,11 @@ async function startFreshSession(slot) {
   try {
     created = await createSession();
   } catch (cause) {
-    showError("E5014", `The session could not be restarted: ${String(cause)}`);
+    showError(
+      "E5014",
+      `The session could not be restarted: ${String(cause)}`,
+      cause,
+    );
     scheduleReconnect(slot);
     return;
   }
@@ -992,29 +1047,43 @@ function handleServerMessage(slot, message) {
     slot.cols = message.cols;
     slot.rows = message.rows;
     if (!onScreen) return;
+    syncActiveSettings(slot);
     applyLayout();
-    settings.setModel(slot.model);
-    settings.setOversize(slot.oversize);
+    return;
+  }
+  if (message.type === "codePage") {
+    slot.codePage = message.name;
+    if (onScreen && panels.isOpen()) redraw();
     return;
   }
   if (message.type === "hello") {
     slot.model = message.model;
+    slot.codePage = message.codePage;
     slot.oversize = message.oversize;
     slot.cols = message.cols;
     slot.rows = message.rows;
-    settings.models = message.models;
+    slot.models = message.models;
+    slot.hostLocked = message.hostLocked;
     if (onScreen) applyLayout();
     applySavedSize(slot);
     if (!onScreen) return;
-    settings.setModel(slot.model);
-    settings.setOversize(slot.oversize);
+    syncActiveSettings(slot);
     slot.role = message.role;
-    settings.setHostLocked(message.hostLocked);
+    redraw();
     screenEl.focus();
     return;
   }
   if (message.type === "recorderStep") {
-    recorder.record(message.step);
+    if (slot === recordingSlot) recorder.record(message.step);
+    if (onScreen && panels.isOpen()) redraw();
+    return;
+  }
+  if (message.type === "recorderStopped") {
+    if (slot === recordingSlot) {
+      recorder.stopped();
+      recordingSlot = null;
+      redraw();
+    }
     return;
   }
   if (message.type === "paint") {
@@ -1046,32 +1115,29 @@ function handleServerMessage(slot, message) {
         for (const resolve of waiters) resolve();
       }
     }
-    if (slot.pane !== null)
-      slot.pane.cursorStyle = message.insert ? "underline" : "block";
     if (displayed(slot)) redraw();
     // A new pane's session is only reachable once its socket has said hello,
     // which is after the layout that made the pane.
     if (changed && !message.connected && onScreen && panes.length > 1)
       fitIdleSessions();
     if (!onScreen) return;
-    settings.connected = message.connected;
+    syncActiveSettings(slot);
     // b3270 reports the host without its port, so never overwrite a typed one.
     if (message.host !== null && settings.host === "" && !settings.hostLocked)
-      settings.setHost(message.host);
-    if (changed) {
+      settings.host = message.host;
+    if (changed && panels.stack.at(-1)?.id !== "size") {
       if (message.connected) {
-        closePanels();
+        panels.close();
         clearError();
       } else {
-        startPanel("settings");
+        panels.open("settings");
       }
     }
     return;
   }
   if (onScreen) {
     // A refused change leaves the page showing a size never accepted.
-    settings.setModel(slot.model);
-    settings.setOversize(slot.oversize);
+    syncActiveSettings(slot);
     showError(message.code, message.message);
     return;
   }
@@ -1105,6 +1171,7 @@ function applyLayout() {
     paneShares(onCanvas.length),
     { width: screenEl.clientWidth, height: screenEl.clientHeight },
     settings.font().family,
+    settings.values.forceMaxFontSize ? settings.values.fitFontSize : undefined,
   );
   redraw();
 }
@@ -1117,21 +1184,19 @@ function focusSlot(index) {
   const slot = sessions[index] ?? null;
   if (slot === null || index === active) return;
 
-  // Close before the switch, or the wrong pane is asked for its screen back.
-  closePanels();
+  // The panels belong to the pane that was being looked at.
+  panels.close();
 
   if (!panes.includes(index)) {
     const here = Math.max(0, panes.indexOf(active));
     panes[here] = index;
   }
   active = index;
-  settings.setModel(slot.model);
-  settings.setOversize(slot.oversize);
-  settings.connected = slot.connected === true;
+  syncActiveSettings(slot);
   applyLayout();
   screenEl.focus();
 
-  if (slot.connection === "not-connected") startPanel("settings");
+  if (slot.connection === "not-connected") panels.open("settings");
 }
 
 /** @type {boolean} One creation at a time; two fast keystrokes are one session. */
@@ -1171,6 +1236,7 @@ function switchTo(index) {
       showError(
         "E5006",
         `Another session could not be opened: ${String(cause)}`,
+        cause,
       );
     })
     .finally(() => {
@@ -1206,6 +1272,7 @@ function changeLayout(count) {
       showError(
         "E5006",
         `Another session could not be opened: ${String(cause)}`,
+        cause,
       );
     })
     .finally(() => {
@@ -1220,27 +1287,93 @@ function changeLayout(count) {
 function jumpToHint(letter) {
   const hint = hints.find((entry) => entry.letter === letter);
   if (hint === undefined) return;
-  send({
+  /** @type {import('../server/protocol.js').ActionMessage} */
+  const move = {
     type: "action",
     action: "MoveCursor1",
     args: [String(hint.row + 1), String(hint.col + 1)],
-  });
+  };
+  if (panels.isOpen()) panels.receive(move);
+  else send(move);
 }
 
-// The prefix goes first: a disconnected session has settings open over it, and
-// being unable to switch away would be a trap. Only a key being picked for a
-// binding goes before it, since that key may well be the prefix itself.
+const SHARING_COMMANDS = new Set([
+  "AnswerYes",
+  "AnswerNo",
+  "AskEdit",
+  "StopSharing",
+  "StopEditing",
+]);
+
 window.addEventListener(
   "keydown",
   (event) => {
-    const capturing = openPanel();
-    if (capturing !== null && capturing.capturing()) {
+    const sharingCommand = commandForEvent(event, keymap.lookup());
+    if (sharingCommand !== null && SHARING_COMMANDS.has(sharingCommand)) {
+      const slot = activeSession();
+      const request = slot?.requests[0];
+      const available =
+        ((sharingCommand === "AnswerYes" || sharingCommand === "AnswerNo") &&
+          request !== undefined) ||
+        (sharingCommand === "AskEdit" &&
+          slot?.role === "observer" &&
+          !slot.editRequested &&
+          !slot.waiting) ||
+        (sharingCommand === "StopSharing" && slot?.owner && slot.guests > 0) ||
+        (sharingCommand === "StopEditing" &&
+          slot?.owner &&
+          slot.editor !== null);
+      if (slot !== null && slot.refusal === null && available) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.repeat) return;
+        if (
+          request !== undefined &&
+          (sharingCommand === "AnswerYes" || sharingCommand === "AnswerNo")
+        )
+          answerRequest(slot, request, sharingCommand === "AnswerYes");
+        else if (sharingCommand === "AskEdit")
+          sendTo(slot, { type: "askEdit" });
+        else if (sharingCommand === "StopSharing")
+          sendTo(slot, { type: "stopSharing" });
+        else if (sharingCommand === "StopEditing")
+          sendTo(slot, { type: "stopEditing" });
+        return;
+      }
+    }
+    if (panels.isRecordingPlayback()) {
       event.preventDefault();
       event.stopPropagation();
-      capturing.handleKey(event);
+      const mapped = mapKey(event, keymap.lookup());
+      panels.playbackKey(
+        mapped?.kind === "action" && mapped.action === "Enter"
+          ? "HostEnter"
+          : event.key,
+      );
       return;
     }
-
+    if (
+      panels.isMacroEditor() &&
+      event.code === "F5" &&
+      !event.shiftKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.metaKey
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (panels.macroCapture) panels.exitMacroCapture();
+      else panels.back();
+      return;
+    }
+    if (panels.capturingMacro()) {
+      const picked = macroInputForEvent(event, keymap.lookup());
+      event.preventDefault();
+      event.stopPropagation();
+      if (picked?.kind === "text" || picked?.kind === "action")
+        panels.captureMacro(picked);
+      return;
+    }
     const decision = prefix.handleKey(
       event,
       hints.map((hint) => hint.letter),
@@ -1249,8 +1382,10 @@ window.addEventListener(
       event.preventDefault();
       event.stopPropagation();
       if (decision.action === "arm") {
-        const grid = activePane()?.host ?? null;
-        hints = grid === null ? [] : computeHints(grid.cells, grid.cols);
+        const pane = activePane();
+        if (pane === null) hints = [];
+        else if (panels.isOpen()) hints = panels.hints(pane.rows, pane.cols);
+        else hints = computeHints(pane.host.cells, pane.host.cols);
         redraw();
         return;
       }
@@ -1262,34 +1397,52 @@ window.addEventListener(
       else if (decision.action === "hint") jumpToHint(decision.letter);
       return;
     }
-    // A panel command opens its panel from anywhere, including from another
-    // panel, so it is claimed before the open panel gets to read the key.
-    const command = commandForEvent(event, keymap.lookup());
+    // In a key field the key is what is being picked, even a panel shortcut.
+    if (panels.isOpen() && panels.capturing()) {
+      const picked = capture.keydown(event, keymap.lookup());
+      if (picked !== null) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (picked !== "held") panels.capture(picked);
+        return;
+      }
+    }
+    // A panel command opens its panel from anywhere, including from another panel.
+    const command = sharingCommand;
+    if (command === "ToggleKeyboard" || command === "ToggleRecording") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.repeat) return;
+      if (command === "ToggleKeyboard") toggleKeyboard();
+      else toggleRecording();
+      return;
+    }
+    if (command === "OpenChars") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) panels.openChars();
+      return;
+    }
     const wanted = command === null ? undefined : PANEL_COMMANDS[command];
     if (wanted !== undefined) {
       event.preventDefault();
       event.stopPropagation();
-      startPanel(wanted);
-      return;
-    }
-
-    // Ctrl and Meta fall through on purpose: copy, paste and reload work in a panel.
-    if (openPanel()?.handleKey(event) === true) {
-      event.preventDefault();
-      event.stopPropagation();
+      if (event.repeat) return;
+      panels.toggle(wanted);
     }
   },
   true,
 );
 
-// A modifier on its own is only a binding once it is let go alone.
+// Right Ctrl alone is a key worth binding, and only its keyup says it was alone.
 window.addEventListener(
   "keyup",
   (event) => {
-    if (openPanel()?.released(event) === true) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
+    if (!panels.isOpen() || !panels.capturing()) return;
+    const lone = capture.keyup(event);
+    if (lone === null) return;
+    event.preventDefault();
+    panels.capture(lone);
   },
   true,
 );
@@ -1309,19 +1462,25 @@ screenEl.addEventListener(
 
     const mapped = mapKey(event, keymap.lookup());
     if (mapped === null) return;
+    if (mapped.kind === "client" && SHARING_COMMANDS.has(mapped.command))
+      return;
     event.preventDefault();
     event.stopPropagation();
 
-    // A panel is over the screen, so only the clipboard commands still mean something.
-    const panel = openPanel();
-    if (panel !== null && mapped.kind !== "client") return;
+    // Typing on a panel goes to the panels' host, the same messages the server gets.
+    const panel = panels.isOpen();
+    const deliver = panel
+      ? (
+          /** @type {import('../server/protocol.js').ClientMessage} */ message,
+        ) => panels.receive(message)
+      : send;
 
     if (mapped.kind === "text") {
-      send({ type: "text", value: mapped.value });
+      deliver({ type: "text", value: mapped.value });
       return;
     }
     if (mapped.kind === "action") {
-      send({
+      deliver({
         type: "action",
         action: mapped.action,
         args: mapped.args,
@@ -1332,14 +1491,13 @@ screenEl.addEventListener(
 
     if (isMacroCommand(mapped.command)) {
       const macro = macros.macroFor(mapped.command);
-      if (panel !== null || event.repeat || macros.playing !== null) return;
+      if (panel || event.repeat || macros.playing !== null) return;
       if (macro !== null) macros.play(macro);
       return;
     }
 
     const step = SELECT_STEPS[mapped.command];
     if (step !== undefined) {
-      if (panel !== null) return;
       activePane()?.stepSelection(step.row, step.col);
       redraw();
       return;
@@ -1351,9 +1509,8 @@ screenEl.addEventListener(
       const canvas = activePane();
       if (canvas !== null && canvas.hasSelection())
         navigator.clipboard.writeText(canvas.getSelection());
-      else if (panel !== null) navigator.clipboard.writeText(panel.copy());
       else {
-        const grid = canvas?.host ?? null;
+        const grid = panel ? panels.host.grid() : (canvas?.host ?? null);
         const cursor = grid?.cursor ?? null;
         const text =
           grid === null || cursor === null
@@ -1372,13 +1529,14 @@ screenEl.addEventListener(
       .readText()
       .then((text) => {
         if (text === "") return;
-        if (panel !== null) panel.paste(text);
+        if (panel) panels.receive(pasteMessage(panels.host.grid(), text));
         else send(pasteFor(activeSession(), text));
       })
       .catch((cause) => {
         showError(
           "E5005",
           `The clipboard could not be read; Ctrl+V pastes without asking: ${String(cause)}`,
+          cause,
         );
       });
   },
@@ -1394,8 +1552,8 @@ screenEl.addEventListener(
     clearError();
     const text = event.clipboardData?.getData("text/plain") ?? "";
     if (text === "") return;
-    const panel = openPanel();
-    if (panel !== null) panel.paste(text);
+    if (panels.capturingMacro()) return;
+    if (panels.isOpen()) panels.receive(pasteMessage(panels.host.grid(), text));
     else send(pasteFor(activeSession(), text));
   },
   true,
@@ -1419,12 +1577,6 @@ function canvasClicked(event) {
   const canvas = hit.pane;
   const { row, col } = hit;
 
-  const panel = openPanel();
-  if (panel !== null) {
-    if (slot === activeSession()) panel.clicked(row + 1);
-    return;
-  }
-
   if (row === canvas.statusRow) {
     const button = statusButtons(slot, canvas.cols).find(
       (each) => col >= each.col && col < each.col + each.label.length,
@@ -1435,19 +1587,52 @@ function canvasClicked(event) {
     }
   }
 
-  // The keyboard is opaque: a click on it is never a cursor move.
+  if (row < 0 || row >= canvas.rows || col < 0 || col >= canvas.cols) return;
   if (keyboardShown) {
     const keys = keyboardKeys(canvas);
     if (keys.some((key) => key.row === row)) {
       const key = keyAt(keys, row, col);
-      if (key !== null)
-        send({ type: "action", action: key.action, args: key.args });
+      if (key !== null) {
+        if (key.action === "OpenChars") panels.openChars();
+        else if (panels.isRecordingPlayback()) {
+          const name =
+            key.action === "PF"
+              ? `F${key.args[0]}`
+              : key.action === "Enter"
+                ? "HostEnter"
+                : key.action;
+          panels.playbackKey(name);
+        } else if (panels.isOpen())
+          panels.receive({
+            type: "action",
+            action: key.action,
+            args: key.args,
+          });
+        else send({ type: "action", action: key.action, args: key.args });
+      }
       return;
     }
   }
+  if (panels.isOpen()) {
+    if (panels.isCharacterPicker() && panels.chooseCharacterAt(row, col))
+      return;
+    if (panels.isRecordingPlayback()) {
+      panels.playbackClick(row, col);
+      return;
+    }
+    if (panels.pickingMacroCursor() && row >= 3 && row < canvas.statusRow) {
+      panels.addMacroCursorMove(row, col);
+      return;
+    }
+    panels.receive({
+      type: "action",
+      action: "MoveCursor1",
+      args: [String(row + 1), String(col + 1)],
+    });
+    return;
+  }
 
-  // The last row is ours, and a click ending a drag was aiming at the selection.
-  if (row < 0 || row >= canvas.rows || col < 0 || col >= canvas.cols) return;
+  // A click ending a drag was aiming at the selection.
   if (canvas.hasSelection()) return;
   sendTo(slot, {
     type: "action",
@@ -1458,29 +1643,43 @@ function canvasClicked(event) {
 
 // The font has to be loaded before the first canvas, or the first screen is
 // measured in the wrong face and fitted to the wrong size.
-const [saved, savedMacros, savedKeymap] = await Promise.allSettled([
-  loadSettings(),
-  loadMacros(),
-  loadKeymap(),
-]);
+const [saved, savedMacros, savedKeymap, savedRecordings] =
+  await Promise.allSettled([
+    loadSettings(),
+    loadMacros(),
+    loadKeymap(),
+    loadRecordings(),
+  ]);
 if (saved.status === "fulfilled") settings.restoreSaved(saved.value);
 else
   showError(
     "E5003",
     `Saved settings could not be read; using the defaults: ${String(saved.reason)}`,
+    saved.reason,
   );
-if (savedMacros.status === "fulfilled") macros.setMacros(savedMacros.value);
+if (savedMacros.status === "fulfilled") macros.load(savedMacros.value);
 else
   showError(
     "E5008",
     `Saved macros could not be read: ${String(savedMacros.reason)}`,
+    savedMacros.reason,
   );
 if (savedKeymap.status === "fulfilled") keymap.setBindings(savedKeymap.value);
 else
   showError(
     "E5013",
     `Saved keymap could not be read; using the defaults: ${String(savedKeymap.reason)}`,
+    savedKeymap.reason,
   );
+if (savedRecordings.status === "fulfilled")
+  recorder.load(savedRecordings.value);
+else {
+  showError(
+    "E5029",
+    "Saved recordings could not be read in this browser.",
+    savedRecordings.reason,
+  );
+}
 
 try {
   await document.fonts.load(`16px ${settings.font().family}`);
@@ -1495,14 +1694,18 @@ try {
     fieldBackground: settings.values.fieldBackground,
   });
 } catch (cause) {
-  showError("E5001", `The renderer failed to start: ${String(cause)}`);
+  console.error("[E5001] The renderer failed to start", cause);
+  screenEl.style.color = "#ffd9d9";
+  screenEl.style.padding = "1rem";
+  screenEl.textContent = `[E5001] The renderer failed to start: ${String(cause)}`;
   throw cause;
 }
+resizeObserver.observe(screenEl);
 canvasEl.addEventListener("click", canvasClicked);
 screenEl.style.background = settings.theme().colors.background;
 
 const storedHost = localStorage.getItem("tn3270.host");
-if (storedHost !== null) settings.setHost(storedHost);
+if (storedHost !== null) settings.host = storedHost;
 
 const wanted = parseSessionHash(location.hash);
 if (wanted.some((id) => id !== null)) {
@@ -1522,18 +1725,33 @@ if (wanted.some((id) => id !== null)) {
     );
 }
 
+let startupFailed = false;
 if (!sessions.some((slot) => slot !== null)) {
-  const created = await createSession();
-  sessions[0] = newSlot(created.id, created.cols, created.rows);
+  try {
+    const created = await createSession();
+    sessions[0] = newSlot(created.id, created.cols, created.rows);
+  } catch (cause) {
+    startupFailed = true;
+    console.error(
+      "[E5038] The first terminal session could not be opened",
+      cause,
+    );
+  }
 }
-writeHash();
-
-active = Math.max(
-  0,
-  sessions.findIndex((slot) => slot !== null),
-);
-panes = [active];
-applyLayout();
-for (const slot of sessions) {
-  if (slot !== null) connectSocket(slot);
+if (startupFailed) {
+  screenEl.style.color = "#ffd9d9";
+  screenEl.style.padding = "1rem";
+  screenEl.textContent =
+    "[E5038] The first terminal session could not be opened. Reload to try again.";
+} else {
+  writeHash();
+  active = Math.max(
+    0,
+    sessions.findIndex((slot) => slot !== null),
+  );
+  panes = [active];
+  applyLayout();
+  for (const slot of sessions) {
+    if (slot !== null) connectSocket(slot);
+  }
 }

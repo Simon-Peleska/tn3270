@@ -1,5 +1,5 @@
 /**
- * Keyboard → 3270 actions as a table the keymap dialog can edit. Defaults
+ * Keyboard → 3270 actions as a table the Keys panel can edit. Defaults
  * follow IBM PCOMM's 3270 layout, not x3270's Ctrl-letter mnemonics.
  *
  * @typedef {{ key: string, shift: boolean, ctrl: boolean, alt: boolean }} Combo
@@ -41,6 +41,14 @@ export const COMMANDS = Object.freeze([
   { id: "Undo", label: "Undo typing" },
   { id: "Redo", label: "Redo typing" },
   { id: "Menu", label: "Menu panel" },
+  { id: "ToggleKeyboard", label: "Toggle keyboard" },
+  { id: "OpenChars", label: "Character picker" },
+  { id: "ToggleRecording", label: "Record / stop" },
+  { id: "AnswerYes", label: "Allow sharing request" },
+  { id: "AnswerNo", label: "Deny sharing request" },
+  { id: "AskEdit", label: "Ask to edit" },
+  { id: "StopSharing", label: "Stop sharing" },
+  { id: "StopEditing", label: "Stop editing" },
   { id: "Settings", label: "Settings panel" },
   { id: "Macros", label: "Macros panel" },
   { id: "Recorder", label: "Recorder panel" },
@@ -69,6 +77,14 @@ export const CLIENT_COMMANDS = new Set([
   "SelectLeft",
   "SelectRight",
   "Menu",
+  "ToggleKeyboard",
+  "OpenChars",
+  "ToggleRecording",
+  "AnswerYes",
+  "AnswerNo",
+  "AskEdit",
+  "StopSharing",
+  "StopEditing",
   "Settings",
   "Macros",
   "Recorder",
@@ -156,7 +172,15 @@ export const DEFAULT_BINDINGS = Object.freeze({
   // Bound, so the browser never sees them: Ctrl+R would reload the page.
   Undo: [combo("Z", { ctrl: true })],
   Redo: [combo("R", { ctrl: true })],
-  Menu: [combo(" ", { alt: true })],
+  Menu: [combo("M", { ctrl: true }), combo(" ", { alt: true })],
+  ToggleKeyboard: [combo("K", { ctrl: true })],
+  OpenChars: [combo("C", { alt: true })],
+  ToggleRecording: [combo("E", { ctrl: true })],
+  AnswerYes: [combo("Y", { ctrl: true })],
+  AnswerNo: [combo("N", { ctrl: true })],
+  AskEdit: [combo("E", { ctrl: true, shift: true })],
+  StopSharing: [combo("S", { ctrl: true, shift: true })],
+  StopEditing: [combo("X", { ctrl: true, shift: true })],
   Settings: [combo(",", { alt: true })],
   Macros: [combo("M", { alt: true })],
   Recorder: [combo("R", { alt: true })],
@@ -247,7 +271,7 @@ function normalizeKey(character) {
  * @param {KeyboardEvent} event
  * @returns {{ ctrl: boolean, alt: boolean }}
  */
-export function heldModifiers(event) {
+function heldModifiers(event) {
   if (event.getModifierState?.("AltGraph") === true)
     return { ctrl: false, alt: false };
   return { ctrl: event.ctrlKey, alt: event.altKey };
@@ -257,7 +281,7 @@ export function heldModifiers(event) {
  * @param {KeyboardEvent} event
  * @returns {Combo}
  */
-export function comboFromEvent(event) {
+function comboFromEvent(event) {
   return combo(keyIdentity(event), {
     shift: event.shiftKey,
     ...heldModifiers(event),
@@ -265,10 +289,37 @@ export function comboFromEvent(event) {
 }
 
 /**
- * Picking the key for a binding. A modifier goes down before the key it
- * modifies, so its keydown is not the answer yet: the combo is the first other
- * key pressed, or a modifier let go with nothing pressed while it was held,
- * which is how right Ctrl alone is bound.
+ * What still works in a key field: moving, editing, Enter and leaving. Any
+ * other key is the one being picked.
+ */
+const FIELD_COMMANDS = new Set([
+  "Enter",
+  "Newline",
+  "BackNewline",
+  "Tab",
+  "BackTab",
+  "Backspace",
+  "Delete",
+  "DeleteField",
+  "DeleteWord",
+  "Up",
+  "Down",
+  "Left",
+  "Right",
+  "Home",
+  "EraseEOF",
+  "EraseInput",
+  "ToggleInsert",
+  "Reset",
+  "Attn",
+  "PF3",
+  "PF12",
+]);
+
+/**
+ * Picks a key pressed into a key field. A modifier going down is only on the
+ * way to the key, so `Ctrl+Enter` can be pressed as it is typed; a modifier
+ * counts on its own only when it is let go with nothing pressed in between.
  */
 export class ComboCapture {
   constructor() {
@@ -278,16 +329,20 @@ export class ComboCapture {
 
   /**
    * @param {KeyboardEvent} event
-   * @returns {Combo | null} the combo, once the key is a real one
+   * @param {Map<string, string>} lookup
+   * @returns {Combo | 'held' | null} the key picked, a modifier waiting for
+   *   its keyup, or null for a key the field handles as usual
    */
-  keydown(event) {
+  keydown(event, lookup) {
+    this.lone = null;
     const pressed = comboFromEvent(event);
-    if (MODIFIER_KEYS[pressed.key] === undefined) {
-      this.lone = null;
-      return pressed;
-    }
+    const types = [...event.key].length === 1 && !pressed.ctrl && !pressed.alt;
+    const command = lookup.get(serializeCombo(pressed));
+    if (types || (command !== undefined && FIELD_COMMANDS.has(command)))
+      return null;
+    if (MODIFIER_KEYS[pressed.key] === undefined) return pressed;
     this.lone = pressed;
-    return null;
+    return "held";
   }
 
   /**
@@ -297,13 +352,12 @@ export class ComboCapture {
   keyup(event) {
     const lone = this.lone;
     this.lone = null;
-    if (lone === null || lone.key !== event.code) return null;
-    return lone;
+    return lone !== null && lone.key === event.code ? lone : null;
   }
 }
 
 /**
- * Keys that print nothing, so the dialog names them by position.
+ * Keys that print nothing, so a combo names them by position.
  * @type {Readonly<Record<string, string>>}
  */
 const KEY_LABELS = Object.freeze({
@@ -367,6 +421,71 @@ export function comboLabel(value) {
     value.alt && held !== "alt" && "Alt",
   ].filter(Boolean);
   return [...mods, keyLabel(value.key)].join("+");
+}
+
+/**
+ * Keys with no character and no label of their own, which a combo names by
+ * their `KeyboardEvent.code`.
+ * @type {readonly string[]}
+ */
+const OTHER_CODES = Object.freeze([
+  "ScrollLock",
+  "PrintScreen",
+  "ContextMenu",
+  "NumLock",
+  ...Array.from({ length: 10 }, (_, digit) => `Numpad${digit}`),
+  "NumpadAdd",
+  "NumpadSubtract",
+  "NumpadMultiply",
+  "NumpadDivide",
+  "NumpadDecimal",
+  ...Array.from({ length: 24 }, (_, index) => `F${index + 1}`),
+]);
+
+/**
+ * @param {string} name one character, a label, or a `KeyboardEvent.code`
+ * @returns {string | null} a combo's key
+ */
+function keyFromName(name) {
+  if (name === "") return null;
+  if ([...name].length === 1) return normalizeKey(name);
+  const lower = name.toLowerCase();
+  if (lower === "space") return " ";
+  for (const [code, label] of Object.entries(KEY_LABELS))
+    if (label.toLowerCase() === lower || code.toLowerCase() === lower)
+      return code;
+  return OTHER_CODES.find((code) => code.toLowerCase() === lower) ?? null;
+}
+
+/**
+ * The way back from `comboLabel`, for a key typed in by name: `Ctrl+Shift+F1`,
+ * `RCtrl`, `Alt+M`, `Space`, in any case.
+ *
+ * @param {string} text
+ * @returns {Combo | null} null when no key is called that
+ */
+export function parseCombo(text) {
+  const trimmed = text.trim();
+  // The last + comes before the key, unless the key is + itself.
+  const keyStart = trimmed.endsWith("+")
+    ? trimmed.length - 1
+    : trimmed.lastIndexOf("+") + 1;
+  const key = keyFromName(trimmed.slice(keyStart));
+  if (key === null) return null;
+  const value = combo(key);
+  for (const word of trimmed.slice(0, keyStart).split("+")) {
+    const modifier = word.trim().toLowerCase();
+    if (modifier === "ctrl") value.ctrl = true;
+    else if (modifier === "shift") value.shift = true;
+    else if (modifier === "alt") value.alt = true;
+    else if (modifier !== "") return null;
+  }
+  // Pressing a modifier sets its own flag, as comboFromEvent sees it.
+  const held = MODIFIER_KEYS[key];
+  if (held === "ctrl") value.ctrl = true;
+  if (held === "shift") value.shift = true;
+  if (held === "alt") value.alt = true;
+  return value;
 }
 
 /**
@@ -499,4 +618,176 @@ export function mapKey(event, lookup) {
   if ([...event.key].length === 1) return { kind: "text", value: event.key };
 
   return null;
+}
+
+/**
+ * @param {KeyboardEvent} event
+ * @param {Map<string, string>} lookup
+ * @returns {{ kind: 'exit' } | { kind: 'action', action: string, args: string[] } | { kind: 'text', value: string } | null}
+ */
+export function macroInputForEvent(event, lookup) {
+  if (event.repeat) return null;
+  if (event.code === "F5" && !event.ctrlKey && !event.altKey && !event.metaKey)
+    return event.shiftKey
+      ? { kind: "action", action: "PF", args: ["5"] }
+      : { kind: "exit" };
+  const mapped = mapKey(event, lookup);
+  if (mapped?.kind === "action" || mapped?.kind === "text") return mapped;
+  return null;
+}
+
+/**
+ * @param {Bindings} bindings
+ * @returns {Bindings}
+ */
+function cloneBindings(bindings) {
+  /** @type {Bindings} */
+  const copy = {};
+  for (const [commandId, combos] of Object.entries(bindings))
+    copy[commandId] = combos.map((value) => ({ ...value }));
+  return copy;
+}
+
+/**
+ * The bindings in force, and every change the Keys panel makes to them. One
+ * keystroke is one command: a key bound anywhere is taken from where it was.
+ */
+export class Keymap {
+  /** @param {(changed: Bindings) => void} persist */
+  constructor(persist) {
+    this.persist = persist;
+    /** @type {Bindings} */
+    this.bindings = cloneBindings(DEFAULT_BINDINGS);
+    /** @type {Map<string, string>} */
+    this.lookupCache = buildLookup(this.bindings);
+  }
+
+  /** @returns {Map<string, string>} */
+  lookup() {
+    return this.lookupCache;
+  }
+
+  /**
+   * @param {Bindings} bindings as saved
+   * @returns {void}
+   */
+  setBindings(bindings) {
+    this.bindings = cloneBindings(withDefaults(bindings));
+    this.lookupCache = buildLookup(this.bindings);
+  }
+
+  /** @returns {void} */
+  save() {
+    this.lookupCache = buildLookup(this.bindings);
+    this.persist(changedBindings(this.bindings));
+  }
+
+  /**
+   * @param {string} commandId
+   * @returns {Combo[]}
+   */
+  combosFor(commandId) {
+    return this.bindings[commandId] ?? [];
+  }
+
+  /**
+   * @param {string} commandId
+   * @returns {string} the first key bound to it, '' when nothing is
+   */
+  labelFor(commandId) {
+    const first = this.combosFor(commandId)[0];
+    return first === undefined ? "" : comboLabel(first);
+  }
+
+  /**
+   * @param {string} commandId
+   * @param {Combo} value
+   * @returns {void}
+   */
+  takeFromOthers(commandId, value) {
+    const key = serializeCombo(value);
+    for (const [otherId, combos] of Object.entries(this.bindings)) {
+      if (otherId === commandId) continue;
+      const kept = combos.filter((each) => serializeCombo(each) !== key);
+      if (kept.length !== combos.length) this.bindings[otherId] = kept;
+    }
+  }
+
+  /**
+   * @param {string} commandId
+   * @param {number} index where it goes; past the end adds it
+   * @param {Combo} value
+   * @returns {void}
+   */
+  setCombo(commandId, index, value) {
+    this.takeFromOthers(commandId, value);
+    const key = serializeCombo(value);
+    const combos = this.combosFor(commandId).slice();
+    const placed = Math.min(index, combos.length);
+    combos[placed] = value;
+    // The same key twice on one command is once.
+    this.bindings[commandId] = combos.filter(
+      (each, at) => at === placed || serializeCombo(each) !== key,
+    );
+    this.save();
+  }
+
+  /**
+   * @param {string} commandId
+   * @param {number} index
+   * @returns {void}
+   */
+  removeCombo(commandId, index) {
+    this.bindings[commandId] = this.combosFor(commandId).filter(
+      (_, at) => at !== index,
+    );
+    this.save();
+  }
+
+  /**
+   * An empty list is saved, so a command unbound stays unbound; a macro's has
+   * no default to come back to, so it simply goes.
+   *
+   * @param {string} commandId
+   * @returns {void}
+   */
+  unbind(commandId) {
+    if (isMacroCommand(commandId)) delete this.bindings[commandId];
+    else this.bindings[commandId] = [];
+    this.save();
+  }
+
+  /**
+   * A renamed macro keeps its keys.
+   *
+   * @param {string} from
+   * @param {string} to
+   * @returns {void}
+   */
+  renameCommand(from, to) {
+    const combos = this.bindings[from];
+    if (combos === undefined) return;
+    delete this.bindings[from];
+    this.bindings[to] = combos;
+    this.save();
+  }
+
+  /**
+   * Its default keys are taken back from whatever they were given to since.
+   *
+   * @param {string} commandId
+   * @returns {void}
+   */
+  resetCommand(commandId) {
+    const defaults = DEFAULT_BINDINGS[commandId] ?? [];
+    for (const value of defaults) this.takeFromOthers(commandId, value);
+    this.bindings[commandId] = defaults.map((value) => ({ ...value }));
+    this.save();
+  }
+
+  /** @returns {void} */
+  resetAll() {
+    this.bindings = cloneBindings(DEFAULT_BINDINGS);
+    this.save();
+  }
 }

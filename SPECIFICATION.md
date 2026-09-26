@@ -104,10 +104,10 @@ the host.
   the one on screen, so two panes of the same size always ask for the same screen,
   and asking twice gives the same answer twice. A split is a grid of screens that
   line up, and fitting a pane that already fits changes nothing.
-- The **text size** the fit is measured at is a row of its own, shown only while
-  the fit is on, 8–32 px and saved in the browser. Bigger text means fewer cells.
-  It is what the screen is measured _with_, not the font size on screen: that one
-  goes on floating so the grid fills the window however it is resized afterwards.
+- The Font panel's **Font Size** is 8–32 px and saved in the browser. It is the
+  size used to measure a fit-to-window screen. Normally the displayed text
+  floats to fill the pane; with **Force max font size** enabled it grows no
+  larger than this setting, but still shrinks when the pane is too small.
 - The size is negotiated with the host once, when the connection is opened, so
   changing either the model or the fit **drops the connection and reopens the
   same host**. The settings panel says so before it does it. Observers cannot
@@ -139,10 +139,13 @@ the host.
   `X Protected`, `X Numeric`, `X Operator Error`, and so on. An unrecognised lock
   value is shown verbatim as `X <value>` rather than swallowed.
 
-- The right of the OIA row holds `[Kbd] [Menu]`, painted by the browser
+- The right of the OIA row holds `[Rec] [Kbd] [Menu]`, painted by the browser
   over columns the server never writes into. Every pane carries its own, so a
   split is not a screen you have to switch away from to work on. **Menu** opens
-  the primary option menu (§4.1), which is the way to every other panel.
+  the panel menu (§4.1), which is the way to every other panel.
+  **Rec** starts the session recorder, which captures screens and keys as a
+  script, and reads **Stop** while it runs. Its last recording is exported from
+  Settings > Recorder.
   **Kbd** shows or hides the on-screen keyboard: four rows of host keys a PC
   keyboard lacks or hides — Enter, Clear, Reset, PA1–PA3, Attn, SysReq;
   Erase EOF, Erase input, Insert, Dup, Field mark, Home, BackTab, Tab;
@@ -165,112 +168,100 @@ the host.
 ### 4.1 Panels
 
 Everything the browser itself offers — settings, macros, the recorder, the key
-bindings — is a **panel**, drawn into the terminal in the shape TSO/ISPF puts on
-a 3270, so that someone who knows ISPF already knows this. One panel is open at
-a time, over the session it belongs to, and leaving it repaints the screen
-underneath.
+bindings — is a **panel**. A panel is a small host application that runs in the
+page: it paints the screen the way the server does, with protected text and
+unprotected fields, and the keys typed into it are the same 3270 messages the
+server gets. So it behaves like a host screen because it is one: you type into
+fields, move with Tab and the arrows, and nothing happens until an AID key.
+One panel is open at a time, over the session it belongs to, and the status row
+stays underneath it.
 
 ```
-                           TN3270 Primary Option Menu    No panel is numbered 7
- Option ===> ________________________________________________________
+                                  TN3270 Menu
+ Option ===> _____________________________________________________________
 
+  0  Settings
+  1  Keys
 
-    0  Settings     Colours, font and screen size
-    1  Macros       Record, play back and trade keystroke macros
-    2  Recorder     Capture screens and keys as a script
-    3  Keys         What each key and key combination does
-    H  Help         The keys and commands panels answer to
-    X  Exit         Back to the session
-
-    Type an option above, or =0 to =3 from any panel to jump straight to it.
-
- F1=Help  F3=Exit  F12=Cancel
+ F3=Exit
 ```
 
-- The **title** has row 1 to itself: there is no action bar, and no chrome of any
-  kind above the panel.
-- The menu's options are **point-and-shoot** fields, as ISPF's are: nothing is
-  highlighted, and the cursor itself rests on the option number it would run.
-  Everywhere else the line the cursor is on is lit, because those lines are
-  values you are about to change.
-- The **command line** is `Option ===>` on the menu and `Command ===>` on the
-  rest. `More: - +` sits at its right end when the body scrolls that way.
-- A short **message** — a refused command, a bad option — appears against the
-  title in place, and clears on the next keystroke. A panel never navigates the
-  page away to say something.
-- Body lines that can be picked carry a number in the left margin. A form panel
-  — settings, keys — runs an ISPF dot leader from the label out to the value:
-  `Screen model . . . . . Model 4 - 43x80`.
-- Settings ends in a **preview**: a few lines styled the way a host styles its
-  screen — a title, an input field, the seven 3270 colours, intensified,
-  underlined and reverse text, and the characters fonts disagree on (`0O 1lI`).
-  It is drawn with the host's colour names, so it shows at once what a theme or
-  font change does to a real screen, not just to the panel around it.
-- A panel opened from another one is stacked on it, so F3 comes back one level
-  at a time and lands on the session at the bottom. F4 goes straight to the
-  menu; an `Alt` shortcut starts again from the session.
+- Row 1 is the title. Row 2 is the command line: `Option ===>` on the menu,
+  `Command ===>` everywhere else. Row 3 is the message line. The last row
+  lists the PF keys the screen answers to. Nothing else on the screen is
+  there to explain it.
+- A message is a refused command or a bad value, shown with its error code
+  (`[E5016] D does nothing on Screen size`). It stays until the next Enter.
+- Every list line has a **one-cell input field** in front of it. You type a
+  line command there and press Enter:
 
-**Option numbers** are fixed, and `=n` jumps to one from wherever you are:
+  | Letter | What it does                                                 |
+  | ------ | ------------------------------------------------------------ |
+  | `S`    | Select: pick the choice, open the line, or run it            |
+  | `E`    | Edit: its value becomes an input field; type and press Enter |
+  | `D`    | Delete: a macro, a key, or every key a command has           |
+  | `R`    | Reset: back to the default, where there is one               |
 
-| Option | Panel                               |
-| ------ | ----------------------------------- |
-| `0`    | Settings                            |
-| `1`    | Macros                              |
-| `2`    | Recorder                            |
-| `3`    | Keys                                |
-| `H`    | Help                                |
-| `X`    | Exit the panel, back to the session |
+  The letter can be either case. A line only takes the letters that make
+  sense for it; any other letter gets `E5016` and changes nothing. Letters on
+  several lines run top to bottom on one Enter. On Settings, `E` on Theme,
+  Font, Screen size or Field background opens that setting's list, and `S`
+  there picks one and comes back. `S` on Macros or Recorder, at the end of
+  Settings, opens that page.
 
-**Keys**, all of them ISPF's. A panel has no keyboard of its own: it answers to
-the 3270 commands of §5, so a key means the same thing in a panel as it does on
-the screen behind it, and rebinding one rebinds it in both places. The keys
-named here are the commands' defaults.
+- An edited value that is refused (a text size outside 8–32, a key name
+  nobody knows) stays in its field with the message, so it can be fixed.
+- A key is bound in a key field: `E` on a key line, or on the empty line
+  under a command's keys to add one. Pressing a key there writes its name into
+  the field, e.g. `Ctrl+Shift+F1`. A modifier on its way to a key is part of
+  that key; a modifier pressed and let go alone, like `LCtrl`, is picked on its
+  own. Keys that type, edit the field, press Enter or leave (Esc, F3, F12) do
+  what they always do, so those keys are bound by typing their name: the same
+  name the list shows, in any case. Enter binds what the field says. A key
+  given to a command is taken from whatever had it before.
+- A panel opened from another one is stacked on it, so F3 goes back one level
+  at a time and ends on the session. A panel opened straight from the session
+  goes straight back to it.
 
-| Command          | Key          | What it does                                                                   |
-| ---------------- | ------------ | ------------------------------------------------------------------------------ |
-| `Enter`          | Right Ctrl   | Runs the command line, or picks the line the cursor is on when it is empty     |
-| `PF1`            | F1           | Help                                                                           |
-| `PF3`, `Attn`    | F3, Esc      | Exit: back where the panel was opened from                                     |
-| `PF4`            | F4           | Menu: the primary option menu                                                  |
-| `PF7` / `PF8`    | F7 / F8      | Backward and forward a bodyful at a time                                       |
-| `PF12`           | F12          | Cancel: leave without applying what was typed                                  |
-| `Newline`, `Tab` | Enter, Tab   | The cursor between the command line and the body lines, stepping over headings |
-| `Up` / `Down`    | Up / Down    | The same, a line at a time                                                     |
-| `Left` / `Right` | Left / Right | Change the value the cursor is on                                              |
+**Menu options** are fixed. You type one on the menu's option line, or `=n`
+on any command line:
 
-**Command line words**: `=n` to jump, a bare number to pick a line on this
-panel, `END`/`EXIT`/`X`, `CANCEL`/`CAN`, `RETURN`/`RET`/`MENU`, `HELP`/`?`, the
-name of any panel, and the words a panel adds of its own —
-`APPLY`, `RENAME`, `DELETE`, `EXPORT`, `RECORD`, `STOP`,
-`KEY`, `UNKEY`, `RESET`, `DEFAULTS`. A word that is none of these is answered on the panel.
+| Option | Panel    |
+| ------ | -------- |
+| `0`    | Settings |
+| `1`    | Keys     |
 
-Settings and keys are saved in the browser as what differs from the defaults,
-so a default changed in a later version reaches everything the user left
-alone. `RESET` puts them back: on Settings, `RESET` restores every setting and
-`RESET THEME` (any word of a setting's name) just that one. A reset screen size
-takes effect with the next session, not by reconnecting this one. On Keys,
-`RESET` in the list restores the whole keymap, and inside a command just that
-command; `RESET n` or `RESET PF3` restores one command from the list, and
-`RESET ALL` restores everything from anywhere. A command put back takes its
-default keys back from whatever they were bound to since.
+**Keys.** A panel has no keyboard of its own. It answers to the 3270 commands
+of §5, so a key does the same thing in a panel as on the screen behind it, and
+rebinding one rebinds it in both places.
 
-Picking a key, on the Keys panel or for a macro, takes the whole combination:
-a modifier going down is only on the way to the key, so `Ctrl+Enter` can be
-pressed as it is typed, and a modifier counts on its own only when it is let go
-with nothing pressed in between, which is how right Ctrl alone is bound. F12 or
-Esc cancels. While a key is being picked every key goes to the panel, the
-session prefix and the panel shortcuts included. AltGr is not a modifier here
-or on the screen: Windows reports it as Ctrl+Alt, but a `\` or `{` typed with
-it is the character, on a German keyboard as on any other.
+| Command       | Key        | What it does                                        |
+| ------------- | ---------- | --------------------------------------------------- |
+| `Enter`       | Right Ctrl | Commits edits, then runs the command or the letters |
+| `PF3`, `PF12` | F3, F12    | Back one level                                      |
+| `PF4`         | F4         | The menu                                            |
+| `PF7` / `PF8` | F7 / F8    | Backward and forward a screenful                    |
+| `Attn`        | Esc        | Leave the panels, back to the session               |
 
-A macro can have a key of its own: `KEY` on the Macros panel, with the cursor
-on the macro, waits for a key picked that way and binds it.
-`UNKEY` removes it. The list shows each macro's key after its step count. The
-key is kept in the keymap, as a command named `Macro <name>` that the Keys
-panel lists after the fixed ones, so it follows the keymap's one rule: a key
-bound to a macro is taken from whatever had it, macro or command, and the Keys
-panel can add, remove and reset it like any other. Renaming a macro keeps its
-key; deleting it frees the key. On the screen that key plays the macro, and does
+**Command line words**: `=n`, `END`/`EXIT`/`CANCEL`/`CAN` (back),
+`RETURN`/`MENU`, and `RESET`. `RESET` resets every look-and-feel setting on
+Settings, the whole keymap on Keys, and one command's keys on that command's
+screen. Any other word gets `E5015`.
+
+Settings and keys are saved in the browser as the difference from the
+defaults, so a default changed in a later version still reaches everything the
+user never touched. A reset screen size takes effect with the next session;
+it does not reconnect this one. A command that is reset takes its default keys
+back from whatever they were bound to since.
+
+Macros are recorded from the Macros page under Settings. `S` on `Record` closes the panels
+and records until `S` on `Recording`. Then `Save as` offers a name in an open
+field: Enter saves it, `D` throws the recording away. `S` on a macro plays it,
+`E` renames it and `D` deletes it. Each macro shows its key. A macro can have
+a key of its own, set on the Keys panel, where it is listed after the fixed
+commands as `Macro <name>`, and it follows the keymap's one rule: a key bound
+to a macro is taken from whatever had it. Renaming a macro keeps its key;
+deleting it frees the key. On the screen that key plays the macro, and does
 nothing while a macro is already playing or a panel is open. `RESET` on the
 Keys panel takes every macro's key away with the rest. Macros and keys are
 saved in this browser only; there is no file to import or export them.
@@ -278,13 +269,9 @@ saved in this browser only; there is no file to import or export them.
 Opening a panel is a command like any other, so it is in the keymap of §5 and
 can be rebound there: `Menu`, `Settings`, `Macros`, `Recorder` and `Keys`,
 bound by default to `Alt+Space`, `Alt+,`, `Alt+M`, `Alt+R` and `Alt+K`. The
-same combination pressed again closes the panel, and it opens its panel from
-within another one. Ctrl and Meta are left to the browser while a panel is open, so
-**Ctrl-C and Ctrl-V work in a panel as they do on the screen**: a copy with
-nothing selected takes the command line or the field the cursor is on, and a
-paste puts the clipboard's first line into whichever of the two the cursor is
-on. A click lands the cursor where it was aimed, on the command line or on a
-body line.
+same combination pressed again closes the panel, and from inside another panel
+it opens its own. Copy, paste and clicks work on a panel the way they do on the
+screen.
 
 ## 5. Keyboard
 
@@ -531,6 +518,7 @@ browser, `E6xxx` server transport, `E7xxx` the REST proxy.
 | `E1003` | Config value has the wrong type                        |
 | `E1004` | Config value is out of range                           |
 | `E1005` | Config value is not a usable b3270 resource name       |
+| `E1006` | Code page is in the wrong config section               |
 | `E2001` | b3270 could not be spawned                             |
 | `E2002` | b3270 exited unexpectedly                              |
 | `E2003` | b3270 emitted a line that is not valid JSON            |
@@ -548,10 +536,12 @@ browser, `E6xxx` server transport, `E7xxx` the REST proxy.
 | `E3010` | Only the session's owner may answer or stop sharing    |
 | `E3011` | The session's owner did not let the viewer edit        |
 | `E3012` | The session's owner took editing back                  |
+| `E3013` | Session input queue is full                            |
 | `E4001` | WebSocket message was not valid JSON                   |
 | `E4002` | WebSocket message had an unknown type                  |
 | `E4003` | Pasted text is too large to type into a screen         |
 | `E4004` | Oversize screen has more cells than b3270 can hold     |
+| `E4005` | Typed text is too large for one input                  |
 | `E5001` | Terminal renderer failed to initialise                 |
 | `E5002` | WebSocket connection to the server failed              |
 | `E5003` | Settings could not be read from the browser database   |
@@ -563,12 +553,37 @@ browser, `E6xxx` server transport, `E7xxx` the REST proxy.
 | `E5011` | The keymap could not be saved to the browser database  |
 | `E5013` | The keymap could not be read from the browser database |
 | `E5014` | A dropped session could not be restarted               |
+| `E5015` | A panel command is not known here                      |
+| `E5016` | A line command is not available on this line           |
+| `E5017` | Font size is outside the allowed range                 |
+| `E5018` | A key name is not recognized                           |
+| `E5019` | Connect was asked for without a host                   |
+| `E5020` | A macro was given a blank name                         |
+| `E5021` | Field background must be Y or N                        |
+| `E5022` | Force max font size must be Y or N                     |
+| `E5023` | Macro cursor position is invalid                       |
+| `E5024` | A macro step must be one key                           |
+| `E5025` | A macro step cannot be typed as free text              |
+| `E5026` | Recording step number is invalid                       |
+| `E5027` | Recording has no steps                                 |
+| `E5028` | Recordings could not be saved                          |
+| `E5029` | Recordings could not be read                           |
+| `E5030` | Recording could not be imported                        |
+| `E5031` | Recording file could not be read                       |
+| `E5032` | Open sessions could not be loaded                      |
+| `E5033` | No character was selected                              |
+| `E5034` | Character code is not two hex digits                   |
+| `E5035` | Character is not printable in this code page           |
+| `E5036` | A recording was given a blank name                     |
+| `E5037` | Server sent a malformed WebSocket message              |
+| `E5038` | First terminal session could not be opened             |
 | `E6001` | Static file not found                                  |
 | `E6002` | WebSocket upgrade path is not a session                |
 | `E6003` | WebSocket closed unexpectedly                          |
 | `E6004` | Server could not start                                 |
 | `E6005` | Log file could not be opened                           |
 | `E6006` | Log file could not be written or rolled over           |
+| `E6010` | Viewer is too slow to receive the screen               |
 | `E7002` | REST is not available for this session                 |
 | `E7003` | REST request to b3270 failed                           |
 | `E0000` | An error with no code of its own; see the log          |

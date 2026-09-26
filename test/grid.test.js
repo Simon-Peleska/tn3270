@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { Grid, visibleCell, visibleCursor } from "../public/grid.js";
+import {
+  Grid,
+  visibleCell,
+  visibleCursor,
+  visibleText,
+} from "../public/grid.js";
 
 /**
  * @param {Partial<import('../server/protocol.js').PaintMessage>} fields
@@ -223,22 +228,29 @@ test("a paint's runs carry the colour names and renditions through untouched", (
   });
 });
 
-test("text copies a rectangle and trims each row's trailing blanks", () => {
+test("a selection copies a rectangle and trims each row's trailing blanks", () => {
   const grid = new Grid(4, 12);
   grid.put(0, 0, "NAME    SMITH");
   grid.put(1, 0, "CITY    OSLO");
   grid.put(2, 0, "ZIP");
+  const overlay = new Grid(4, 12, null);
 
-  assert.equal(grid.text(0, 8, 2, 11), "SMIT\nOSLO\n");
-  assert.equal(grid.text(0, 0, 1, 11), "NAME    SMIT\nCITY    OSLO");
+  assert.equal(visibleText(grid, overlay, 0, 8, 2, 11), "SMIT\nOSLO\n");
+  assert.equal(
+    visibleText(grid, overlay, 0, 0, 1, 11),
+    "NAME    SMIT\nCITY    OSLO",
+  );
 });
 
-test("text clips to the grid rather than running off it", () => {
+test("a selection clips to the grid rather than running off it", () => {
   const grid = new Grid(2, 5);
   grid.put(0, 0, "abcde");
   grid.put(1, 0, "fghij");
 
-  assert.equal(grid.text(-3, -3, 9, 9), "abcde\nfghij");
+  assert.equal(
+    visibleText(grid, new Grid(2, 5, null), -3, -3, 9, 9),
+    "abcde\nfghij",
+  );
 });
 
 test("the overlay shows through only where it has no character", () => {

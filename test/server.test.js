@@ -398,6 +398,12 @@ test("a forwarded address and user are believed only when a proxy is configured"
   assert.match(requested, /ip=203\.0\.113\.9 user=alice/);
   assert.match(createdLine, /ip=203\.0\.113\.9 user=alice/);
   assert.match(attached, /ip=203\.0\.113\.9 user=alice/);
+  const listed = await (await fetch(`${base}/api/sessions`)).json();
+  const entry = listed.sessions.find(
+    (/** @type {{ id: string }} */ session) => session.id === created.id,
+  );
+  assert.equal(entry.startedBy, "alice");
+  assert.ok(Date.parse(entry.startedAt) <= Date.now());
 });
 
 test("a client claiming a forwarded address is logged as itself by default", async (t) => {
@@ -405,14 +411,21 @@ test("a client claiming a forwarded address is logged as itself by default", asy
   t.after(() => server.stop());
 
   const base = `http://127.0.0.1:${server.port}`;
-  await fetch(`${base}/api/sessions`, {
-    method: "POST",
-    headers: PROXY_HEADERS,
-  });
+  const created = await (
+    await fetch(`${base}/api/sessions`, {
+      method: "POST",
+      headers: PROXY_HEADERS,
+    })
+  ).json();
 
   const requested = await logLine(server, "request method=POST");
   assert.match(requested, /ip=127\.0\.0\.1\b/);
   assert.doesNotMatch(requested, /203\.0\.113\.9|alice/);
+  const listed = await (await fetch(`${base}/api/sessions`)).json();
+  const entry = listed.sessions.find(
+    (/** @type {{ id: string }} */ session) => session.id === created.id,
+  );
+  assert.equal(entry.startedBy, "127.0.0.1");
 });
 
 test("an upgrade to a path that is not a session is refused with its own code", async (t) => {

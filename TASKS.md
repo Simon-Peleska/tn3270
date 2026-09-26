@@ -27,7 +27,7 @@ Status as of 2026-09-20.
       own colour names and `gr` string; `fullPaint()` and `paintDelta()`.
 - [x] **Fake host** — `test/fakehost.js`, a JS port of x3270's `playback.py`,
       plus four vendored traces and a `NOTICE`.
-- [x] **Sessions** — `server/session.js`: `Session`, `Viewer`, `SessionRegistry`,
+- [x] **Sessions** — `server/session.js`: `Session`, `Viewer`; `server/registry.js`: `SessionRegistry`,
       attach/detach, controller promotion, burst coalescing, idle reaping.
 - [x] **Server** — `server/main.js`: HTTP, static files, `/api/sessions`,
       WebSocket upgrade, graceful shutdown.

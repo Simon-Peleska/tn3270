@@ -20,9 +20,17 @@ export const MAX_FONT_SIZE = 64;
  * @param {number} fit.rows
  * @param {{ width: number, height: number }} fit.box the room to fill
  * @param {number} fit.start the size in force, as the first guess
+ * @param {number} [fit.max] largest allowed display size
  * @returns {number}
  */
-export function chooseFontSize({ measure, cols, rows, box, start }) {
+export function chooseFontSize({
+  measure,
+  cols,
+  rows,
+  box,
+  start,
+  max = MAX_FONT_SIZE,
+}) {
   const fits = (/** @type {number} */ size) => {
     const cell = measure(size);
     return cell.width * cols <= box.width && cell.height * rows <= box.height;
@@ -35,10 +43,10 @@ export function chooseFontSize({ measure, cols, rows, box, start }) {
   );
   let size = Math.max(
     MIN_FONT_SIZE,
-    Math.min(MAX_FONT_SIZE, Math.floor(start * scale) + 1),
+    Math.min(max, Math.floor(start * scale) + 1),
   );
 
   while (size > MIN_FONT_SIZE && !fits(size)) size -= 1;
-  while (size < MAX_FONT_SIZE && fits(size + 1)) size += 1;
+  while (size < max && fits(size + 1)) size += 1;
   return size;
 }

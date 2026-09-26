@@ -7,12 +7,13 @@
     "host": "127.0.0.1",
     "port": 8017,
   },
-
   "b3270": {
     "path": "b3270",
     "model": 4,
     "defaultHost": "127.0.0.1:4001",
+    "settings": {
+      "codePage": "german",
+    },
   },
-
   "logLevel": "info",
 }

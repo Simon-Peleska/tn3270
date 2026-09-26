@@ -7,7 +7,6 @@ import { OiaModel } from "./oia.js";
 import { fullPaint, paintDelta } from "./paint.js";
 import { AppError, describeError } from "./errors.js";
 import { isHostAllowed } from "./protocol.js";
-import { reserveRestEndpoint } from "./restproxy.js";
 import { logger } from "./log.js";
 
 /**
@@ -35,6 +34,7 @@ function nameOf(viewer) {
 
 /** Deep enough for a screen's worth of typing, shallow enough to forget. */
 const HISTORY_LIMIT = 100;
+const INPUT_QUEUE_LIMIT = 256;
 
 /** The keys that hand the screen to the host. @type {ReadonlySet<string>} */
 const AID_ACTIONS = new Set([
@@ -60,6 +60,8 @@ export class Session {
   constructor(config, rest = null, id = randomUUID()) {
     /** @type {string} */
     this.id = id;
+    this.startedAt = new Date().toISOString();
+    this.startedBy = "";
     /** @type {import('./config.js').Config} */
     this.config = config;
     this.log = logger("session", { session: id });
@@ -70,6 +72,10 @@ export class Session {
     this.oia = new OiaModel();
     /** @type {number} b3270 confirms this in screen-mode. */
     this.model = config.b3270.model;
+    /** @type {string} */
+    this.codePage = "bracket";
+    /** @type {Map<string, string>} */
+    this.codePageNames = new Map();
     /** @type {import('./b3270.js').ModelInfo[]} */
     this.models = [];
     /** @type {Set<Viewer>} */
@@ -270,6 +276,29 @@ export class Session {
    */
   handleIndication(indication) {
     const { kind, body } = indication;
+
+    if (kind === "code-pages" && Array.isArray(body)) {
+      for (const entry of body) {
+        if (typeof entry?.name !== "string") continue;
+        this.codePageNames.set(entry.name, entry.name);
+        if (Array.isArray(entry.aliases)) {
+          for (const alias of entry.aliases) {
+            if (typeof alias === "string")
+              this.codePageNames.set(alias, entry.name);
+          }
+        }
+      }
+      return;
+    }
+    if (kind === "setting") {
+      const setting = /** @type {{ name?: string, value?: unknown }} */ (body);
+      if (setting.name === "codePage" && typeof setting.value === "string") {
+        this.codePage = this.codePageNames.get(setting.value) ?? setting.value;
+        this.log.info("code page changed", { codePage: this.codePage });
+        this.sendToAll({ type: "codePage", name: this.codePage });
+      }
+      return;
+    }
 
     if (kind === "screen") {
       const update = /** @type {import('./b3270.js').ScreenIndication} */ (
@@ -578,13 +607,18 @@ export class Session {
   }
 
   /**
-   * @param {import('./protocol.js').RecorderStep} step
+   * @param {Omit<import('./protocol.js').RecorderStep, 'cursor' | 'paint'>} step
    * @returns {void}
    */
   pushRecorderStep(step) {
     if (this.recording === null) return;
-    this.recording.steps.push(step);
-    this.sendToAll({ type: "recorderStep", step });
+    const recorded = {
+      ...step,
+      paint: fullPaint(this.screen),
+      cursor: { row: this.screen.cursor.row, col: this.screen.cursor.col },
+    };
+    this.recording.steps.push(recorded);
+    this.sendToAll({ type: "recorderStep", step: recorded });
   }
 
   /**
@@ -711,6 +745,7 @@ export class Session {
       rows: this.screen.rows,
       cols: this.screen.cols,
       model: this.model,
+      codePage: this.codePage,
       models: this.models,
       oversize: this.oversize,
       hostLocked: this.config.b3270.defaultHost !== null,
@@ -845,7 +880,7 @@ export class Session {
       case "action":
       case "text":
       case "paste":
-        this.queueInput(message);
+        this.queueInput(viewer, message);
         return;
       case "connect":
         // A configured host never reaches the browser, so it asks without one.
@@ -861,7 +896,7 @@ export class Session {
         this.setOversize(message.value);
         return;
       case "recorder":
-        this.recording = message.action === "start" ? { steps: [] } : null;
+        this.queueInput(viewer, message);
         return;
     }
   }
@@ -966,17 +1001,26 @@ export class Session {
    * A held-down PF key only repeats into an empty line, so letting go of it
    * stops the paging at once.
    *
+   * @param {Viewer} viewer
    * @param {import('./protocol.js').ClientMessage} message
    * @returns {void}
    */
-  queueInput(message) {
+  queueInput(viewer, message) {
+    if (message.type === "recorder") {
+      this.runInput(message);
+      return;
+    }
     if (message.type === "action" && INTERRUPT_ACTIONS.has(message.action)) {
       if (message.action === "Reset") {
-        if (this.inputQueue.length > 0)
+        const recorderCommands = this.inputQueue.filter(
+          (queued) => queued.type === "recorder",
+        );
+        const dropped = this.inputQueue.length - recorderCommands.length;
+        if (dropped > 0)
           this.log.info("reset drops typed-ahead input", {
-            dropped: this.inputQueue.length,
+            dropped,
           });
-        this.inputQueue = [];
+        this.inputQueue = recorderCommands;
         this.inputTag = null;
       }
       this.runInput(message);
@@ -989,6 +1033,18 @@ export class Session {
     ) {
       this.log.debug("held key repeats faster than the host answers", {
         action: message.action,
+      });
+      return;
+    }
+    if (this.inputQueue.length >= INPUT_QUEUE_LIMIT) {
+      this.log.warn("input queue full", {
+        viewer: viewer.id,
+        queued: this.inputQueue.length,
+      });
+      viewer.sendMessage({
+        type: "error",
+        code: "E3013",
+        message: "Input is arriving faster than the host can process it.",
       });
       return;
     }
@@ -1015,6 +1071,15 @@ export class Session {
    */
   runInput(message) {
     switch (message.type) {
+      case "recorder":
+        if (message.action === "start") this.recording = { steps: [] };
+        else {
+          if (this.recording !== null)
+            this.pushRecorderStep({ screen: this.screenLines(), final: true });
+          this.recording = null;
+          this.sendToAll({ type: "recorderStopped" });
+        }
+        return null;
       case "action":
         // Ours alone, and not an action a recording could ever replay.
         if (message.action === "Undo" || message.action === "Redo")
@@ -1221,71 +1286,5 @@ export class Session {
     this.viewers.clear();
     this.waiting.clear();
     if (this.onClosed) this.onClosed();
-  }
-}
-
-export class SessionRegistry {
-  /** @param {import('./config.js').Config} config */
-  constructor(config) {
-    this.config = config;
-    this.log = logger("registry");
-    /** @type {Map<string, Session>} */
-    this.sessions = new Map();
-  }
-
-  /**
-   * @param {{ ip: string, user: string }} [client]
-   * @returns {Promise<Session>}
-   */
-  async create(client = { ip: "", user: "" }) {
-    if (this.sessions.size >= this.config.sessions.maxSessions) {
-      throw new AppError(
-        "E3002",
-        `${this.sessions.size} sessions are already open`,
-      );
-    }
-    const session = new Session(this.config, await reserveRestEndpoint());
-    session.onClosed = () => {
-      this.sessions.delete(session.id);
-      this.log.info("session removed", {
-        session: session.id,
-        remaining: this.sessions.size,
-      });
-    };
-    this.sessions.set(session.id, session);
-    this.log.info("session created", {
-      session: session.id,
-      ...client,
-      total: this.sessions.size,
-    });
-
-    if (this.config.b3270.defaultHost !== null)
-      session.connect(this.config.b3270.defaultHost);
-    return session;
-  }
-
-  /**
-   * @param {string} id
-   * @returns {Session}
-   */
-  get(id) {
-    const session = this.sessions.get(id);
-    if (session === undefined) throw new AppError("E3001", id);
-    return session;
-  }
-
-  /** @returns {Array<{ id: string, viewers: number, connection: string, host: string | null }>} */
-  list() {
-    return [...this.sessions.values()].map((session) => ({
-      id: session.id,
-      viewers: session.viewers.size,
-      connection: session.oia.connectionState,
-      host: session.oia.host,
-    }));
-  }
-
-  /** @returns {void} */
-  closeAll() {
-    for (const session of [...this.sessions.values()]) session.close();
   }
 }

@@ -25,8 +25,12 @@ and points a session at it, which is also what the tests use.
 
 ```bash
 npm test             # node --test, no browser driver and no host needed
+npm run test:browser # optional Chromium smoke test of the real page
 npm run typecheck    # tsc over the JSDoc types; this is the "no any" gate
 ```
+
+The optional browser smoke test needs `chromium` on `PATH` (or `CHROMIUM` set
+to its executable).
 
 ## What it does
 
@@ -37,16 +41,19 @@ npm run typecheck    # tsc over the JSDoc types; this is the "no any" gate
   the server holds it, and the page reconnects to it.
 - **A real keyboard**, following PCOMM's 3270 layout — PF1–PF24, PA1–PA3, Attn,
   SysReq, Clear, EraseEOF, FieldMark — and every binding is changeable.
-- **ISPF panels** for everything the browser itself offers: settings, macros, a
-  recorder and the key bindings, each drawn into the terminal with a title, a
-  command line and PF keys. `Alt+Space` opens the primary option menu; the
-  numbers `0` to `3` go from there, and `=0` to `=3` jump from anywhere.
+- **Panels that behave like a host application** for everything the browser
+  itself offers: settings (with macros and the recorder under them) and the
+  key bindings, each drawn into the terminal with a title, a command line and
+  PF keys. `Alt+Space` opens the menu; `0` and `1` go from there, and `=0` and
+  `=1` jump from anywhere. `[Rec]` on the status row records the session as a
+  script.
   Opening a panel is a keymap command, so that key is yours to change too.
 - **Fit to window**: ask the host for a screen the size of the pane rather than
   the model's 24×80, negotiated as IBM-DYNAMIC.
 - **Automation over REST**, speaking s3270's own `-httpd` protocol, so an
-  existing s3270 client only changes its base URL. Off until the controller
-  turns it on for their session.
+  existing s3270 client only changes its base URL. Available as soon as the
+  session exists; protect this server behind authentication if clients should
+  not be able to drive one another's sessions.
 
 ## Configuring it
 
