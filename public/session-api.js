@@ -20,6 +20,19 @@ export async function listSessions() {
   return body.sessions;
 }
 
+/** @param {string} id @param {string} pass @returns {Promise<void>} */
+export async function terminateSession(id, pass) {
+  const response = await fetch(`./api/sessions/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: { "x-session-pass": pass },
+  });
+  if (response.ok) return;
+  const body = await response.json();
+  throw new Error(
+    `[${body.code ?? "E0000"}] ${body.message ?? "session termination failed"}`,
+  );
+}
+
 /** @returns {Promise<Set<string> | null>} null when the server did not answer */
 export async function liveSessionIds() {
   try {

@@ -201,6 +201,7 @@ stays underneath it.
   | `E`    | Edit: its value becomes an input field; type and press Enter |
   | `D`    | Delete: a macro, a key, or every key a command has           |
   | `R`    | Reset: back to the default, where there is one               |
+  | `K`    | Kill: end a session you own, on Sessions                     |
 
   The letter can be either case. A line only takes the letters that make
   sense for it; any other letter gets `E5016` and changes nothing. Letters on
@@ -230,6 +231,11 @@ on any command line:
 | ------ | -------- |
 | `0`    | Settings |
 | `1`    | Keys     |
+
+The Sessions page lists open sessions. `J` opens one in a new tab. `K` is
+offered only beside sessions this browser owns; the server also checks the
+owner's private session pass before ending one. Other viewers are disconnected
+with `E3015` and do not reconnect to a terminated session.
 
 **Keys.** A panel has no keyboard of its own. It answers to the 3270 commands
 of §5, so a key does the same thing in a panel as on the screen behind it, and
@@ -440,12 +446,13 @@ reconnecting to it is worth trying.
 
 ### HTTP
 
-| Method | Path                        | Result                                                                                        |
-| ------ | --------------------------- | --------------------------------------------------------------------------------------------- |
-| `POST` | `/api/sessions`             | Creates a session → `201 {id, rows, cols, model}`, after b3270 has reported its real geometry |
-| `GET`  | `/api/sessions`             | Lists sessions → `{sessions:[{id, viewers, connection, host}], defaultHost}`                  |
-| `GET`  | `/api/sessions/<id>/3270/…` | Forwarded to that session's emulator; see REST below                                          |
-| `GET`  | anything else               | Static files from `public/`                                                                   |
+| Method   | Path                        | Result                                                                                        |
+| -------- | --------------------------- | --------------------------------------------------------------------------------------------- |
+| `POST`   | `/api/sessions`             | Creates a session → `201 {id, rows, cols, model}`, after b3270 has reported its real geometry |
+| `GET`    | `/api/sessions`             | Lists sessions → `{sessions:[{id, viewers, connection, host}], defaultHost}`                  |
+| `DELETE` | `/api/sessions/<id>`        | Ends the session with its owner's `x-session-pass` → `204`; otherwise `403 E3014`             |
+| `GET`    | `/api/sessions/<id>/3270/…` | Forwarded to that session's emulator; see REST below                                          |
+| `GET`    | anything else               | Static files from `public/`                                                                   |
 
 Errors are JSON: `{"code":"E6001","message":"…"}` with a matching status.
 
@@ -537,6 +544,8 @@ browser, `E6xxx` server transport, `E7xxx` the REST proxy.
 | `E3011` | The session's owner did not let the viewer edit        |
 | `E3012` | The session's owner took editing back                  |
 | `E3013` | Session input queue is full                            |
+| `E3014` | Only the session's owner may terminate it              |
+| `E3015` | Session terminated by its owner                        |
 | `E4001` | WebSocket message was not valid JSON                   |
 | `E4002` | WebSocket message had an unknown type                  |
 | `E4003` | Pasted text is too large to type into a screen         |
@@ -577,6 +586,7 @@ browser, `E6xxx` server transport, `E7xxx` the REST proxy.
 | `E5036` | A recording was given a blank name                     |
 | `E5037` | Server sent a malformed WebSocket message              |
 | `E5038` | First terminal session could not be opened             |
+| `E5039` | Session could not be terminated                        |
 | `E6001` | Static file not found                                  |
 | `E6002` | WebSocket upgrade path is not a session                |
 | `E6003` | WebSocket closed unexpectedly                          |

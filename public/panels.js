@@ -50,6 +50,8 @@ import { charsLayout, printableCharacter } from "./panel-chars.js";
  * @property {() => void} importRecording
  * @property {() => Promise<{ id: string, startedBy: string, startedAt: string }[]>} listSessions
  * @property {(id: string) => void} joinSession
+ * @property {(id: string) => boolean} ownsSession
+ * @property {(id: string) => Promise<void>} terminateSession
  * @property {(character: string) => void} insertCharacter
  *
  * @typedef {object} Edit an input field in place of the line's value
@@ -73,7 +75,7 @@ import { charsLayout, printableCharacter } from "./panel-chars.js";
  * @property {() => void} [r]
  * @property {() => void} [p]
  * @property {() => void} [m]
- * @property {() => void} [k]
+ * @property {() => void | Promise<void>} [k]
  * @property {() => void} [j]
  *
  * @typedef {{ id: string, top: number, insertAt?: number }} Frame a screen, and how far it is scrolled
@@ -229,6 +231,19 @@ export class Panels {
       this.message = problem("E5032", "Open sessions could not be loaded");
     } finally {
       this.adminLoading = false;
+      this.deps.redraw();
+    }
+  }
+
+  /** @param {string} id @returns {Promise<void>} */
+  async terminateSession(id) {
+    try {
+      await this.deps.terminateSession(id);
+      this.message = `Session ${id.slice(0, 8)} terminated`;
+      await this.refreshAdmin();
+    } catch (cause) {
+      console.error("[E5039] session termination failed", cause);
+      this.message = problem("E5039", "The session could not be terminated");
       this.deps.redraw();
     }
   }

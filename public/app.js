@@ -37,6 +37,7 @@ import {
   createSessionRequest,
   listSessions,
   liveSessionIds,
+  terminateSession,
 } from "./session-api.js";
 import { computeHints } from "./hints.js";
 import { pasteMessage } from "./paste.js";
@@ -685,6 +686,15 @@ const panels = new Panels({
   joinSession: (id) => {
     window.open(`./#${id}`, "_blank", "noopener");
   },
+  ownsSession: (id) =>
+    sessions.some(
+      (slot) =>
+        slot?.id === id &&
+        slot.owner &&
+        sessionStorage.getItem(`tn3270.pass.${id}`) !== null,
+    ),
+  terminateSession: (id) =>
+    terminateSession(id, sessionStorage.getItem(`tn3270.pass.${id}`) ?? ""),
   insertCharacter: (character) => {
     if (panels.isOpen()) panels.receive({ type: "text", value: character });
     else send({ type: "text", value: character });
@@ -934,6 +944,14 @@ function connectSocket(slot) {
 
   ws.addEventListener("close", (event) => {
     slot.socket = null;
+    if (event.reason === "E3015") {
+      slot.refusal = "[E3015] Session terminated by its owner";
+      showError(
+        "E3015",
+        `Session ${sessions.indexOf(slot) + 1} was terminated by its owner.`,
+      );
+      return;
+    }
     // Coming back on our own would only ask again after a no.
     if (slot.refusal !== null) return;
     slot.reconnecting = true;

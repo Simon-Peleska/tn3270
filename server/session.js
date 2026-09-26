@@ -19,7 +19,7 @@ import { logger } from "./log.js";
  * @property {boolean} [owner] set on attach
  * @property {boolean} [wantsEdit] an observer waiting for the owner's answer
  * @property {(message: import('./protocol.js').ServerMessage) => void} sendMessage
- * @property {() => void} close ends the connection for good: the browser must not retry
+ * @property {(code?: number, reason?: string) => void} close ends the connection for good: the browser must not retry
  */
 
 /**
@@ -782,6 +782,15 @@ export class Session {
     });
     viewer.sendMessage({ type: "refused", code, message });
     viewer.close();
+  }
+
+  /** @param {string} pass @returns {void} */
+  terminate(pass) {
+    if (pass !== this.ownerPass) throw new AppError("E3014", this.id);
+    this.log.info("session terminated by its owner");
+    for (const viewer of [...this.viewers, ...this.waiting])
+      viewer.close(4001, "E3015");
+    this.close();
   }
 
   /**

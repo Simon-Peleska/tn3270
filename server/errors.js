@@ -28,6 +28,8 @@ export const ERRORS = Object.freeze({
   E3011: "The session's owner did not let the viewer edit",
   E3012: "The session's owner took editing back",
   E3013: "Session input queue is full",
+  E3014: "Only the session's owner may terminate it",
+  E3015: "Session terminated by its owner",
 
   E4001: "WebSocket message was not valid JSON",
   E4002: "WebSocket message had an unknown type",
@@ -73,6 +75,7 @@ export const ERRORS = Object.freeze({
   E5036: "A recording was given a blank name",
   E5037: "Server sent a malformed WebSocket message",
   E5038: "First terminal session could not be opened",
+  E5039: "Session could not be terminated",
 
   E6001: "Static file not found",
   E6002: "WebSocket upgrade path is not a session",

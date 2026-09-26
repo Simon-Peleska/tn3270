@@ -61,6 +61,11 @@ export class SessionRegistry {
     return session;
   }
 
+  /** @param {string} id @param {string} pass @returns {void} */
+  terminate(id, pass) {
+    this.get(id).terminate(pass);
+  }
+
   /** @returns {Array<{ id: string, viewers: number, connection: string, host: string | null, startedAt: string, startedBy: string }>} */
   list() {
     return [...this.sessions.values()].map((session) => ({

@@ -7,6 +7,7 @@ import { Recorder } from "../public/recorder.js";
 import { Grid } from "../public/grid.js";
 import { Keymap } from "../public/keymap.js";
 import { keyAt, placeKeys } from "../public/screen-keyboard.js";
+import { adminLayout } from "../public/panel-admin.js";
 
 /**
  * The real panels over the real state, with only the page's side recorded:
@@ -27,6 +28,8 @@ function fixture() {
     /** @type {string[]} */ exported: [],
     imports: 0,
     /** @type {string[]} */ joined: [],
+    /** @type {Set<string>} */ owners: new Set(),
+    /** @type {string[]} */ terminated: [],
     /** @type {string[]} */ characters: [],
     /** @type {import('../public/recorder.js').Recording[][]} */ savedRecordings:
       [],
@@ -83,6 +86,10 @@ function fixture() {
       },
     ],
     joinSession: (id) => calls.joined.push(id),
+    ownsSession: (id) => calls.owners.has(id),
+    terminateSession: async (id) => {
+      calls.terminated.push(id);
+    },
     insertCharacter: (character) => {
       calls.characters.push(character);
       if (panelInstance?.isOpen())
@@ -273,6 +280,40 @@ test("open sessions lists creator and start time, and J opens the selected sessi
   assert.deepEqual(calls.joined, ["12345678-0000-0000-0000-000000000000"]);
 });
 
+test("only the owner sees K=Kill, and it refreshes the session list", async () => {
+  const { panels, calls } = fixture();
+  const id = "12345678-0000-0000-0000-000000000000";
+  panels.open("admin");
+  await panels.refreshAdmin();
+
+  const otherUser = adminLayout.items?.(panels, "admin")?.[0];
+  assert.equal(otherUser?.k, undefined);
+  assert.doesNotMatch(screenOf(panels)[3], /K=Kill/);
+
+  calls.owners.add(id);
+  const owner = adminLayout.items?.(panels, "admin")?.[0];
+  const kill = owner?.k;
+  assert.equal(typeof kill, "function");
+  assert.match(screenOf(panels)[3], /K=Kill/);
+  if (kill !== undefined) await kill();
+  assert.deepEqual(calls.terminated, [id]);
+  assert.match(screenOf(panels).join("\n"), /Session 12345678 terminated/);
+});
+
+test("a refused session termination shows its stable error code in the panel", async () => {
+  const { panels } = fixture();
+  panels.deps.terminateSession = async () => {
+    throw new Error("[E3014] Only the session owner may terminate it");
+  };
+  panels.open("admin");
+  await panels.terminateSession("12345678-0000-0000-0000-000000000000");
+  assert.match(
+    screenOf(panels).join("\n"),
+    /\[E5039\] The session could not be terminated/,
+  );
+  assert.equal(panels.isOpen(), true);
+});
+
 test("R and an empty Host Enter refresh open sessions", async () => {
   const { panels } = fixture();
   let loads = 0;
@@ -290,6 +331,30 @@ test("R and an empty Host Enter refresh open sessions", async () => {
 
   press(panels, "Enter");
   assert.equal(loads, afterR + 1);
+});
+
+test("refreshing sessions does not draw the loading message over a session", async () => {
+  const { panels } = fixture();
+  panels.adminSessions = [
+    {
+      id: "12345678-0000-0000-0000-000000000000",
+      startedBy: "alice",
+      startedAt: "2026-09-26T10:00:00.000Z",
+    },
+  ];
+  /** @type {(sessions: typeof panels.adminSessions) => void} */
+  let finish = () => {};
+  panels.deps.listSessions = () =>
+    new Promise((resolve) => {
+      finish = resolve;
+    });
+
+  panels.open("admin");
+
+  assert.match(screenOf(panels)[6], /alice \(12345678\)/);
+  assert.doesNotMatch(screenOf(panels)[6], /Loading sessions/);
+  finish([]);
+  await Promise.resolve();
 });
 
 test("open sessions shows a coded error in place when the list fails", async () => {

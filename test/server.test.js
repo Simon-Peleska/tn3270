@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { createServer } from "node:net";
 import { writeFile, rm } from "node:fs/promises";
 import { readFileSync, readdirSync } from "node:fs";
@@ -426,6 +427,61 @@ test("a client claiming a forwarded address is logged as itself by default", asy
     (/** @type {{ id: string }} */ session) => session.id === created.id,
   );
   assert.equal(entry.startedBy, "127.0.0.1");
+});
+
+test("only a session owner can terminate it", async (t) => {
+  const server = await startServer();
+  t.after(() => server.stop());
+
+  const base = `http://127.0.0.1:${server.port}`;
+  const created = await (
+    await fetch(`${base}/api/sessions`, { method: "POST" })
+  ).json();
+  const owner = await openViewer(
+    `ws://127.0.0.1:${server.port}/ws/${created.id}`,
+  );
+  t.after(() => owner.socket.close());
+  await waitUntil(
+    () => owner.messages.some((message) => message.type === "hello"),
+    "the owner's hello",
+  );
+  const hello = owner.messages.find((message) => message.type === "hello");
+  assert.ok(hello);
+  assert.equal(typeof hello.pass, "string");
+  const ownerPass = String(hello.pass);
+
+  for (const pass of [undefined, "not-the-owner"]) {
+    const response = await fetch(`${base}/api/sessions/${created.id}`, {
+      method: "DELETE",
+      headers: pass === undefined ? {} : { "x-session-pass": pass },
+    });
+    const body = await response.json();
+    assert.equal(response.status, 403);
+    assert.equal(body.code, "E3014");
+  }
+  let listed = await (await fetch(`${base}/api/sessions`)).json();
+  assert.ok(
+    listed.sessions.some(
+      (/** @type {{ id: string }} */ session) => session.id === created.id,
+    ),
+  );
+
+  const closed = once(owner.socket, "close");
+  const response = await fetch(`${base}/api/sessions/${created.id}`, {
+    method: "DELETE",
+    headers: { "x-session-pass": ownerPass },
+  });
+  assert.equal(response.status, 204);
+  const [code, reason] = await closed;
+  assert.equal(code, 4001);
+  assert.equal(String(reason), "E3015");
+  listed = await (await fetch(`${base}/api/sessions`)).json();
+  assert.equal(
+    listed.sessions.some(
+      (/** @type {{ id: string }} */ session) => session.id === created.id,
+    ),
+    false,
+  );
 });
 
 test("an upgrade to a path that is not a session is refused with its own code", async (t) => {

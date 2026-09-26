@@ -148,6 +148,38 @@ async function startBrowser(t) {
       };
       socket.on("message", received);
     });
+  const event = (method, accept = () => true) =>
+    new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        socket.off("message", received);
+        reject(new Error(`timed out waiting for ${method}`));
+      }, 10000);
+      const received = (raw) => {
+        const message = JSON.parse(String(raw));
+        if (message.method !== method || !accept(message.params)) return;
+        clearTimeout(timer);
+        socket.off("message", received);
+        resolve(message.params);
+      };
+      socket.on("message", received);
+    });
+  const consoleMessage = (code) =>
+    new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        socket.off("message", received);
+        reject(new Error(`timed out waiting for ${code}`));
+      }, 10000);
+      const received = (raw) => {
+        const message = JSON.parse(String(raw));
+        if (message.method !== "Runtime.consoleAPICalled") return;
+        const value = message.params.args[0]?.value;
+        if (typeof value !== "string" || !value.includes(code)) return;
+        clearTimeout(timer);
+        socket.off("message", received);
+        resolve(value);
+      };
+      socket.on("message", received);
+    });
   const key = async (name, code, options = {}) => {
     await command("Input.dispatchKeyEvent", {
       type: "keyDown",
@@ -189,11 +221,14 @@ async function startBrowser(t) {
     command,
     commandSocket,
     frame,
+    event,
     key,
+    consoleMessage,
     firstHello,
     exceptions,
     sentFrames,
     server,
+    base: `http://127.0.0.1:${serverPort}`,
   };
 }
 
@@ -335,23 +370,58 @@ test("sessions can be switched and restored after reload", async (t) => {
 
 test("a server disconnect is reported clearly", async (t) => {
   const browser = await startBrowser(t);
-  const disconnected = new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      browser.commandSocket.off("message", received);
-      reject(new Error("timed out waiting for the disconnect message"));
-    }, 10000);
-    const received = (raw) => {
-      const event = JSON.parse(String(raw));
-      if (event.method !== "Runtime.consoleAPICalled") return;
-      const message = event.params.args[0]?.value;
-      if (typeof message !== "string" || !message.includes("[E5002]")) return;
-      clearTimeout(timer);
-      browser.commandSocket.off("message", received);
-      resolve(message);
-    };
-    browser.commandSocket.on("message", received);
-  });
+  const disconnected = browser.consoleMessage("[E5002]");
   await stopProcess(browser.server);
   assert.match(await disconnected, /Connection to server lost\. Reconnecting/);
+  assert.deepEqual(browser.exceptions, []);
+});
+
+test("the owner can kill their session from the Sessions panel", async (t) => {
+  const browser = await startBrowser(t);
+  await browser.key(",", "Comma", {
+    modifiers: 1,
+    windowsVirtualKeyCode: 188,
+  });
+  await browser.key("7", "Digit7", {
+    text: "7",
+    windowsVirtualKeyCode: 55,
+  });
+  const sessionsLoaded = browser.event(
+    "Network.responseReceived",
+    ({ response }) => response.url.endsWith("/api/sessions"),
+  );
+  await browser.key("Enter", "Enter", {
+    modifiers: 2,
+    windowsVirtualKeyCode: 13,
+  });
+  const response = await sessionsLoaded;
+  await browser.event(
+    "Network.loadingFinished",
+    ({ requestId }) => requestId === response.requestId,
+  );
+  await browser.command("Runtime.evaluate", {
+    expression:
+      "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+  });
+
+  const terminated = browser.consoleMessage("[E3015]");
+  await browser.key("Tab", "Tab", { windowsVirtualKeyCode: 9 });
+  await browser.key("k", "KeyK", {
+    text: "k",
+    windowsVirtualKeyCode: 75,
+  });
+  await browser.key("Enter", "Enter", {
+    modifiers: 2,
+    windowsVirtualKeyCode: 13,
+  });
+  assert.match(await terminated, /terminated by its owner/);
+
+  const listed = await (await fetch(`${browser.base}/api/sessions`)).json();
+  assert.equal(
+    listed.sessions.some(
+      (session) => session.id === browser.firstHello.sessionId,
+    ),
+    false,
+  );
   assert.deepEqual(browser.exceptions, []);
 });

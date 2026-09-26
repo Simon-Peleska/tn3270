@@ -101,19 +101,19 @@ with no viewers is reaped after `sessions.idleTimeoutMs`.
 - **detach** → if the controller left, promote another viewer, so the session
   never becomes permanently read-only.
 
-That reaping window is also the reconnect budget, so the server tells the
-browser how wide it is in the `hello` instead of both sides guessing. When a
-socket drops, `public/reconnect.js` backs off exponentially with jitter and the
-page asks `/api/sessions` before each attempt — a browser is never told why a
-WebSocket failed, so "the server is down" and "the session was reaped" are
-indistinguishable from the socket alone, and they need opposite answers: wait
-for the first, start a new session for the second. A reconnect that gets as far
-as a `hello` reloads the page, so a server that came back with newer page code
-is actually picked up; the URL fragment is left alone, so the reloaded page
-attaches to the same sessions. The reload hangs off the `hello` and not the
-socket opening, because an attach the server refuses (E3003) opens a socket too
-and would otherwise reload forever. A viewer the owner sends away gets a
-`refused` message first, and its page does not reconnect at all.
+When a socket drops, `public/reconnect.js` backs off exponentially with jitter
+and the page asks `/api/sessions` before each attempt. It keeps waiting while the
+server does not answer; once it does, the session list decides whether to
+reattach or create a fresh session. A reconnect that gets as far as a `hello`
+reloads the page, so a server that came back with newer page code is picked up;
+the URL fragment stays unchanged. The reload hangs off `hello`, not socket
+opening, because an attach the server refuses opens a socket too. A viewer the
+owner sends away gets a `refused` message first, and its page does not reconnect.
+
+The Sessions panel can terminate a session with `DELETE /api/sessions/<id>`.
+The request carries the private owner pass from `hello`; the server checks it
+before closing the session and its viewers. Knowing a session ID or being an
+admitted guest is not enough.
 
 A `Viewer` is just `{ id, role, sendMessage, close }`. Nothing about it knows what a
 WebSocket is, which is why the tests attach a plain collector object and

@@ -36,6 +36,7 @@ const IMMUTABLE = new Set([".ttf", ".woff2"]);
 /** @type {Readonly<Record<string, number>>} Anything not named here is a 500. */
 const ERROR_STATUS = Object.freeze({
   E3001: 404,
+  E3014: 403,
   E6001: 404,
 });
 
@@ -152,6 +153,17 @@ async function handleRequest(req, res) {
     return;
   }
 
+  const terminateMatch = /^\/api\/sessions\/([0-9a-fA-F-]{36})$/.exec(path);
+  if (terminateMatch !== null && req.method === "DELETE") {
+    registry.terminate(
+      String(terminateMatch[1]),
+      header(req, "x-session-pass"),
+    );
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
   if (path === "/api/sessions" && req.method === "GET") {
     sendJson(res, 200, {
       sessions: registry.list(),
@@ -259,8 +271,8 @@ function attachViewer(session, ws, client, pass) {
       }
       ws.send(JSON.stringify(message));
     },
-    close() {
-      ws.close(1008, "refused");
+    close(code = 1008, reason = "refused") {
+      ws.close(code, reason);
     },
   };
 

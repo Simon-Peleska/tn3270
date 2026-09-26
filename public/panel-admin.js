@@ -5,18 +5,27 @@ export const adminLayout = {
   valueCol: 38,
 
   render(panel, view) {
-    view.say(1, 2, "Command ===>", "green");
-    view.field("command", 1, 15, 8, "");
-    view.say(3, 3, "J=Join in a new tab   R/Enter=Refresh", "turquoise");
+    view.say(1, 1, "Command ===>", "green");
+    view.field("command", 1, 14, 1, "");
+    const canKill = panel.adminSessions.some((session) =>
+      panel.deps.ownsSession(session.id),
+    );
+    view.say(
+      3,
+      1,
+      `J=Join ${canKill ? "K=Kill " : ""}R/Enter=Refresh`,
+      "turquoise",
+    );
     view.say(
       5,
       3,
       "User / IP (session)                Started",
       "neutralWhite",
     );
-    if (panel.adminLoading) view.say(6, 2, "Loading sessions...", "turquoise");
+    if (panel.adminLoading && panel.adminSessions.length === 0)
+      view.say(6, 3, "Loading sessions...", "turquoise");
     else if (panel.adminSessions.length === 0)
-      view.say(6, 2, "No open sessions", "turquoise");
+      view.say(6, 3, "No open sessions", "turquoise");
   },
 
   items(panel) {
@@ -25,6 +34,9 @@ export const adminLayout = {
       label: `${session.startedBy.slice(0, 23)} (${session.id.slice(0, 8)})`,
       value: new Date(session.startedAt).toLocaleString(),
       j: () => panel.deps.joinSession(session.id),
+      k: panel.deps.ownsSession(session.id)
+        ? () => panel.terminateSession(session.id)
+        : undefined,
     }));
   },
 

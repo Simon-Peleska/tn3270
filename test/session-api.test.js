@@ -4,6 +4,7 @@ import {
   createSessionRequest,
   listSessions,
   liveSessionIds,
+  terminateSession,
 } from "../public/session-api.js";
 
 test("session API uses one response shape for create and list", async (t) => {
@@ -13,8 +14,17 @@ test("session API uses one response shape for create and list", async (t) => {
   });
   /** @type {string[]} */
   const requests = [];
+  /** @type {{ method: string, headers: Record<string, string> }} */
+  const termination = { method: "", headers: {} };
   globalThis.fetch = async (_url, options) => {
     requests.push(options?.method ?? "GET");
+    if (options?.method === "DELETE") {
+      termination.method = options.method;
+      termination.headers = /** @type {Record<string, string>} */ (
+        options.headers
+      );
+      return new Response(null, { status: 204 });
+    }
     return Response.json(
       options?.method === "POST"
         ? { id: "created", rows: 24, cols: 80 }
@@ -33,7 +43,10 @@ test("session API uses one response shape for create and list", async (t) => {
   });
   assert.equal((await listSessions())[0].id, "created");
   assert.deepEqual(await liveSessionIds(), new Set(["created"]));
-  assert.deepEqual(requests, ["POST", "GET", "GET"]);
+  await terminateSession("created", "owner-pass");
+  assert.deepEqual(requests, ["POST", "GET", "GET", "DELETE"]);
+  assert.equal(termination.method, "DELETE");
+  assert.deepEqual(termination.headers, { "x-session-pass": "owner-pass" });
 });
 
 test("session API surfaces a coded error while the live check tolerates downtime", async (t) => {
@@ -45,5 +58,25 @@ test("session API surfaces a coded error while the live check tolerates downtime
     Response.json({ code: "E3002", message: "session limit" }, { status: 500 });
   await assert.rejects(createSessionRequest(), /\[E3002\] session limit/);
   await assert.rejects(listSessions(), /\[E3002\] session limit/);
+  await assert.rejects(
+    terminateSession("session", "wrong-pass"),
+    /\[E3002\] session limit/,
+  );
   assert.equal(await liveSessionIds(), null);
+});
+
+test("session termination preserves an owner-only error from the server", async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  globalThis.fetch = async () =>
+    Response.json(
+      { code: "E3014", message: "Only the session owner may terminate it" },
+      { status: 403 },
+    );
+  await assert.rejects(
+    terminateSession("session", "guest-pass"),
+    /\[E3014\] Only the session owner may terminate it/,
+  );
 });
