@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { writeFile, mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:net";
@@ -25,9 +25,8 @@ async function stopProcess(child) {
   await once(child, "exit");
 }
 
-test("a real browser types, opens a panel, switches sessions, and reloads", async (t) => {
+async function startBrowser(t) {
   const host = await FakeHost.listen("test/traces/fields.trc", 0);
-
   const serverPort = await freePort();
   const debugPort = await freePort();
   const temp = await mkdtemp(join(tmpdir(), "tn3270-browser-"));
@@ -71,11 +70,15 @@ test("a real browser types, opens a panel, switches sessions, and reloads", asyn
     ],
     { stdio: "ignore" },
   );
+  /** @type {WebSocket | null} */
+  let socket = null;
   t.after(async () => {
+    socket?.close();
     await stopProcess(browser);
     await host.close();
     await rm(temp, { recursive: true, force: true, maxRetries: 5 });
   });
+
   await waitUntil(async () => {
     try {
       const tabs = await (
@@ -89,13 +92,14 @@ test("a real browser types, opens a panel, switches sessions, and reloads", asyn
   const tabs = await (await fetch(`http://127.0.0.1:${debugPort}/json`)).json();
   const page = tabs.find((tab) => tab.type === "page");
   assert.ok(page);
-  const socket = new WebSocket(page.webSocketDebuggerUrl);
-  t.after(() => socket.close());
+  socket = new WebSocket(page.webSocketDebuggerUrl);
   await once(socket, "open");
 
   let nextId = 0;
   const pending = new Map();
+  /** @type {string[]} */
   const exceptions = [];
+  /** @type {import('../server/protocol.js').ClientMessage[]} */
   const sentFrames = [];
   socket.on("message", (raw) => {
     const message = JSON.parse(String(raw));
@@ -115,6 +119,7 @@ test("a real browser types, opens a panel, switches sessions, and reloads", asyn
       resolve(message);
     }
   });
+
   const command = (method, params = {}) =>
     new Promise((resolve) => {
       const id = ++nextId;
@@ -143,92 +148,6 @@ test("a real browser types, opens a panel, switches sessions, and reloads", asyn
       };
       socket.on("message", received);
     });
-
-  await command("Network.enable");
-  await command("Page.enable");
-  await command("Runtime.enable");
-  const hello = frame("Network.webSocketFrameReceived", "hello");
-  const connected = frame(
-    "Network.webSocketFrameReceived",
-    "status",
-    (status) => status.connected === true,
-  );
-  await command("Page.navigate", { url: `http://127.0.0.1:${serverPort}/` });
-  const firstHello = await hello;
-  assert.equal(firstHello.type, "hello");
-  await host.waitForConnection();
-  await host.sendRecords(1);
-  await connected;
-  const geometry = await command("Runtime.evaluate", {
-    expression:
-      "[document.querySelector('canvas').width, document.querySelector('canvas').height]",
-    returnByValue: true,
-  });
-  assert.ok(geometry.result.result.value.every((size) => size > 0));
-
-  const sentText = frame("Network.webSocketFrameSent", "text");
-  await command("Input.dispatchKeyEvent", {
-    type: "keyDown",
-    key: "a",
-    code: "KeyA",
-    text: "a",
-    windowsVirtualKeyCode: 65,
-  });
-  await command("Input.dispatchKeyEvent", {
-    type: "keyUp",
-    key: "a",
-    code: "KeyA",
-    windowsVirtualKeyCode: 65,
-  });
-  assert.equal((await sentText).value, "a");
-
-  const recordStart = frame(
-    "Network.webSocketFrameSent",
-    "recorder",
-    (message) => message.action === "start",
-  );
-  await command("Input.dispatchKeyEvent", {
-    type: "keyDown",
-    key: "e",
-    code: "KeyE",
-    modifiers: 2,
-    windowsVirtualKeyCode: 69,
-  });
-  await command("Input.dispatchKeyEvent", {
-    type: "keyUp",
-    key: "e",
-    code: "KeyE",
-    modifiers: 2,
-    windowsVirtualKeyCode: 69,
-  });
-  await recordStart;
-  await command("Input.dispatchKeyEvent", {
-    type: "keyDown",
-    key: "b",
-    code: "KeyB",
-    text: "b",
-    windowsVirtualKeyCode: 66,
-  });
-  const recordStopped = frame(
-    "Network.webSocketFrameReceived",
-    "recorderStopped",
-  );
-  await command("Input.dispatchKeyEvent", {
-    type: "keyDown",
-    key: "e",
-    code: "KeyE",
-    modifiers: 2,
-    windowsVirtualKeyCode: 69,
-  });
-  await command("Input.dispatchKeyEvent", {
-    type: "keyUp",
-    key: "e",
-    code: "KeyE",
-    modifiers: 2,
-    windowsVirtualKeyCode: 69,
-  });
-  await recordStopped;
-
   const key = async (name, code, options = {}) => {
     await command("Input.dispatchKeyEvent", {
       type: "keyDown",
@@ -243,99 +162,167 @@ test("a real browser types, opens a panel, switches sessions, and reloads", asyn
       ...options,
     });
   };
-  await key(",", "Comma", { modifiers: 1, windowsVirtualKeyCode: 188 });
-  await key("2", "Digit2", { text: "2", windowsVirtualKeyCode: 50 });
-  await key("Enter", "Enter", { modifiers: 2, windowsVirtualKeyCode: 13 });
-  const changedModel = frame("Network.webSocketFrameSent", "model");
-  const disconnectedForSize = frame(
+
+  await command("Network.enable");
+  await command("Page.enable");
+  await command("Runtime.enable");
+  const hello = frame("Network.webSocketFrameReceived", "hello");
+  const connected = frame(
+    "Network.webSocketFrameReceived",
+    "status",
+    (status) => status.connected === true,
+  );
+  await command("Page.navigate", { url: `http://127.0.0.1:${serverPort}/` });
+  const firstHello = await hello;
+  await host.waitForConnection();
+  await host.sendRecords(1);
+  await connected;
+  const geometry = await command("Runtime.evaluate", {
+    expression:
+      "[document.querySelector('canvas').width, document.querySelector('canvas').height]",
+    returnByValue: true,
+  });
+  assert.ok(geometry.result.result.value.every((size) => size > 0));
+  const commandSocket = socket;
+
+  return {
+    command,
+    commandSocket,
+    frame,
+    key,
+    firstHello,
+    exceptions,
+    sentFrames,
+    server,
+  };
+}
+
+test("the browser types and stops a recording while host input is pending", async (t) => {
+  const browser = await startBrowser(t);
+  const sentText = browser.frame("Network.webSocketFrameSent", "text");
+  await browser.key("a", "KeyA", { text: "a", windowsVirtualKeyCode: 65 });
+  assert.equal((await sentText).value, "a");
+
+  const recordStart = browser.frame(
+    "Network.webSocketFrameSent",
+    "recorder",
+    (message) => message.action === "start",
+  );
+  await browser.key("e", "KeyE", {
+    modifiers: 2,
+    windowsVirtualKeyCode: 69,
+  });
+  await recordStart;
+  await browser.command("Input.dispatchKeyEvent", {
+    type: "keyDown",
+    key: "b",
+    code: "KeyB",
+    text: "b",
+    windowsVirtualKeyCode: 66,
+  });
+  const recordStopped = browser.frame(
+    "Network.webSocketFrameReceived",
+    "recorderStopped",
+  );
+  await browser.key("e", "KeyE", {
+    modifiers: 2,
+    windowsVirtualKeyCode: 69,
+  });
+  await recordStopped;
+});
+
+test("screen-size changes keep the size dialog open", async (t) => {
+  const browser = await startBrowser(t);
+  await browser.key(",", "Comma", {
+    modifiers: 1,
+    windowsVirtualKeyCode: 188,
+  });
+  await browser.key("2", "Digit2", {
+    text: "2",
+    windowsVirtualKeyCode: 50,
+  });
+  await browser.key("Enter", "Enter", {
+    modifiers: 2,
+    windowsVirtualKeyCode: 13,
+  });
+
+  const changedModel = browser.frame("Network.webSocketFrameSent", "model");
+  const disconnected = browser.frame(
     "Network.webSocketFrameReceived",
     "status",
     (message) => message.connected === false,
   );
-  await key("s", "KeyS", { text: "s", windowsVirtualKeyCode: 83 });
-  await key("Enter", "Enter", { modifiers: 2, windowsVirtualKeyCode: 13 });
+  await browser.key("s", "KeyS", { text: "s", windowsVirtualKeyCode: 83 });
+  await browser.key("Enter", "Enter", {
+    modifiers: 2,
+    windowsVirtualKeyCode: 13,
+  });
   assert.equal((await changedModel).model, 2);
-  await disconnectedForSize;
-  const beforeBack = sentFrames.length;
-  await key("F3", "F3", { windowsVirtualKeyCode: 114 });
-  await key("2", "Digit2", { text: "2", windowsVirtualKeyCode: 50 });
-  await key("Enter", "Enter", { modifiers: 2, windowsVirtualKeyCode: 13 });
+  await disconnected;
+
+  const beforeBack = browser.sentFrames.length;
+  await browser.key("F3", "F3", { windowsVirtualKeyCode: 114 });
+  await browser.key("2", "Digit2", {
+    text: "2",
+    windowsVirtualKeyCode: 50,
+  });
+  await browser.key("Enter", "Enter", {
+    modifiers: 2,
+    windowsVirtualKeyCode: 13,
+  });
   assert.equal(
-    sentFrames
+    browser.sentFrames
       .slice(beforeBack)
       .some((message) => message.type === "text" || message.type === "action"),
     false,
   );
-  await key("F3", "F3", { windowsVirtualKeyCode: 114 });
-  await key("F3", "F3", { windowsVirtualKeyCode: 114 });
+});
 
-  const before = (await command("Page.captureScreenshot", { format: "png" }))
-    .result.data;
-  await command("Input.dispatchKeyEvent", {
-    type: "keyDown",
-    key: " ",
-    code: "Space",
-    text: " ",
-    modifiers: 1,
-    windowsVirtualKeyCode: 32,
+test("the browser opens a panel", async (t) => {
+  const browser = await startBrowser(t);
+  const before = (
+    await browser.command("Page.captureScreenshot", { format: "png" })
+  ).result.data;
+  await browser.key("m", "KeyM", {
+    modifiers: 2,
+    windowsVirtualKeyCode: 77,
   });
-  await command("Input.dispatchKeyEvent", {
-    type: "keyUp",
-    key: " ",
-    code: "Space",
-    modifiers: 1,
-    windowsVirtualKeyCode: 32,
-  });
-  const after = (await command("Page.captureScreenshot", { format: "png" }))
-    .result.data;
+  const after = (
+    await browser.command("Page.captureScreenshot", { format: "png" })
+  ).result.data;
   assert.notEqual(after, before);
+  assert.deepEqual(browser.exceptions, []);
+});
 
-  const secondHello = frame(
+test("sessions can be switched and restored after reload", async (t) => {
+  const browser = await startBrowser(t);
+  const secondHello = browser.frame(
     "Network.webSocketFrameReceived",
     "hello",
-    (message) => message.sessionId !== firstHello.sessionId,
+    (message) => message.sessionId !== browser.firstHello.sessionId,
   );
-  await command("Input.dispatchKeyEvent", {
-    type: "keyDown",
-    key: "b",
-    code: "KeyB",
+  await browser.key("b", "KeyB", {
     modifiers: 2,
     windowsVirtualKeyCode: 66,
   });
-  await command("Input.dispatchKeyEvent", {
-    type: "keyUp",
-    key: "b",
-    code: "KeyB",
-    modifiers: 2,
-    windowsVirtualKeyCode: 66,
-  });
-  await command("Input.dispatchKeyEvent", {
-    type: "keyDown",
-    key: "2",
-    code: "Digit2",
+  await browser.key("2", "Digit2", {
     text: "2",
     windowsVirtualKeyCode: 50,
   });
-  await command("Input.dispatchKeyEvent", {
-    type: "keyUp",
-    key: "2",
-    code: "Digit2",
-    windowsVirtualKeyCode: 50,
-  });
-  assert.notEqual((await secondHello).sessionId, firstHello.sessionId);
+  assert.notEqual((await secondHello).sessionId, browser.firstHello.sessionId);
 
-  const beforeReload = await command("Runtime.evaluate", {
+  const beforeReload = await browser.command("Runtime.evaluate", {
     expression: "location.hash",
     returnByValue: true,
   });
-  const reattached = frame(
+  const reattached = browser.frame(
     "Network.webSocketFrameReceived",
     "hello",
-    (message) => message.sessionId === firstHello.sessionId,
+    (message) => message.sessionId === browser.firstHello.sessionId,
   );
-  await command("Page.reload");
+  await browser.command("Page.reload");
   await reattached;
-  const afterReload = await command("Runtime.evaluate", {
+  const afterReload = await browser.command("Runtime.evaluate", {
     expression: "location.hash",
     returnByValue: true,
   });
@@ -343,9 +330,14 @@ test("a real browser types, opens a panel, switches sessions, and reloads", asyn
     afterReload.result.result.value,
     beforeReload.result.result.value,
   );
+  assert.deepEqual(browser.exceptions, []);
+});
+
+test("a server disconnect is reported clearly", async (t) => {
+  const browser = await startBrowser(t);
   const disconnected = new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      socket.off("message", received);
+      browser.commandSocket.off("message", received);
       reject(new Error("timed out waiting for the disconnect message"));
     }, 10000);
     const received = (raw) => {
@@ -354,12 +346,12 @@ test("a real browser types, opens a panel, switches sessions, and reloads", asyn
       const message = event.params.args[0]?.value;
       if (typeof message !== "string" || !message.includes("[E5002]")) return;
       clearTimeout(timer);
-      socket.off("message", received);
+      browser.commandSocket.off("message", received);
       resolve(message);
     };
-    socket.on("message", received);
+    browser.commandSocket.on("message", received);
   });
-  await stopProcess(server);
+  await stopProcess(browser.server);
   assert.match(await disconnected, /Connection to server lost\. Reconnecting/);
-  assert.deepEqual(exceptions, []);
+  assert.deepEqual(browser.exceptions, []);
 });
