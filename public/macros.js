@@ -155,6 +155,27 @@ export class Macros {
     this.deps.persist(this.macros);
   }
 
+  /**
+   * @param {import('./recorder.js').Recording} recording
+   * @returns {boolean}
+   */
+  playRecording(recording) {
+    const macro = {
+      name: recording.name,
+      steps: recording.steps.flatMap((step) => {
+        if (step.password || step.final || step.action === undefined) return [];
+        if (step.action === "String" || step.action === "PasteString") {
+          const text = step.args?.[0] ?? "";
+          return text === "" ? [] : [{ text, action: "", args: [] }];
+        }
+        return [{ text: "", action: step.action, args: step.args ?? [] }];
+      }),
+    };
+    if (macro.steps.length === 0) return false;
+    void this.play(macro);
+    return true;
+  }
+
   /** @returns {void} */
   discard() {
     this.pending = null;

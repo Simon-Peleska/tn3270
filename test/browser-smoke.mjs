@@ -266,6 +266,56 @@ test("the browser types and stops a recording while host input is pending", asyn
   await recordStopped;
 });
 
+test("holding Ctrl+. repeats the last recording", async (t) => {
+  const browser = await startBrowser(t);
+  const controlE = { modifiers: 2, windowsVirtualKeyCode: 69 };
+  const started = browser.frame(
+    "Network.webSocketFrameSent",
+    "recorder",
+    (message) => message.action === "start",
+  );
+  await browser.key("e", "KeyE", controlE);
+  await started;
+
+  const recorded = browser.frame(
+    "Network.webSocketFrameReceived",
+    "recorderStep",
+  );
+  await browser.key("b", "KeyB", { text: "b", windowsVirtualKeyCode: 66 });
+  await recorded;
+  const stopped = browser.frame(
+    "Network.webSocketFrameReceived",
+    "recorderStopped",
+  );
+  await browser.key("e", "KeyE", controlE);
+  await stopped;
+
+  const controlPeriod = {
+    key: ".",
+    code: "Period",
+    modifiers: 2,
+    windowsVirtualKeyCode: 190,
+  };
+  const first = browser.frame("Network.webSocketFrameSent", "paste");
+  await browser.command("Input.dispatchKeyEvent", {
+    type: "keyDown",
+    ...controlPeriod,
+  });
+  assert.equal((await first).text, "b");
+
+  const second = browser.frame("Network.webSocketFrameSent", "paste");
+  await browser.command("Input.dispatchKeyEvent", {
+    type: "keyDown",
+    autoRepeat: true,
+    ...controlPeriod,
+  });
+  assert.equal((await second).text, "b");
+  await browser.command("Input.dispatchKeyEvent", {
+    type: "keyUp",
+    ...controlPeriod,
+  });
+});
+
 test("screen-size changes keep the size dialog open", async (t) => {
   const browser = await startBrowser(t);
   await browser.key(",", "Comma", {
@@ -423,5 +473,64 @@ test("the owner can kill their session from the Sessions panel", async (t) => {
     ),
     false,
   );
+  assert.deepEqual(browser.exceptions, []);
+});
+
+test("joining from Sessions with E asks the owner for editing rights", async (t) => {
+  const browser = await startBrowser(t);
+  await browser.key(",", "Comma", {
+    modifiers: 1,
+    windowsVirtualKeyCode: 188,
+  });
+  await browser.key("7", "Digit7", {
+    text: "7",
+    windowsVirtualKeyCode: 55,
+  });
+  const sessionsLoaded = browser.event(
+    "Network.responseReceived",
+    ({ response }) => response.url.endsWith("/api/sessions"),
+  );
+  await browser.key("Enter", "Enter", {
+    modifiers: 2,
+    windowsVirtualKeyCode: 13,
+  });
+  const response = await sessionsLoaded;
+  await browser.event(
+    "Network.loadingFinished",
+    ({ requestId }) => requestId === response.requestId,
+  );
+  await browser.command("Runtime.evaluate", {
+    expression:
+      "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+  });
+
+  const watchRequested = browser.frame(
+    "Network.webSocketFrameReceived",
+    "status",
+    (message) => message.requests?.some((request) => request.kind === "watch"),
+  );
+  await browser.key("Tab", "Tab", { windowsVirtualKeyCode: 9 });
+  await browser.key("e", "KeyE", { text: "e", windowsVirtualKeyCode: 69 });
+  await browser.key("Enter", "Enter", {
+    modifiers: 2,
+    windowsVirtualKeyCode: 13,
+  });
+  await watchRequested;
+
+  const editRequested = browser.frame(
+    "Network.webSocketFrameReceived",
+    "status",
+    (message) => message.requests?.some((request) => request.kind === "edit"),
+  );
+  await browser.key("y", "KeyY", { modifiers: 2, windowsVirtualKeyCode: 89 });
+  await editRequested;
+
+  const editor = browser.frame(
+    "Network.webSocketFrameReceived",
+    "status",
+    (message) => message.editor !== null,
+  );
+  await browser.key("y", "KeyY", { modifiers: 2, windowsVirtualKeyCode: 89 });
+  assert.ok((await editor).editor);
   assert.deepEqual(browser.exceptions, []);
 });

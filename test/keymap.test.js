@@ -20,6 +20,7 @@ test("the menu, keyboard, and recorder shortcuts are client commands", () => {
     ["m", "Menu"],
     ["k", "ToggleKeyboard"],
     ["e", "ToggleRecording"],
+    [".", "RepeatRecording"],
   ]) {
     assert.deepEqual(
       mapKey(
@@ -33,6 +34,7 @@ test("the menu, keyboard, and recorder shortcuts are client commands", () => {
   assert.equal(keymap.labelFor("Menu"), "Ctrl+M");
   assert.equal(keymap.labelFor("ToggleKeyboard"), "Ctrl+K");
   assert.equal(keymap.labelFor("ToggleRecording"), "Ctrl+E");
+  assert.equal(keymap.labelFor("RepeatRecording"), "Ctrl+.");
 });
 
 test("Alt-C opens the character picker as an editable client command", () => {

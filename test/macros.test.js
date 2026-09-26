@@ -110,6 +110,42 @@ test("playing a macro sends each step and waits for the keyboard to unlock betwe
   assert.equal(macros.playing, null);
 });
 
+test("repeating a recording turns its input into a macro and skips password and screen steps", async () => {
+  const { macros, calls, pendingUnlocks } = fixture();
+  const started = macros.playRecording({
+    name: "Recorded login",
+    recordedAt: "2026-09-26T00:00:00.000Z",
+    steps: [
+      {
+        screen: [],
+        cursor: { row: 0, col: 0 },
+        action: "String",
+        args: ["USER"],
+      },
+      { screen: [], cursor: { row: 0, col: 0 }, action: "Enter", args: [] },
+      { screen: [], cursor: { row: 0, col: 0 }, password: true },
+      { screen: [], cursor: { row: 0, col: 0 }, action: "Tab", args: [] },
+      { screen: [], cursor: { row: 0, col: 0 }, final: true },
+    ],
+  });
+
+  assert.equal(started, true);
+  assert.deepEqual(calls.dispatched, [
+    { type: "paste", text: "USER", segments: [] },
+    { type: "action", action: "Enter", args: [] },
+  ]);
+  pendingUnlocks[0]?.();
+  await Promise.resolve();
+  assert.deepEqual(calls.dispatched.at(-1), {
+    type: "action",
+    action: "Tab",
+    args: [],
+  });
+  pendingUnlocks[1]?.();
+  await Promise.resolve();
+  assert.equal(macros.playing, null);
+});
+
 test("playback batches neighbouring character steps before the next action", async () => {
   const { macros, calls, pendingUnlocks } = fixture();
   const played = macros.play({

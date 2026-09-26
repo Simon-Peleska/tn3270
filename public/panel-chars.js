@@ -8,12 +8,16 @@ export const charsLayout = {
 
   render(panel, view) {
     view.say(1, 2, "Hex code ===>", "green");
-    view.field("hex", 1, 16, 2, "");
+    view.field("hex", 1, 16, 2, "", ["turquoise", "yellow"]);
     view.say(3, 2, "Click a character,", "turquoise");
     view.say(4, 2, "or move the cursor", "turquoise");
     view.say(5, 2, "to it and Enter.", "turquoise");
-    view.say(7, 2, "40-FF in hex", "turquoise");
-    drawCodePageChart(view, panel.deps.codePage());
+    view.say(7, 2, "4", "turquoise");
+    view.say(7, 3, "0", "yellow");
+    view.say(7, 4, "-F", "turquoise");
+    view.say(7, 6, "F", "yellow");
+    view.say(7, 7, " in hex", "turquoise");
+    drawCodePageChart(view, panel.deps.codePage(), "yellow");
   },
 
   input(panel, values) {

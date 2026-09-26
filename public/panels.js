@@ -49,7 +49,7 @@ import { charsLayout, printableCharacter } from "./panel-chars.js";
  * @property {(host: string | null) => void} connect null reopens the server's host
  * @property {() => void} importRecording
  * @property {() => Promise<{ id: string, startedBy: string, startedAt: string }[]>} listSessions
- * @property {(id: string) => void} joinSession
+ * @property {(id: string, requestEdit?: boolean) => void} joinSession
  * @property {(id: string) => boolean} ownsSession
  * @property {(id: string) => Promise<void>} terminateSession
  * @property {(character: string) => void} insertCharacter
@@ -84,7 +84,7 @@ import { charsLayout, printableCharacter } from "./panel-chars.js";
  * @property {number} rows
  * @property {number} cols
  * @property {(row: number, col: number, text: string, fg: string, gr?: string) => void} say
- * @property {(name: string, row: number, col: number, width: number, value: string) => void} field
+ * @property {(name: string, row: number, col: number, width: number, value: string, fgByPosition?: string[]) => void} field
  * @typedef {object} PanelLayout
  * @property {string | ((panel: Panels, id: string) => string)} [title]
  * @property {number} [listTop]
@@ -603,7 +603,7 @@ export class Panels {
       "highlight",
     );
     /** @type {PanelView['field']} */
-    const field = (name, row, col, width, value) => {
+    const field = (name, row, col, width, value, fgByPosition) => {
       if (width > 0 && col < cols)
         fields.push({
           name,
@@ -611,6 +611,7 @@ export class Panels {
           col,
           width: Math.min(width, cols - col),
           value,
+          fgByPosition,
         });
     };
     layout.render?.(this, { rows, cols, say, field });

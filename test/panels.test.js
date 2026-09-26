@@ -28,6 +28,7 @@ function fixture() {
     /** @type {string[]} */ exported: [],
     imports: 0,
     /** @type {string[]} */ joined: [],
+    /** @type {string[]} */ joinedForEdit: [],
     /** @type {Set<string>} */ owners: new Set(),
     /** @type {string[]} */ terminated: [],
     /** @type {string[]} */ characters: [],
@@ -85,7 +86,8 @@ function fixture() {
         startedAt: "2026-09-26T10:00:00.000Z",
       },
     ],
-    joinSession: (id) => calls.joined.push(id),
+    joinSession: (id, requestEdit = false) =>
+      (requestEdit ? calls.joinedForEdit : calls.joined).push(id),
     ownsSession: (id) => calls.owners.has(id),
     terminateSession: async (id) => {
       calls.terminated.push(id);
@@ -225,6 +227,38 @@ test("the character picker uses the Font code-page chart and accepts a hex byte"
   assert.equal(panels.isOpen(), false);
 });
 
+test("the character picker colors the second hex digit differently", () => {
+  const { panels } = fixture();
+  panels.openChars();
+  const texts = panels.host.layout().texts;
+  const colorAt = (/** @type {number} */ row, /** @type {number} */ col) =>
+    texts.find((text) => text.row === row && text.col === col)?.fg;
+
+  assert.equal(colorAt(7, 2), "turquoise");
+  assert.equal(colorAt(7, 3), "yellow");
+  assert.equal(colorAt(7, 4), "turquoise");
+  assert.equal(colorAt(7, 6), "yellow");
+  assert.equal(colorAt(4, 34), "turquoise");
+  assert.equal(colorAt(3, 36), "yellow");
+
+  press(panels, "MoveCursor1", ["2", "17"]);
+  type(panels, "C1");
+  const grid = new Grid(24, 80, null);
+  grid.applyPaint(panels.paint(24, 80));
+  assert.equal(grid.cellAt(1, 16)?.ch, "C");
+  assert.equal(grid.cellAt(1, 16)?.fg, "turquoise");
+  assert.equal(grid.cellAt(1, 17)?.ch, "1");
+  assert.equal(grid.cellAt(1, 17)?.fg, "yellow");
+  assert.equal(grid.cellAt(1, 17)?.editable, true);
+
+  panels.open("font");
+  assert.equal(
+    panels.host.layout().texts.find((text) => text.row === 3 && text.col === 36)
+      ?.fg,
+    "turquoise",
+  );
+});
+
 test("the character picker accepts cursor/Enter and direct mouse selection", () => {
   const { panels, calls } = fixture();
   panels.openChars();
@@ -266,7 +300,7 @@ test("the character picker rejects an unavailable code page and permits hex 40 s
   assert.deepEqual(calls.characters, [" "]);
 });
 
-test("open sessions lists creator and start time, and J opens the selected session", async () => {
+test("open sessions lists creator and start time, and J or E joins the selected session", async () => {
   const { panels, calls } = fixture();
   panels.open("menu");
   command(panels, "7");
@@ -278,6 +312,11 @@ test("open sessions lists creator and start time, and J opens the selected sessi
   onLine(panels, "alice", "j");
   press(panels, "Enter");
   assert.deepEqual(calls.joined, ["12345678-0000-0000-0000-000000000000"]);
+  onLine(panels, "alice", "e");
+  press(panels, "Enter");
+  assert.deepEqual(calls.joinedForEdit, [
+    "12345678-0000-0000-0000-000000000000",
+  ]);
 });
 
 test("only the owner sees K=Kill, and it refreshes the session list", async () => {

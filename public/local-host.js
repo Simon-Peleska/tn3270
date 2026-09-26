@@ -26,6 +26,7 @@ import { paintRow } from "./paint-runs.js";
  * @property {number} col 0-based
  * @property {number} width
  * @property {string} value what the application puts in it
+ * @property {string[]} [fgByPosition] foreground colors for individual cells
  *
  * @typedef {object} HostScreen
  * @property {Text[]} texts
@@ -313,8 +314,18 @@ export class LocalHost {
         gr: text.gr,
         editable: text.editable,
       });
-    for (const field of screen.fields)
+    for (const field of screen.fields) {
       grid.put(field.row, field.col, this.chars(field).join(""), FIELD_STYLE);
+      if (field.fgByPosition === undefined) continue;
+      for (
+        let index = 0;
+        index < Math.min(field.width, field.fgByPosition.length);
+        index += 1
+      ) {
+        const cell = grid.cellAt(field.row, field.col + index);
+        if (cell !== null) cell.fg = field.fgByPosition[index] ?? cell.fg;
+      }
+    }
     grid.fieldsFormatted = screen.fieldsFormatted ?? true;
     grid.cursor = { ...this.cursor, visible: true };
     return grid;

@@ -13,7 +13,7 @@ export const adminLayout = {
     view.say(
       3,
       1,
-      `J=Join ${canKill ? "K=Kill " : ""}R/Enter=Refresh`,
+      `J=Join E=Join edit ${canKill ? "K=Kill " : ""}R/Enter=Refresh`,
       "turquoise",
     );
     view.say(
@@ -34,6 +34,7 @@ export const adminLayout = {
       label: `${session.startedBy.slice(0, 23)} (${session.id.slice(0, 8)})`,
       value: new Date(session.startedAt).toLocaleString(),
       j: () => panel.deps.joinSession(session.id),
+      e: () => panel.deps.joinSession(session.id, true),
       k: panel.deps.ownsSession(session.id)
         ? () => panel.terminateSession(session.id)
         : undefined,

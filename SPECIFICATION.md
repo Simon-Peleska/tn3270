@@ -232,10 +232,12 @@ on any command line:
 | `0`    | Settings |
 | `1`    | Keys     |
 
-The Sessions page lists open sessions. `J` opens one in a new tab. `K` is
-offered only beside sessions this browser owns; the server also checks the
-owner's private session pass before ending one. Other viewers are disconnected
-with `E3015` and do not reconnect to a terminated session.
+The Sessions page lists open sessions. `J` opens one in a new tab. `E` opens
+one in a new tab and asks its owner for editing rights after the owner admits
+the new viewer; it does not bypass either approval. `K` is offered only beside
+sessions this browser owns; the server also checks the owner's private session
+pass before ending one. Other viewers are disconnected with `E3015` and do not
+reconnect to a terminated session.
 
 **Keys.** A panel has no keyboard of its own. It answers to the 3270 commands
 of §5, so a key does the same thing in a panel as on the screen behind it, and
@@ -271,6 +273,10 @@ deleting it frees the key. On the screen that key plays the macro, and does
 nothing while a macro is already playing or a panel is open. `RESET` on the
 Keys panel takes every macro's key away with the rest. Macros and keys are
 saved in this browser only; there is no file to import or export them.
+
+`Ctrl+.` replays the input from the most recently saved session recording as a
+macro; holding it repeats completed runs. It does not show the recorded screens,
+and password input is skipped.
 
 Opening a panel is a command like any other, so it is in the keymap of §5 and
 can be rebound there: `Menu`, `Settings`, `Macros`, `Recorder` and `Keys`,
@@ -587,6 +593,7 @@ browser, `E6xxx` server transport, `E7xxx` the REST proxy.
 | `E5037` | Server sent a malformed WebSocket message              |
 | `E5038` | First terminal session could not be opened             |
 | `E5039` | Session could not be terminated                        |
+| `E5040` | No saved recording is available to repeat              |
 | `E6001` | Static file not found                                  |
 | `E6002` | WebSocket upgrade path is not a session                |
 | `E6003` | WebSocket closed unexpectedly                          |

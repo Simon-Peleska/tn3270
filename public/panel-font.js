@@ -1,8 +1,8 @@
 import { FONTS, MIN_FIT_FONT_SIZE, MAX_FIT_FONT_SIZE } from "./settings.js";
 import { CODE_PAGE_CHARTS } from "./codepages.js";
 
-/** @param {import('./panels.js').PanelView} view @param {string} codePage */
-export function drawCodePageChart(view, codePage) {
+/** @param {import('./panels.js').PanelView} view @param {string} codePage @param {string} [columnColor] */
+export function drawCodePageChart(view, codePage, columnColor = "turquoise") {
   const number =
     codePage === "bracket"
       ? "037"
@@ -19,7 +19,7 @@ export function drawCodePageChart(view, codePage) {
     view.say(4, 34, "No single-byte chart for this code page", "yellow");
     return;
   }
-  view.say(3, 36, "0 1 2 3 4 5 6 7 8 9 A B C D E F", "turquoise");
+  view.say(3, 36, "0 1 2 3 4 5 6 7 8 9 A B C D E F", columnColor);
   for (let row = 0; row < 12; row += 1) {
     view.say(4 + row, 34, (row + 4).toString(16).toUpperCase(), "turquoise");
     for (let col = 0; col < 16; col += 1) {

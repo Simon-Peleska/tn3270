@@ -492,6 +492,9 @@ async function createSession() {
 /** @type {(SessionSlot | null)[]} */
 const sessions = [];
 for (let index = 0; index < MAX_SESSIONS; index++) sessions.push(null);
+let editOnJoinId = new URLSearchParams(location.search).has("requestEdit")
+  ? parseSessionHash(location.hash)[0]
+  : null;
 
 /** @type {number} The slot the keyboard is aimed at; always one of `panes`. */
 let active = 0;
@@ -683,8 +686,12 @@ const panels = new Panels({
   connect: connectHost,
   importRecording: () => importInput.click(),
   listSessions,
-  joinSession: (id) => {
-    window.open(`./#${id}`, "_blank", "noopener");
+  joinSession: (id, requestEdit = false) => {
+    window.open(
+      `./${requestEdit ? "?requestEdit=1" : ""}#${id}`,
+      "_blank",
+      "noopener",
+    );
   },
   ownsSession: (id) =>
     sessions.some(
@@ -1089,6 +1096,13 @@ function handleServerMessage(slot, message) {
     slot.role = message.role;
     redraw();
     screenEl.focus();
+    if (slot.id === editOnJoinId) {
+      editOnJoinId = null;
+      const url = new URL(location.href);
+      url.searchParams.delete("requestEdit");
+      history.replaceState(null, "", url.href);
+      if (message.role === "observer") sendTo(slot, { type: "askEdit" });
+    }
     return;
   }
   if (message.type === "recorderStep") {
@@ -1504,6 +1518,14 @@ screenEl.addEventListener(
         args: mapped.args,
         repeat: mapped.repeat,
       });
+      return;
+    }
+
+    if (mapped.command === "RepeatRecording") {
+      if (panel || macros.playing !== null) return;
+      const recording = recorder.recordings.at(-1);
+      if (recording === undefined || !macros.playRecording(recording))
+        showError("E5040", "There is no saved recording to repeat.");
       return;
     }
 

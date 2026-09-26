@@ -76,6 +76,7 @@ export const ERRORS = Object.freeze({
   E5037: "Server sent a malformed WebSocket message",
   E5038: "First terminal session could not be opened",
   E5039: "Session could not be terminated",
+  E5040: "No saved recording is available to repeat",
 
   E6001: "Static file not found",
   E6002: "WebSocket upgrade path is not a session",
