@@ -41,34 +41,15 @@ test("half of every delay is random, so browsers do not all retry on the same ti
 
 test("a session the server still has is reconnected to", () => {
   assert.equal(
-    reconnectStep({ answered: true, sessionLive: true, msLeft: 1 }),
-    "reconnect",
-  );
-  // Past the window, but the server decides, and it has not reaped the session.
-  assert.equal(
-    reconnectStep({ answered: true, sessionLive: true, msLeft: -60000 }),
+    reconnectStep({ answered: true, sessionLive: true }),
     "reconnect",
   );
 });
 
 test("a server that has forgotten the session is not waited for", () => {
-  assert.equal(
-    reconnectStep({ answered: true, sessionLive: false, msLeft: 300000 }),
-    "fresh",
-  );
+  assert.equal(reconnectStep({ answered: true, sessionLive: false }), "fresh");
 });
 
-test("a server that does not answer is waited for until the window is gone", () => {
-  assert.equal(
-    reconnectStep({ answered: false, sessionLive: false, msLeft: 1 }),
-    "retry",
-  );
-  assert.equal(
-    reconnectStep({ answered: false, sessionLive: false, msLeft: 0 }),
-    "fresh",
-  );
-  assert.equal(
-    reconnectStep({ answered: false, sessionLive: false, msLeft: Infinity }),
-    "retry",
-  );
+test("a disconnected server is retried rather than asked to create a session", () => {
+  assert.equal(reconnectStep({ answered: false, sessionLive: false }), "retry");
 });

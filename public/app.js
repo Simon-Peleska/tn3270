@@ -442,9 +442,6 @@ function clearError() {
   redraw();
 }
 
-/** @type {number} */
-const DEFAULT_IDLE_TIMEOUT_MS = 300000;
-
 /** @returns {Promise<{ id: string, rows: number, cols: number }>} */
 async function createSession() {
   const body = await createSessionRequest();
@@ -466,9 +463,7 @@ async function createSession() {
  *   canvas, once the server has said how big the screen is
  * @property {WebSocket | null} socket
  * @property {number} attempt
- * @property {number | null} reconnectUntil null while connected, Infinity when
- *   the server never reaps
- * @property {number} idleTimeoutMs
+ * @property {boolean} reconnecting whether a dropped socket has reattached
  * @property {number} model
  * @property {import('../server/b3270.js').ModelInfo[]} models
  * @property {boolean} hostLocked
@@ -540,8 +535,7 @@ function newSlot(id, cols = 0, rows = 0) {
     pane: null,
     socket: null,
     attempt: 0,
-    reconnectUntil: null,
-    idleTimeoutMs: DEFAULT_IDLE_TIMEOUT_MS,
+    reconnecting: false,
     model: 0,
     models: [],
     hostLocked: false,
@@ -935,20 +929,25 @@ function connectSocket(slot) {
 
   // A failed connect fires error then close; close decides the retry.
   ws.addEventListener("error", () => {
-    showError("E5002", "The connection to the server failed.");
+    console.warn("[E5002] WebSocket connection to server failed");
   });
 
   ws.addEventListener("close", (event) => {
     slot.socket = null;
-    if (event.reason === "E6010")
-      showError("E6010", "This viewer fell behind the screen; reconnecting.");
     // Coming back on our own would only ask again after a no.
     if (slot.refusal !== null) return;
-    // Measured from the first drop: the server started reaping then.
-    if (slot.reconnectUntil === null) {
-      slot.reconnectUntil =
-        slot.idleTimeoutMs === 0 ? Infinity : Date.now() + slot.idleTimeoutMs;
-    }
+    slot.reconnecting = true;
+    slot.connection = "Server disconnected";
+    slot.connected = false;
+    if (slot === activeSession()) syncActiveSettings(slot);
+    if (displayed(slot)) redraw();
+    if (event.reason === "E6010")
+      showError("E6010", "This viewer fell behind the screen; reconnecting.");
+    else
+      showError(
+        "E5002",
+        `Session ${sessions.indexOf(slot) + 1}: Connection to server lost. Reconnecting...`,
+      );
     scheduleReconnect(slot);
   });
 }
@@ -965,7 +964,6 @@ function scheduleReconnect(slot) {
     const step = reconnectStep({
       answered: live !== null,
       sessionLive: live !== null && live.has(slot.id),
-      msLeft: (slot.reconnectUntil ?? 0) - Date.now(),
     });
     if (step === "retry") {
       scheduleReconnect(slot);
@@ -989,11 +987,14 @@ async function startFreshSession(slot) {
   try {
     created = await createSession();
   } catch (cause) {
-    showError(
-      "E5014",
-      `The session could not be restarted: ${String(cause)}`,
-      cause,
-    );
+    if (cause instanceof TypeError)
+      showError("E5002", "Connection to server lost. Reconnecting...", cause);
+    else
+      showError(
+        "E5014",
+        `The session could not be restarted: ${String(cause)}`,
+        cause,
+      );
     scheduleReconnect(slot);
     return;
   }
@@ -1014,14 +1015,13 @@ function handleServerMessage(slot, message) {
 
   // A refused attach closes without a hello, so hello is the success signal.
   if (message.type === "hello") {
-    slot.idleTimeoutMs = message.idleTimeoutMs;
     slot.attempt = 0;
     slot.waiting = false;
     slot.owner = message.owner;
     sessionStorage.setItem(`tn3270.pass.${slot.id}`, message.pass);
-    if (slot.reconnectUntil !== null) {
+    if (slot.reconnecting) {
       // Reload rather than resume: the server may now serve newer page code.
-      slot.reconnectUntil = null;
+      slot.reconnecting = false;
       location.reload();
       return;
     }

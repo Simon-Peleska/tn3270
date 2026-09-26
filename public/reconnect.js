@@ -1,6 +1,7 @@
 /**
- * Reconnect policy: retry only as long as the server still holds the
- * viewer-less session (`sessions.idleTimeoutMs`), backing off with jitter.
+ * Reconnect policy: wait while the server is unreachable, backing off with
+ * jitter. Once it answers, its session list decides whether to reattach or
+ * start fresh.
  */
 
 /** @type {number} */
@@ -28,12 +29,9 @@ export function backoffDelay(attempt, random = Math.random()) {
  * @param {object} state
  * @param {boolean} state.answered whether the server answered at all
  * @param {boolean} state.sessionLive whether it still lists this session
- * @param {number} state.msLeft of the window the server holds a session for
  * @returns {'reconnect' | 'retry' | 'fresh'}
  */
-export function reconnectStep({ answered, sessionLive, msLeft }) {
-  if (answered && sessionLive) return "reconnect";
-  // Server is up and has forgotten the session; waiting cannot bring it back.
-  if (answered) return "fresh";
-  return msLeft > 0 ? "retry" : "fresh";
+export function reconnectStep({ answered, sessionLive }) {
+  if (!answered) return "retry";
+  return sessionLive ? "reconnect" : "fresh";
 }

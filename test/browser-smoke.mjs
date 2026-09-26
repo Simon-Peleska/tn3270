@@ -343,5 +343,23 @@ test("a real browser types, opens a panel, switches sessions, and reloads", asyn
     afterReload.result.result.value,
     beforeReload.result.result.value,
   );
+  const disconnected = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      socket.off("message", received);
+      reject(new Error("timed out waiting for the disconnect message"));
+    }, 10000);
+    const received = (raw) => {
+      const event = JSON.parse(String(raw));
+      if (event.method !== "Runtime.consoleAPICalled") return;
+      const message = event.params.args[0]?.value;
+      if (typeof message !== "string" || !message.includes("[E5002]")) return;
+      clearTimeout(timer);
+      socket.off("message", received);
+      resolve(message);
+    };
+    socket.on("message", received);
+  });
+  await stopProcess(server);
+  assert.match(await disconnected, /Connection to server lost\. Reconnecting/);
   assert.deepEqual(exceptions, []);
 });
