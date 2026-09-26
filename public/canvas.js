@@ -47,6 +47,9 @@ const SLOT_KEYS = [
   "brightWhite",
 ];
 
+const URL_PATTERN = /https?:\/\/[^\s<>"'`]+/gi;
+const URL_END_PUNCTUATION = /[.,;:!?)}\]]+$/;
+
 /**
  * One session's rectangle on the page's canvas: its cells, where they are and
  * how big they are. It holds no DOM and draws nothing — `Screen` does both, so
@@ -67,6 +70,8 @@ export class Pane {
     this.host = new Grid(rows, cols);
     /** @type {Grid} Panels, bars, buttons and hints, drawn over the host. */
     this.overlay = new Grid(this.displayRows, cols, null);
+    /** @type {(string | null)[]} */
+    this.links = Array(rows * cols).fill(null);
 
     /** @type {string} */
     this.fontFamily = "";
@@ -109,8 +114,40 @@ export class Pane {
     this.rows = rows;
     this.host.resize(rows, cols);
     this.overlay.resize(this.displayRows, cols);
+    this.links = Array(rows * cols).fill(null);
     this.clearSelection();
     return true;
+  }
+
+  /** @param {import('../server/protocol.js').PaintMessage} paint */
+  applyHostPaint(paint) {
+    this.host.applyPaint(paint);
+    const rows = paint.full
+      ? Array.from({ length: this.rows }, (_, row) => row)
+      : [...new Set(paint.rows.map((row) => row.row))];
+    for (const row of rows) {
+      if (row < 0 || row >= this.rows) continue;
+      this.links.fill(null, row * this.cols, (row + 1) * this.cols);
+      for (const match of this.host.rowText(row).matchAll(URL_PATTERN)) {
+        const url = match[0].replace(URL_END_PUNCTUATION, "");
+        if (url === "") continue;
+        try {
+          const parsed = new URL(url);
+          if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
+            continue;
+        } catch {
+          continue;
+        }
+        const start = row * this.cols + (match.index ?? 0);
+        this.links.fill(url, start, start + url.length);
+      }
+    }
+  }
+
+  /** @param {number} row @param {number} col @returns {string | null} */
+  linkAt(row, col) {
+    if (row < 0 || row >= this.rows || col < 0 || col >= this.cols) return null;
+    return this.links[row * this.cols + col] ?? null;
   }
 
   /** @returns {void} */
@@ -478,7 +515,15 @@ export class Screen {
       for (let col = 0; col < pane.cols; col++) {
         const cell = visibleCell(pane.host, pane.overlay, row, col);
         cells[col] = cell;
-        styles[col] = cell === null ? null : this.styleOf(pane, cell);
+        const style = cell === null ? null : this.styleOf(pane, cell);
+        const at = row * pane.cols + col;
+        if (
+          style !== null &&
+          pane.links[at] != null &&
+          pane.overlay.cells[at]?.ch === null
+        )
+          style.underline = true;
+        styles[col] = style;
       }
 
       // Backgrounds first, whole row, so a glyph that overhangs its cell is not

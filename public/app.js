@@ -1121,7 +1121,7 @@ function handleServerMessage(slot, message) {
   if (message.type === "paint") {
     // Even hidden, even behind a panel: a grid nobody is looking at costs
     // nothing to keep, and keeping it is what makes coming back free.
-    slot.pane?.host.applyPaint(message);
+    slot.pane?.applyHostPaint(message);
     if (displayed(slot)) redraw();
     return;
   }
@@ -1674,6 +1674,11 @@ function canvasClicked(event) {
 
   // A click ending a drag was aiming at the selection.
   if (canvas.hasSelection()) return;
+  const url = canvas.linkAt(row, col);
+  if (event.button === 0 && url !== null) {
+    window.open(url, "_blank", "noopener,noreferrer");
+    return;
+  }
   sendTo(slot, {
     type: "action",
     action: "MoveCursor1",

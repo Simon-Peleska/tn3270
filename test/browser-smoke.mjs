@@ -534,3 +534,56 @@ test("joining from Sessions with E asks the owner for editing rights", async (t)
   assert.ok((await editor).editor);
   assert.deepEqual(browser.exceptions, []);
 });
+
+test("clicking a URL on the host screen opens a new tab", async (t) => {
+  const browser = await startBrowser(t);
+  const url = "http://localhost";
+  for (const character of url.slice(0, -1))
+    await browser.key(character, "KeyA", { text: character });
+  const painted = browser.frame("Network.webSocketFrameReceived", "paint");
+  await browser.key(url.at(-1), "KeyA", { text: url.at(-1) });
+  await painted;
+
+  const position = await browser.command("Runtime.evaluate", {
+    expression: `(() => {
+      const canvas = document.querySelector("canvas");
+      const metrics = canvas.getContext("2d").measureText("M");
+      const width = Math.ceil(metrics.width);
+      const height = Math.ceil(metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent) + 2;
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: rect.left + (rect.width - 80 * width) / 2 + 12 * width,
+        y: rect.top + (rect.height - 44 * height) / 2 + 2.5 * height,
+      };
+    })()`,
+    returnByValue: true,
+  });
+  const { x, y } = position.result.result.value;
+  await browser.command("Target.setDiscoverTargets", { discover: true });
+  const opened = browser.event(
+    "Target.targetCreated",
+    ({ targetInfo }) =>
+      targetInfo.type === "page" && targetInfo.url !== browser.base + "/",
+  );
+  const navigated = browser.event(
+    "Target.targetInfoChanged",
+    ({ targetInfo }) => targetInfo.url === "http://localhost/",
+  );
+  await browser.command("Input.dispatchMouseEvent", {
+    type: "mousePressed",
+    x,
+    y,
+    button: "left",
+    clickCount: 1,
+  });
+  await browser.command("Input.dispatchMouseEvent", {
+    type: "mouseReleased",
+    x,
+    y,
+    button: "left",
+    clickCount: 1,
+  });
+  assert.ok((await opened).targetInfo);
+  assert.equal((await navigated).targetInfo.url, "http://localhost/");
+  assert.deepEqual(browser.exceptions, []);
+});

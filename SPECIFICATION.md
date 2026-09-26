@@ -159,6 +159,9 @@ the host.
   recorded takes it too); a click on the keyboard is never a cursor move. It is drawn
   on the session being looked at only, not under a panel, and is not
   remembered across a reload.
+- HTTP and HTTPS URLs on a host screen are underlined. Clicking one opens it in
+  a separate tab instead of moving the host cursor. Selecting text, the
+  on-screen keyboard, and panels still take priority over links.
 - Colours are the sixteen 3270 host colours, rendered as truecolor from x3270's
   own palette. If the host reports no colour (a 3278), the screen is rendered
   monochrome green rather than being given invented colours.

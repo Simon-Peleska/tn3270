@@ -399,6 +399,53 @@ test("an underline and a cursor land on the device pixel grid too", () => {
   }
 });
 
+test("host URLs are underlined, clickable by cell, and updated with the host paint", () => {
+  const pane = new Pane(80, 24);
+  const url = "https://example.org/a";
+  pane.applyHostPaint({
+    type: "paint",
+    full: true,
+    color: true,
+    fieldsFormatted: false,
+    rows: [
+      { row: 0, runs: [{ col: 0, text: `Visit ${url}, then.` }] },
+      { row: 1, runs: [{ col: 0, text: "(http://example.net)" }] },
+    ],
+    cursor: { row: 0, col: 0, on: false },
+  });
+  assert.equal(pane.linkAt(0, 6), url);
+  assert.equal(pane.linkAt(0, 6 + url.length - 1), url);
+  assert.equal(pane.linkAt(0, 6 + url.length), null);
+  assert.equal(pane.linkAt(1, 1), "http://example.net");
+  assert.equal(pane.linkAt(1, 19), null);
+
+  const screen = new Screen({
+    canvas: fakeCanvas(),
+    theme: THEME,
+    fieldBackground: true,
+  });
+  screen.layout([pane], paneShares(1), PAGE, "monospace");
+  screen.render();
+  const underlines = () =>
+    lastFrame(screen).filter((fill) => fill.h < pane.metrics.height / 4).length;
+  assert.equal(underlines(), url.length + "http://example.net".length);
+
+  pane.overlay.put(0, 6, "X");
+  screen.render();
+  assert.equal(underlines(), url.length + "http://example.net".length - 1);
+
+  pane.applyHostPaint({
+    type: "paint",
+    full: false,
+    color: true,
+    fieldsFormatted: false,
+    rows: [{ row: 0, runs: [{ col: 0, text: " ".repeat(80) }] }],
+    cursor: { row: 0, col: 0, on: false },
+  });
+  assert.equal(pane.linkAt(0, 6), null);
+  assert.equal(pane.linkAt(1, 1), "http://example.net");
+});
+
 test("every pane gets a share of the one canvas, and none overlaps another", () => {
   const { screen, panes } = pageOf(4);
 
