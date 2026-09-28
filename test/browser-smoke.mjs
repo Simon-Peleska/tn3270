@@ -426,6 +426,19 @@ test("a server disconnect is reported clearly", async (t) => {
   assert.deepEqual(browser.exceptions, []);
 });
 
+test("a tab coming back into view retries without waiting out the backoff", async (t) => {
+  const browser = await startBrowser(t);
+  const disconnected = browser.consoleMessage("[E5002]");
+  await stopProcess(browser.server);
+  await disconnected;
+  const retried = browser.consoleMessage("tab visible, retrying now");
+  await browser.command("Runtime.evaluate", {
+    expression: "document.dispatchEvent(new Event('visibilitychange'))",
+  });
+  await retried;
+  assert.deepEqual(browser.exceptions, []);
+});
+
 test("the owner can kill their session from the Sessions panel", async (t) => {
   const browser = await startBrowser(t);
   await browser.key(",", "Comma", {

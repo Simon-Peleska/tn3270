@@ -464,6 +464,7 @@ async function createSession() {
  *   canvas, once the server has said how big the screen is
  * @property {WebSocket | null} socket
  * @property {number} attempt
+ * @property {ReturnType<typeof setTimeout> | null} retryTimer the backoff wait before the next reconnect
  * @property {boolean} reconnecting whether a dropped socket has reattached
  * @property {number} model
  * @property {import('../server/b3270.js').ModelInfo[]} models
@@ -539,6 +540,7 @@ function newSlot(id, cols = 0, rows = 0) {
     pane: null,
     socket: null,
     attempt: 0,
+    retryTimer: null,
     reconnecting: false,
     model: 0,
     models: [],
@@ -984,23 +986,42 @@ function connectSocket(slot) {
 function scheduleReconnect(slot) {
   const delay = backoffDelay(slot.attempt);
   slot.attempt += 1;
-  setTimeout(async () => {
-    const live = await liveSessionIds();
-    const step = reconnectStep({
-      answered: live !== null,
-      sessionLive: live !== null && live.has(slot.id),
-    });
-    if (step === "retry") {
-      scheduleReconnect(slot);
-      return;
-    }
-    if (step === "fresh") {
-      startFreshSession(slot);
-      return;
-    }
-    connectSocket(slot);
-  }, delay);
+  slot.retryTimer = setTimeout(() => reconnect(slot), delay);
 }
+
+/**
+ * @param {SessionSlot} slot
+ * @returns {Promise<void>}
+ */
+async function reconnect(slot) {
+  slot.retryTimer = null;
+  const live = await liveSessionIds();
+  const step = reconnectStep({
+    answered: live !== null,
+    sessionLive: live !== null && live.has(slot.id),
+  });
+  if (step === "retry") {
+    scheduleReconnect(slot);
+    return;
+  }
+  if (step === "fresh") {
+    startFreshSession(slot);
+    return;
+  }
+  connectSocket(slot);
+}
+
+// A hidden tab's timers are throttled to once a minute, so the backoff wait
+// can outlast the outage by far; coming back should not sit through it.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  for (const slot of sessions) {
+    if (slot === null || slot.retryTimer === null) continue;
+    console.info(`[reconnect] session ${slot.id}: tab visible, retrying now`);
+    clearTimeout(slot.retryTimer);
+    reconnect(slot);
+  }
+});
 
 /**
  * @param {SessionSlot} slot
