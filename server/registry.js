@@ -54,7 +54,6 @@ export class SessionRegistry {
       const session = new Session(
         this.config,
         await reserveRestEndpoint(),
-        undefined,
         client.user,
       );
       session.startedBy = client.user || client.ip || "Unknown";

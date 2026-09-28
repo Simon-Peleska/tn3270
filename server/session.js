@@ -69,9 +69,10 @@ export class Session {
    * @param {import('./config.js').Config} config
    * @param {import('./restproxy.js').RestEndpoint | null} [rest] null leaves
    *   b3270 without an httpd, which only tests want.
+   * @param {string} [user] shown in the process list, '' for nobody
    * @param {string} [id]
    */
-  constructor(config, rest = null, id = randomUUID(), user = "") {
+  constructor(config, rest = null, user = "", id = randomUUID()) {
     /** @type {string} */
     this.id = id;
     this.startedAt = new Date().toISOString();

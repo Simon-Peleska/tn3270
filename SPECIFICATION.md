@@ -41,10 +41,11 @@ at it; `Ctrl-B` and a digit does the same from the keyboard.
 Each session asks the host for its own **LU**: the name of whoever created it
 (`X-Remote-User`, §3) upper-cased, cut to seven letters and digits (behind a
 `U` if it starts with a digit), plus the first suffix `1`–`9`, then `A`–`Z`,
-that none of their other sessions holds — `SIMON1`, `SIMON2`. Without a name, or once the suffixes run out, it is `S` and
-the first seven characters of the session id, since an LU may not start with a
-digit. A host string that names an LU itself (`LU@host`) keeps it, and
-`sessions.assignLu: false` leaves the LU to the host.
+that none of their other sessions holds — `SIMON1`, `SIMON2`. Without a name,
+or once the suffixes run out, it is `S` and the first seven characters of the
+session id, since an LU may not start with a digit. A host string that names an
+LU itself (`LU@host`) keeps it, and `sessions.assignLu: false` leaves the LU to
+the host.
 
 Sharing the URL is how a session is shared: there is no invite step, and sharing
 a page that holds four sessions shares all four. But nobody gets in on the URL

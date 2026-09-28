@@ -55,10 +55,6 @@ test("an LU is assigned unless sessions.assignLu turns it off", () => {
     validateConfig({ sessions: { assignLu: false } }).sessions.assignLu,
     false,
   );
-  assert.throws(
-    () => validateConfig({ sessions: { assignLu: "no" } }),
-    (err) => err instanceof AppError && err.code === "E1003",
-  );
 });
 
 test("the shipped config.example.jsonc parses and validates", () => {

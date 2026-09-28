@@ -191,6 +191,8 @@ export class ScreenModel {
 
         const characters =
           typeof change.text === "string" ? [...change.text] : null;
+        const fg = change.fg === this.defaultFg ? null : change.fg;
+        const bg = change.bg === this.defaultBg ? null : change.bg;
         const span =
           characters !== null ? characters.length : (change.count ?? 0);
 
@@ -199,10 +201,8 @@ export class ScreenModel {
           if (x >= this.cols) break;
           const cell = this.cellAt(y, x);
           if (characters !== null) cell.ch = characters[i] ?? " ";
-          if (change.fg !== undefined)
-            cell.fg = change.fg === this.defaultFg ? null : change.fg;
-          if (change.bg !== undefined)
-            cell.bg = change.bg === this.defaultBg ? null : change.bg;
+          if (fg !== undefined) cell.fg = fg;
+          if (bg !== undefined) cell.bg = bg;
           if (change.gr !== undefined)
             cell.gr = change.gr === "" ? null : change.gr;
         }

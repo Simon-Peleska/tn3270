@@ -29,22 +29,15 @@ export const settingsLayout = {
 
   /** @param {import('./panels.js').Panels} panel @param {Record<string, string>} values */
   input(panel, values) {
-    const { settings } = panel.deps;
-
-    if (settings.connected) return;
-
-    // Don't reconnect when Enter is being used to run a menu command.
-    if (values.command?.trim()) return;
-
-    // Server-configured host: reconnect to it.
+    const { settings, connect } = panel.deps;
+    // Enter with a command on the line is meant for the command, not a reconnect.
+    if (settings.connected || values.command?.trim()) return;
     if (settings.hostLocked) {
-      panel.deps.connect(null);
+      connect(null);
       return;
     }
-
     const host = values.host?.trim();
     if (!host) return;
-
     settings.host = host;
     panel.connect(host);
   },
