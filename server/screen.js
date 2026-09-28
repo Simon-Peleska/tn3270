@@ -174,7 +174,8 @@ export class ScreenModel {
 
   /**
    * b3270's rows and columns are 1-based, and an attribute it does not mention
-   * keeps its old value per cell.
+   * keeps its old value per cell. A colour changing back to the default comes
+   * named, and a named background would hide the editable-field tint.
    *
    * @param {import('./b3270.js').ScreenIndication} screen
    * @returns {void}
@@ -198,8 +199,10 @@ export class ScreenModel {
           if (x >= this.cols) break;
           const cell = this.cellAt(y, x);
           if (characters !== null) cell.ch = characters[i] ?? " ";
-          if (change.fg !== undefined) cell.fg = change.fg;
-          if (change.bg !== undefined) cell.bg = change.bg;
+          if (change.fg !== undefined)
+            cell.fg = change.fg === this.defaultFg ? null : change.fg;
+          if (change.bg !== undefined)
+            cell.bg = change.bg === this.defaultBg ? null : change.bg;
           if (change.gr !== undefined)
             cell.gr = change.gr === "" ? null : change.gr;
         }

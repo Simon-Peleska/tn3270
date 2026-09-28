@@ -52,6 +52,31 @@ test("an attribute the change does not mention stays as it was", () => {
   assert.equal(cell.bg, "blue", "an unmentioned background must be retained");
 });
 
+test("a colour changing back to the screen default is stored as the default", () => {
+  const screen = new ScreenModel(24, 80);
+  screen.applyErase({ fg: "blue", bg: "neutralBlack" });
+  screen.applyScreen({
+    rows: [
+      {
+        row: 1,
+        changes: [{ column: 1, count: 3, fg: "neutralBlack", bg: "green" }],
+      },
+    ],
+  });
+  screen.applyScreen({
+    rows: [
+      {
+        row: 1,
+        changes: [{ column: 1, count: 3, fg: "blue", bg: "neutralBlack" }],
+      },
+    ],
+  });
+
+  const cell = screen.cellAt(0, 0);
+  assert.equal(cell.fg, null);
+  assert.equal(cell.bg, null, "a named default would hide the field tint");
+});
+
 test('an empty gr clears the graphic rendition rather than setting it to ""', () => {
   const screen = new ScreenModel(24, 80);
   screen.applyScreen({
