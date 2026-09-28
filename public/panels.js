@@ -259,14 +259,29 @@ export class Panels {
 
   /** @returns {void} */
   back() {
+    const current = this.stack.at(-1);
+
+    // A disconnected session has nowhere useful to go.
+    // Keep Settings open until the session reconnects.
+    if (
+      this.stack.length === 1 &&
+      current?.id === "settings" &&
+      !this.deps.settings.connected
+    ) {
+      return;
+    }
+
     const returning =
-      this.stack.at(-1)?.id === "chars" ? this.pickerReturn : null;
+      current?.id === "chars" ? this.pickerReturn : null;
+
     this.show(this.stack.slice(0, -1));
+
     if (returning !== null) {
       this.host.typed = returning.typed;
       this.host.cursor = returning.cursor;
       this.host.fresh = returning.fresh;
     }
+
     this.pickerReturn = null;
   }
 

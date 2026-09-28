@@ -57,7 +57,7 @@ export class Session {
    *   b3270 without an httpd, which only tests want.
    * @param {string} [id]
    */
-  constructor(config, rest = null, id = randomUUID()) {
+  constructor(config, rest = null, id = randomUUID(), user = "") {
     /** @type {string} */
     this.id = id;
     this.startedAt = new Date().toISOString();
@@ -152,6 +152,7 @@ export class Session {
       extraArgs: config.b3270.extraArgs,
       rest,
       sessionId: this.id,
+      user,
       handlers: {
         onIndication: (indication) => this.handleIndication(indication),
         onExit: () => this.close(),

@@ -97,6 +97,7 @@ import { logger } from "./log.js";
  * @property {string[]} extraArgs
  * @property {import('./restproxy.js').RestEndpoint | null} rest
  * @property {string} sessionId
+ * @property {string} [user]
  * @property {B3270Handlers} handlers
  */
 
@@ -156,7 +157,10 @@ export class B3270 {
     this.log.info("spawning", { path: options.path, args: args.join(" ") });
 
     try {
+      const user = options.user ?? "";
+      const argv0 = user === "" ? "b3270" : `b3270 [${user}]`;
       this.child = spawn(options.path, args, {
+        argv0,
         stdio: ["pipe", "pipe", "pipe"],
         // Locale decides run-result's `time` format: de_DE emits `"time":0,011`, not JSON.
         env: { ...process.env, LC_ALL: "C", LC_NUMERIC: "C" },
