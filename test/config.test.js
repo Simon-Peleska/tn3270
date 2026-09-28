@@ -49,14 +49,6 @@ test("a brace inside a string does not make the comma before it trailing", () =>
   assert.deepEqual(parseJsonc('["a", "}"]'), ["a", "}"]);
 });
 
-test("an LU is assigned unless sessions.assignLu turns it off", () => {
-  assert.equal(validateConfig({}).sessions.assignLu, true);
-  assert.equal(
-    validateConfig({ sessions: { assignLu: false } }).sessions.assignLu,
-    false,
-  );
-});
-
 test("the shipped config.example.jsonc parses and validates", () => {
   const config = loadConfig("config.example.jsonc");
   assert.equal(typeof config.server.port, "number");

@@ -1,8 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { Session, withLu } from "../server/session.js";
-import { FakeHost } from "./fakehost.js";
-import { SessionRegistry, luName } from "../server/registry.js";
+import { Session } from "../server/session.js";
+import { SessionRegistry } from "../server/registry.js";
 import { AppError } from "../server/errors.js";
 import { keyboardLocked } from "../public/oia.js";
 import { computeHints } from "../public/hints.js";
@@ -1294,82 +1293,6 @@ test("fitting the screen under a live connection drops it and reopens the same h
   );
   assert.equal(session.oversize, "100x50");
   assert.equal(session.lastHost, expectedHost);
-});
-
-test("an LU is the user's name and a free suffix, else the session id", () => {
-  const id = "3f2a9c1b-0000-4000-8000-000000000000";
-  assert.equal(luName("simon", id, new Set()), "SIMON1");
-  assert.equal(luName("simon", id, new Set(["SIMON1"])), "SIMON2");
-  assert.equal(luName("alice@corp.example", id, new Set()), "ALICE1");
-  assert.equal(luName("CORP\\bob", id, new Set()), "BOB1");
-  assert.equal(luName("christopher", id, new Set()), "CHRISTO1");
-
-  const digits = new Set([..."123456789"].map((n) => `SIMON${n}`));
-  assert.equal(luName("simon", id, digits), "SIMONA", "letters follow digits");
-
-  assert.equal(luName("007bond", id, new Set()), "U007BON1");
-
-  assert.equal(luName("", id, new Set()), "S3F2A9C1");
-  assert.equal(luName("-.-", id, new Set()), "S3F2A9C1");
-});
-
-test("the LU goes into the host string after any prefixes", () => {
-  assert.equal(withLu("host:23", "SIMON1"), "SIMON1@host:23");
-  assert.equal(withLu("L:Y:host:992", "SIMON1"), "L:Y:SIMON1@host:992");
-  assert.equal(
-    withLu("MYLU@host", "SIMON1"),
-    "MYLU@host",
-    "an LU asked for wins",
-  );
-  assert.equal(withLu("host", ""), "host");
-});
-
-test("the host is asked for the user's LU, and a second session gets the next one", async (t) => {
-  const first = await FakeHost.listen("test/traces/reverse.trc", 0);
-  const second = await FakeHost.listen("test/traces/reverse.trc", 0);
-  const registry = new SessionRegistry(testConfig());
-  t.after(async () => {
-    registry.closeAll();
-    await first.close();
-    await second.close();
-  });
-  const client = { ip: "127.0.0.1", user: "simon" };
-
-  for (const { host, lu } of [
-    { host: first, lu: "SIMON1" },
-    { host: second, lu: "SIMON2" },
-  ]) {
-    const session = await registry.create(client);
-    await session.ready;
-    assert.equal(session.lu, lu);
-    session.connect(`127.0.0.1:${host.port}`);
-    await host.sendRecords(1);
-    assert.ok(
-      host.received.includes(Buffer.from(`\x01${lu}`).toString("hex")),
-      `the TN3270E CONNECT must name ${lu}`,
-    );
-  }
-});
-
-test("with assignLu off the host is asked for no LU", async (t) => {
-  const host = await FakeHost.listen("test/traces/reverse.trc", 0);
-  const registry = new SessionRegistry(
-    testConfig({ sessions: { idleTimeoutMs: 0, assignLu: false } }),
-  );
-  t.after(async () => {
-    registry.closeAll();
-    await host.close();
-  });
-
-  const session = await registry.create({ ip: "127.0.0.1", user: "simon" });
-  await session.ready;
-  assert.equal(session.lu, "");
-  session.connect(`127.0.0.1:${host.port}`);
-  await host.sendRecords(1);
-  assert.ok(
-    !host.received.includes(Buffer.from("SIMON").toString("hex")),
-    "no LU may be named in the negotiation",
-  );
 });
 
 test("the registry refuses to exceed maxSessions", async () => {

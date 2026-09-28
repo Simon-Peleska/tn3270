@@ -38,15 +38,6 @@ at it; `Ctrl-B` and a digit does the same from the keyboard.
 | Last viewer detaches                         | The session is kept alive for `sessions.idleTimeoutMs`, then closed. A viewer attaching inside that window cancels the reaping                                                                                                                                                                                                                                                                                                                                                                                                |
 | `b3270` exits                                | The session closes and every viewer is told (`E2002`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
-Each session asks the host for its own **LU**: the name of whoever created it
-(`X-Remote-User`, §3) upper-cased, cut to seven letters and digits (behind a
-`U` if it starts with a digit), plus the first suffix `1`–`9`, then `A`–`Z`,
-that none of their other sessions holds — `SIMON1`, `SIMON2`. Without a name,
-or once the suffixes run out, it is `S` and the first seven characters of the
-session id, since an LU may not start with a digit. A host string that names an
-LU itself (`LU@host`) keeps it, and `sessions.assignLu: false` leaves the LU to
-the host.
-
 Sharing the URL is how a session is shared: there is no invite step, and sharing
 a page that holds four sessions shares all four. But nobody gets in on the URL
 alone — the owner is asked first (§3).
@@ -522,7 +513,6 @@ needs a narrower one puts authentication in front of it (section 8).
 | `sessions.maxSessions`          | `16`                 | Refuses more with `E3002`                                                                                                                                                             |
 | `sessions.maxViewersPerSession` | `8`                  | Refuses more with `E3003`                                                                                                                                                             |
 | `sessions.idleTimeoutMs`        | `300000`             | Viewer-less session lifetime; `0` disables reaping                                                                                                                                    |
-| `sessions.assignLu`             | `true`               | Ask the host for an LU named after the user (§2); `false` leaves the LU to the host                                                                                                   |
 | `security.allowedHosts`         | `[]`                 | Empty = any host. An entry with a port matches exactly; without one, any port on that host                                                                                            |
 | `security.trustProxyHeaders`    | `false`              | Take the client's address from `X-Forwarded-For` and their name from `X-Remote-User`. Only with a reverse proxy in front that sets both                                               |
 | `logLevel`                      | `info`               | `debug` logs every line exchanged with b3270                                                                                                                                          |

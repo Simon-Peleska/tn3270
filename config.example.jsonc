@@ -41,10 +41,6 @@
 
     // How long a session survives with no viewer, so a reload keeps the host session.
     "idleTimeoutMs": 300000,
-
-    // Ask the host for an LU named after the user ("SIMON1", "SIMON2"), else after
-    // the session ("S3F2A9C1"). false leaves the LU to the host.
-    "assignLu": true,
   },
 
   "security": {
