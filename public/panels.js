@@ -271,8 +271,7 @@ export class Panels {
       return;
     }
 
-    const returning =
-      current?.id === "chars" ? this.pickerReturn : null;
+    const returning = current?.id === "chars" ? this.pickerReturn : null;
 
     this.show(this.stack.slice(0, -1));
 

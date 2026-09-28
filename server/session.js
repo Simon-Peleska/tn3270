@@ -32,6 +32,20 @@ function nameOf(viewer) {
   return viewer.user || viewer.ip || "Someone";
 }
 
+/**
+ * b3270 takes the LU inside the host string, `[prefix:...][lu@]host[:port]`.
+ * An LU already given there was asked for outright, and wins.
+ *
+ * @param {string} host
+ * @param {string} lu
+ * @returns {string}
+ */
+export function withLu(host, lu) {
+  if (lu === "" || host.includes("@")) return host;
+  const prefixes = /^(?:[ACLNPSBYT]:)*/i.exec(host)?.[0] ?? "";
+  return `${prefixes}${lu}@${host.slice(prefixes.length)}`;
+}
+
 /** Deep enough for a screen's worth of typing, shallow enough to forget. */
 const HISTORY_LIMIT = 100;
 const INPUT_QUEUE_LIMIT = 256;
@@ -62,6 +76,8 @@ export class Session {
     this.id = id;
     this.startedAt = new Date().toISOString();
     this.startedBy = "";
+    /** @type {string} The LU asked of the host; '' leaves it to the host. */
+    this.lu = "";
     /** @type {import('./config.js').Config} */
     this.config = config;
     this.log = logger("session", { session: id });
@@ -180,7 +196,7 @@ export class Session {
     // b3270 reports the host back without its port, so reopening from what it
     // says would silently land on telnet 23.
     this.lastHost = host;
-    this.b3270.open(host);
+    this.b3270.open(withLu(host, this.lu));
   }
 
   /** @returns {void} */
@@ -382,7 +398,10 @@ export class Session {
         this.pendingOversize = false;
         const actions = this.sizeActions(model);
         if (this.lastHost !== null)
-          actions.push({ action: "Open", args: [this.lastHost] });
+          actions.push({
+            action: "Open",
+            args: [withLu(this.lastHost, this.lu)],
+          });
         this.b3270.runActions(actions);
       }
       return;
