@@ -132,8 +132,9 @@ import { AppError } from "./errors.js";
 
 /**
  * Allow-list: b3270 also accepts actions that read files and run programs.
- * `BackNewline` is ours alone; the session turns it into a cursor move, as it
- * turns `Undo` and `Redo` into a retype of the fields as they were.
+ * `BackNewline` and `FieldStart` are ours alone; the session turns them into
+ * cursor moves, as it turns `Undo` and `Redo` into a retype of the fields as
+ * they were.
  *
  * @type {ReadonlySet<string>}
  */
@@ -145,10 +146,14 @@ const ALLOWED_ACTIONS = new Set([
   "BackTab",
   "Home",
   "End",
+  "FieldEnd",
+  "FieldStart",
   "Up",
   "Down",
   "Left",
   "Right",
+  "PreviousWord",
+  "NextWord",
   "Newline",
   "BackNewline",
   "Backspace",

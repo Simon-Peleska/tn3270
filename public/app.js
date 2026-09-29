@@ -3,7 +3,9 @@ import { renderOia, cursorPosition, keyboardLocked } from "./oia.js";
 import {
   ComboCapture,
   Keymap,
+  LoneModifier,
   PANEL_COMMANDS,
+  asReleased,
   commandForEvent,
   isMacroCommand,
   macroInputForEvent,
@@ -666,6 +668,7 @@ const recorder = new Recorder({
 });
 
 const capture = new ComboCapture();
+const lone = new LoneModifier();
 const panels = new Panels({
   settings,
   codePage: () => activeSession()?.codePage ?? "bracket",
@@ -1361,6 +1364,7 @@ const SHARING_COMMANDS = new Set([
 window.addEventListener(
   "keydown",
   (event) => {
+    lone.keydown(event);
     const sharingCommand = commandForEvent(event, keymap.lookup());
     if (sharingCommand !== null && SHARING_COMMANDS.has(sharingCommand)) {
       const slot = activeSession();
@@ -1487,15 +1491,30 @@ window.addEventListener(
   true,
 );
 
-// Right Ctrl alone is a key worth binding, and only its keyup says it was alone.
+// Only a modifier's keyup says it was pressed alone: to bind it in a key field,
+// or to run what it is bound to, as the keydown it was.
 window.addEventListener(
   "keyup",
   (event) => {
-    if (!panels.isOpen() || !panels.capturing()) return;
-    const lone = capture.keyup(event);
-    if (lone === null) return;
-    event.preventDefault();
-    panels.capture(lone);
+    const picked =
+      panels.isOpen() && panels.capturing() ? capture.keyup(event) : null;
+    if (picked !== null) {
+      event.preventDefault();
+      panels.capture(picked);
+      return;
+    }
+    const down = lone.keyup(event);
+    if (down === null || event.target === null) return;
+    const replay = new KeyboardEvent("keydown", {
+      key: down.key,
+      code: down.code,
+      ctrlKey: down.ctrlKey,
+      shiftKey: down.shiftKey,
+      altKey: down.altKey,
+      bubbles: true,
+      cancelable: true,
+    });
+    event.target.dispatchEvent(asReleased(replay));
   },
   true,
 );

@@ -971,6 +971,53 @@ test("BackNewline walks up to the first field of the row above, where Newline wa
   );
 });
 
+test("Start and End of field, and the word jumps, move within the field under the cursor", async (t) => {
+  // fields.trc: fields at column 11 of rows 2, 4 and 6; the cursor starts in the first.
+  const fixture = await startTracedSession("test/traces/fields.trc");
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  const { screen } = session;
+  await settle(session);
+  await waitUntil(() => screen.fieldsFormatted, "the field map to load");
+  const controller = collectingViewer("controller");
+  session.attach(controller);
+  /** @param {import('../server/protocol.js').ClientMessage} message */
+  const send = async (message) => {
+    session.handleClientMessage(controller, message);
+    await settle(session);
+    return { row: screen.cursor.row, col: screen.cursor.col };
+  };
+
+  await send({ type: "text", value: "ab cd" });
+  assert.deepEqual(await send({ type: "action", action: "FieldStart" }), {
+    row: 2,
+    col: 11,
+  });
+  assert.deepEqual(
+    await send({ type: "action", action: "NextWord" }),
+    { row: 2, col: 14 },
+    "NextWord lands on the second word",
+  );
+  assert.deepEqual(
+    await send({ type: "action", action: "FieldEnd" }),
+    { row: 2, col: 16 },
+    "FieldEnd lands just past the last character",
+  );
+  assert.deepEqual(await send({ type: "action", action: "PreviousWord" }), {
+    row: 2,
+    col: 14,
+  });
+  assert.deepEqual(await send({ type: "action", action: "FieldStart" }), {
+    row: 2,
+    col: 11,
+  });
+  assert.deepEqual(
+    await send({ type: "action", action: "FieldStart" }),
+    { row: 2, col: 11 },
+    "FieldStart at the start of a field stays there",
+  );
+});
+
 test("BackNewline on a screen with no fields falls back to the start of the row above", async (t) => {
   const fixture = await startTracedSession("test/traces/fields.trc");
   t.after(() => fixture.close());

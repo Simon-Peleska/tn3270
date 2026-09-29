@@ -316,6 +316,40 @@ test("holding Ctrl+. repeats the last recording", async (t) => {
   });
 });
 
+test("left Ctrl tapped alone is Reset, but not when it held down Ctrl+C", async (t) => {
+  const browser = await startBrowser(t);
+  /** @param {string} code @param {() => Promise<void>} [between] */
+  const tapControl = async (code, between) => {
+    const init = {
+      key: "Control",
+      code,
+      modifiers: 2,
+      windowsVirtualKeyCode: 17,
+    };
+    await browser.command("Input.dispatchKeyEvent", {
+      type: "rawKeyDown",
+      ...init,
+    });
+    await between?.();
+    await browser.command("Input.dispatchKeyEvent", {
+      type: "keyUp",
+      ...init,
+      modifiers: 0,
+    });
+  };
+
+  const reset = browser.frame("Network.webSocketFrameSent", "action");
+  await tapControl("ControlLeft");
+  assert.equal((await reset).action, "Reset");
+
+  const next = browser.frame("Network.webSocketFrameSent", "action");
+  await tapControl("ControlLeft", () =>
+    browser.key("c", "KeyC", { modifiers: 2, windowsVirtualKeyCode: 67 }),
+  );
+  await tapControl("ControlRight");
+  assert.equal((await next).action, "Enter", "Ctrl+C sent no Reset first");
+});
+
 test("screen-size changes keep the size dialog open", async (t) => {
   const browser = await startBrowser(t);
   await browser.key(",", "Comma", {

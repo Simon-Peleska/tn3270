@@ -1106,9 +1106,16 @@ export class Session {
           if (!this.canBackspace()) return null;
           return this.runEdit([{ action: "Left" }, { action: "Delete" }]);
         }
-        // b3270 has no upward Newline; the cached field map answers it here.
-        if (message.action === "BackNewline") {
-          const target = this.backNewlineTarget();
+        // b3270 has no upward Newline and no start-of-field move; the cached
+        // field map answers both here.
+        if (
+          message.action === "BackNewline" ||
+          message.action === "FieldStart"
+        ) {
+          const target =
+            message.action === "BackNewline"
+              ? this.backNewlineTarget()
+              : this.fieldStartTarget();
           return this.b3270.runActions([
             {
               action: "MoveCursor1",
@@ -1186,6 +1193,26 @@ export class Session {
       }
     }
     return { row: (cursor.row - 1 + rows) % rows, col: 0 };
+  }
+
+  /**
+   * The first cell of the input field under the cursor. Off any field it stays
+   * put; a screen with no fields has only rows, so it is the start of the row.
+   *
+   * @returns {{ row: number, col: number }}
+   */
+  fieldStartTarget() {
+    const { cursor, cells, cols } = this.screen;
+    if (!this.screen.fieldsFormatted) return { row: cursor.row, col: 0 };
+    let at = cursor.row * cols + cursor.col;
+    if (!cells[at]?.editable) return { row: cursor.row, col: cursor.col };
+    // A field can wrap past the last cell of the screen back to the first.
+    for (let steps = 1; steps < cells.length; steps++) {
+      const left = (at - 1 + cells.length) % cells.length;
+      if (!cells[left]?.editable) break;
+      at = left;
+    }
+    return { row: Math.floor(at / cols), col: at % cols };
   }
 
   /**

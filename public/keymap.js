@@ -16,17 +16,22 @@ export const COMMANDS = Object.freeze([
   { id: "BackTab", label: "Back tab" },
   { id: "Backspace", label: "Backspace" },
   { id: "Delete", label: "Delete" },
-  { id: "DeleteField", label: "Delete field" },
+  { id: "DeleteField", label: "Erase field" },
   { id: "DeleteWord", label: "Delete word" },
   { id: "Up", label: "Cursor up" },
   { id: "Down", label: "Cursor down" },
   { id: "Left", label: "Cursor left" },
   { id: "Right", label: "Cursor right" },
+  { id: "PreviousWord", label: "Word left" },
+  { id: "NextWord", label: "Word right" },
   { id: "Home", label: "Home" },
+  { id: "FieldStart", label: "Start of field" },
+  { id: "FieldEnd", label: "End of field" },
   { id: "EraseEOF", label: "Erase EOF" },
   { id: "EraseInput", label: "Erase input" },
   { id: "FieldMark", label: "Field mark" },
   { id: "Dup", label: "Dup" },
+  { id: "CursorSelect", label: "Cursor select" },
   { id: "ToggleInsert", label: "Toggle insert" },
   { id: "Reset", label: "Reset" },
   { id: "Attn", label: "Attn" },
@@ -152,27 +157,49 @@ export const DEFAULT_BINDINGS = Object.freeze({
   BackTab: [combo("Tab", { shift: true })],
   Backspace: [combo("Backspace")],
   Delete: [combo("Delete")],
+  DeleteWord: [
+    combo("Delete", { ctrl: true }),
+    combo("Backspace", { ctrl: true }),
+  ],
   Up: [combo("ArrowUp")],
   Down: [combo("ArrowDown")],
   Left: [combo("ArrowLeft")],
   Right: [combo("ArrowRight")],
+  // Bound on Alt, so the browser never sees Alt+Left: it would leave the page.
+  PreviousWord: [
+    combo("ArrowLeft", { alt: true }),
+    combo("ArrowLeft", { ctrl: true }),
+  ],
+  NextWord: [
+    combo("ArrowRight", { alt: true }),
+    combo("ArrowRight", { ctrl: true }),
+  ],
   Home: [combo("Home")],
+  FieldStart: [combo("Home", { ctrl: true })],
+  // The keypad's End, with Num Lock off; the main End is Erase EOF.
+  FieldEnd: [combo("Numpad1"), combo("End", { ctrl: true })],
   EraseEOF: [combo("End")],
   EraseInput: [combo("End", { alt: true })],
+  DeleteField: [combo("End", { shift: true })],
   FieldMark: [combo("Home", { shift: true })],
+  CursorSelect: [combo("F9", { ctrl: true })],
   ToggleInsert: [combo("Insert")],
-  Reset: [combo("CapsLock")],
+  Reset: [combo("ControlLeft", { ctrl: true }), combo("CapsLock")],
   Attn: [combo("Escape")],
   SysReq: [combo("Escape", { shift: true })],
   Clear: [combo("Pause")],
   Copy: [combo("C", { ctrl: true }), combo("Insert", { ctrl: true })],
-  Paste: [combo("Insert", { shift: true })],
+  Paste: [
+    combo("Insert", { shift: true }),
+    combo("PageDown", { shift: true }),
+    combo("Insert", { ctrl: true, shift: true }),
+  ],
   SelectUp: [combo("ArrowUp", { shift: true })],
   SelectDown: [combo("ArrowDown", { shift: true })],
   SelectLeft: [combo("ArrowLeft", { shift: true })],
   SelectRight: [combo("ArrowRight", { shift: true })],
   // Bound, so the browser never sees them: Ctrl+R would reload the page.
-  Undo: [combo("Z", { ctrl: true })],
+  Undo: [combo("Z", { ctrl: true }), combo("Backspace", { alt: true })],
   Redo: [combo("R", { ctrl: true })],
   Menu: [combo("M", { ctrl: true }), combo(" ", { alt: true })],
   ToggleKeyboard: [combo("K", { ctrl: true })],
@@ -309,7 +336,11 @@ const FIELD_COMMANDS = new Set([
   "Down",
   "Left",
   "Right",
+  "PreviousWord",
+  "NextWord",
   "Home",
+  "FieldStart",
+  "FieldEnd",
   "EraseEOF",
   "EraseInput",
   "ToggleInsert",
@@ -587,7 +618,66 @@ function commandToAction(commandId) {
  * @returns {string | null} the command this key carries, whatever is listening
  */
 export function commandForEvent(event, lookup) {
-  return lookup.get(serializeCombo(comboFromEvent(event))) ?? null;
+  if (waitsForRelease(event.code) && !releasedKeys.has(event)) return null;
+  const pressed = comboFromEvent(event);
+  const command = lookup.get(serializeCombo(pressed));
+  if (command !== undefined) return command;
+  // Shift still down from typing a capital must not swallow Backspace or End.
+  // A character is left alone: its Shift is part of what it prints.
+  if (!pressed.shift || [...event.key].length === 1) return null;
+  return lookup.get(serializeCombo({ ...pressed, shift: false })) ?? null;
+}
+
+/**
+ * Right Ctrl is where a 3270's Enter sits and must act the moment it goes
+ * down; nobody holds it for a shortcut. Every other modifier might be on its
+ * way to one, so Left Ctrl's Reset waits to see Ctrl+C is not coming.
+ *
+ * @param {string} code
+ * @returns {boolean}
+ */
+function waitsForRelease(code) {
+  return MODIFIER_KEYS[code] !== undefined && code !== "ControlRight";
+}
+
+/** Keydowns of modifiers let go on their own, run again now that they count. */
+const releasedKeys = new WeakSet();
+
+/**
+ * @template {KeyboardEvent} T
+ * @param {T} event the keydown `LoneModifier.keyup` handed back, or a copy
+ * @returns {T}
+ */
+export function asReleased(event) {
+  releasedKeys.add(event);
+  return event;
+}
+
+/**
+ * A modifier bound on its own is its command only when let go with nothing
+ * pressed in between: Left Ctrl is Reset, but Ctrl+C must not reset first.
+ */
+export class LoneModifier {
+  constructor() {
+    /** @type {KeyboardEvent | null} the modifier pressed last, if nothing came after it */
+    this.down = null;
+  }
+
+  /** @param {KeyboardEvent} event @returns {void} */
+  keydown(event) {
+    if (releasedKeys.has(event)) return;
+    this.down = waitsForRelease(event.code) ? event : null;
+  }
+
+  /**
+   * @param {KeyboardEvent} event
+   * @returns {KeyboardEvent | null} the keydown to run now, if it was alone
+   */
+  keyup(event) {
+    const down = this.down;
+    this.down = null;
+    return down?.code === event.code ? down : null;
+  }
 }
 
 /**

@@ -7,6 +7,8 @@ import {
   parseCombo,
   Keymap,
   ComboCapture,
+  LoneModifier,
+  asReleased,
   macroInputForEvent,
   withDefaults,
   DEFAULT_BINDINGS,
@@ -14,6 +16,20 @@ import {
 import { key } from "./keyevent.js";
 
 const lookup = buildLookup(DEFAULT_BINDINGS);
+
+/**
+ * A modifier pressed and let go on its own, the way the app hands it over.
+ *
+ * @param {Parameters<typeof key>[0]} init the keydown
+ */
+function tapModifier(init) {
+  const lone = new LoneModifier();
+  const down = key(init);
+  assert.equal(mapKey(down, lookup), null, "nothing happens on the way down");
+  lone.keydown(down);
+  const alone = lone.keyup(key({ key: init.key, code: init.code }));
+  return alone === null ? null : mapKey(asReleased(alone), lookup);
+}
 
 test("the menu, keyboard, and recorder shortcuts are client commands", () => {
   for (const [letter, command] of [
@@ -157,17 +173,95 @@ test("Ctrl-Enter and Fn-Enter, which arrives as the keypad Enter, are Enter too"
 });
 
 test("holding the Enter key down does not machine-gun the host", () => {
+  const init = { key: "Control", code: "ControlRight", ctrlKey: true };
+  assert.equal(mapKey(key({ ...init, repeat: true }), lookup), null);
+  const lone = new LoneModifier();
+  lone.keydown(key(init));
+  assert.equal(
+    lone.keyup(key({ key: "Control", code: "ControlRight" })),
+    null,
+    "no second Enter when it is let go",
+  );
   assert.equal(
     mapKey(
-      key({
-        key: "Control",
-        code: "ControlRight",
-        ctrlKey: true,
-        repeat: true,
-      }),
+      key({ key: "Enter", code: "Enter", ctrlKey: true, repeat: true }),
       lookup,
     ),
     null,
+  );
+});
+
+test("left Ctrl alone is Reset, but not when it was on the way to Ctrl+C", () => {
+  assert.deepEqual(
+    tapModifier({ key: "Control", code: "ControlLeft", ctrlKey: true }),
+    { kind: "action", action: "Reset", args: [] },
+  );
+  const lone = new LoneModifier();
+  lone.keydown(key({ key: "Control", code: "ControlLeft", ctrlKey: true }));
+  lone.keydown(key({ key: "c", code: "KeyC", ctrlKey: true }));
+  assert.equal(lone.keyup(key({ key: "Control", code: "ControlLeft" })), null);
+});
+
+test("the rest of PCOMM's editing keys", () => {
+  for (const { init, action } of [
+    {
+      init: { key: "Delete", code: "Delete", ctrlKey: true },
+      action: "DeleteWord",
+    },
+    {
+      init: { key: "Backspace", code: "Backspace", ctrlKey: true },
+      action: "DeleteWord",
+    },
+    {
+      init: { key: "ArrowLeft", code: "ArrowLeft", altKey: true },
+      action: "PreviousWord",
+    },
+    {
+      init: { key: "ArrowRight", code: "ArrowRight", altKey: true },
+      action: "NextWord",
+    },
+    {
+      init: { key: "ArrowLeft", code: "ArrowLeft", ctrlKey: true },
+      action: "PreviousWord",
+    },
+    {
+      init: { key: "ArrowRight", code: "ArrowRight", ctrlKey: true },
+      action: "NextWord",
+    },
+    {
+      init: { key: "End", code: "End", shiftKey: true },
+      action: "DeleteField",
+    },
+    { init: { key: "End", code: "Numpad1" }, action: "FieldEnd" },
+    {
+      init: { key: "End", code: "End", ctrlKey: true },
+      action: "FieldEnd",
+    },
+    {
+      init: { key: "Home", code: "Home", ctrlKey: true },
+      action: "FieldStart",
+    },
+    { init: { key: "F9", code: "F9", ctrlKey: true }, action: "CursorSelect" },
+    {
+      init: { key: "Backspace", code: "Backspace", altKey: true },
+      action: "Undo",
+    },
+  ])
+    assert.deepEqual(
+      mapKey(key(init), lookup),
+      { kind: "action", action, args: [] },
+      action,
+    );
+  assert.deepEqual(
+    mapKey(key({ key: "PageDown", code: "PageDown", shiftKey: true }), lookup),
+    { kind: "client", command: "Paste" },
+  );
+  assert.deepEqual(
+    mapKey(
+      key({ key: "Insert", code: "Insert", ctrlKey: true, shiftKey: true }),
+      lookup,
+    ),
+    { kind: "client", command: "Paste" },
   );
 });
 
@@ -397,6 +491,45 @@ test("Shift-PageUp is PA3, plain PageUp is unbound", () => {
   assert.equal(mapKey(key({ key: "PageUp", code: "PageUp" }), lookup), null);
 });
 
+test("Shift still held from typing capitals does not swallow an unshifted key", () => {
+  for (const [name, action] of [
+    ["Backspace", "Backspace"],
+    ["Delete", "Delete"],
+    ["CapsLock", "Reset"],
+    ["Pause", "Clear"],
+    ["NumpadEnter", "Enter"],
+  ])
+    assert.deepEqual(
+      mapKey(key({ key: name, code: name, shiftKey: true }), lookup),
+      { kind: "action", action, args: [] },
+      name,
+    );
+  assert.deepEqual(
+    mapKey(
+      key({
+        key: "Control",
+        code: "ControlRight",
+        ctrlKey: true,
+        shiftKey: true,
+      }),
+      lookup,
+    ),
+    { kind: "action", action: "Enter", args: [] },
+  );
+  // A Shift binding of its own still wins, and a character keeps its Shift.
+  assert.deepEqual(
+    mapKey(key({ key: "Tab", code: "Tab", shiftKey: true }), lookup),
+    { kind: "action", action: "BackTab", args: [] },
+  );
+  assert.equal(
+    mapKey(
+      key({ key: "Z", code: "KeyY", ctrlKey: true, shiftKey: true }),
+      lookup,
+    ),
+    null,
+  );
+});
+
 test("a printable key is text and Alt is otherwise left to the page", () => {
   assert.deepEqual(mapKey(key({ key: "x", code: "KeyX" }), lookup), {
     kind: "text",
@@ -612,7 +745,7 @@ test("a key pressed into a key field is picked whole, modifiers and all", () => 
   const capture = new ComboCapture();
   assert.equal(
     capture.keydown(
-      key({ key: "Control", code: "ControlLeft", ctrlKey: true }),
+      key({ key: "Shift", code: "ShiftLeft", shiftKey: true }),
       lookup,
     ),
     "held",
@@ -622,9 +755,9 @@ test("a key pressed into a key field is picked whole, modifiers and all", () => 
     { key: "F1", ctrl: true, shift: true, alt: false },
   );
   assert.equal(
-    capture.keyup(key({ key: "Control", code: "ControlLeft" })),
+    capture.keyup(key({ key: "Shift", code: "ShiftLeft" })),
     null,
-    "Ctrl went down on the way to F1, so it is not a key of its own",
+    "Shift went down on the way to F1, so it is not a key of its own",
   );
   assert.deepEqual(
     capture.keydown(key({ key: "m", code: "KeyM", altKey: true }), lookup),

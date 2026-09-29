@@ -125,6 +125,51 @@ test("the editing keys change only the field under the cursor", () => {
   assert.deepEqual(aids[0]?.values, { name: "", town: "Bx" });
 });
 
+test("the word keys jump between words, and on to the next field past the last one", () => {
+  const host = new LocalHost({
+    screen: () => ({
+      texts: [],
+      fields: [
+        { name: "words", row: 0, col: 0, width: 10, value: "ab  cd" },
+        { name: "next", row: 2, col: 0, width: 4, value: "" },
+      ],
+      cursor: "words",
+    }),
+    aid: () => {},
+  });
+  /** @param {string} action */
+  const press = (action) => host.receive({ type: "action", action, args: [] });
+
+  press("NextWord");
+  assert.deepEqual(host.cursor, { row: 0, col: 4 });
+  press("NextWord");
+  assert.deepEqual(host.cursor, { row: 2, col: 0 });
+  press("PreviousWord");
+  assert.deepEqual(host.cursor, { row: 0, col: 0 });
+  press("Right");
+  press("Right");
+  press("Right");
+  press("Right");
+  press("Right");
+  press("PreviousWord");
+  assert.deepEqual(host.cursor, { row: 0, col: 4 });
+  press("PreviousWord");
+  assert.deepEqual(host.cursor, { row: 0, col: 0 });
+});
+
+test("End of field goes just past the last character typed, or to the last cell of a full field", () => {
+  const { host } = form("town");
+  host.receive({ type: "action", action: "FieldEnd", args: [] });
+  assert.deepEqual(host.cursor, { row: 2, col: 9 });
+  host.receive({ type: "text", value: "er" });
+  host.receive({ type: "action", action: "Home", args: [] });
+  host.receive({ type: "action", action: "Tab", args: [] });
+  host.receive({ type: "action", action: "FieldEnd", args: [] });
+  assert.deepEqual(host.cursor, { row: 2, col: 10 });
+  host.receive({ type: "action", action: "FieldStart", args: [] });
+  assert.deepEqual(host.cursor, { row: 2, col: 5 });
+});
+
 test("Erase input blanks every field and goes to the first", () => {
   const { host, aids } = form("town");
   host.receive({ type: "text", value: "Ann" });

@@ -252,11 +252,32 @@ export class LocalHost {
     } else if (action === "Home") {
       const first = fields[0];
       if (first !== undefined) this.cursor = { row: first.row, col: first.col };
+    } else if (action === "FieldStart") {
+      if (field !== undefined) this.cursor.col = field.col;
+    } else if (action === "FieldEnd") {
+      if (field === undefined) return;
+      const typed = chars.join("").trimEnd().length;
+      this.cursor.col = field.col + Math.min(typed, field.width - 1);
     } else if (action === "Up") this.step(-this.cols);
     else if (action === "Down") this.step(this.cols);
     else if (action === "Left") this.step(-1);
     else if (action === "Right") this.step(1);
-    else if (action === "MoveCursor1") {
+    else if (action === "NextWord") {
+      let to = at;
+      while (to < chars.length && chars[to] !== " ") to += 1;
+      while (to < chars.length && chars[to] === " ") to += 1;
+      if (field === undefined || to === chars.length) this.tab(fields, 1);
+      else this.cursor.col = field.col + to;
+    } else if (action === "PreviousWord") {
+      if (field === undefined || at === 0) {
+        this.tab(fields, -1);
+        return;
+      }
+      let from = at;
+      while (from > 0 && chars[from - 1] === " ") from -= 1;
+      while (from > 0 && chars[from - 1] !== " ") from -= 1;
+      this.cursor.col = field.col + from;
+    } else if (action === "MoveCursor1") {
       const row = Number(args[0]) - 1;
       const col = Number(args[1]) - 1;
       if (row >= 0 && row < this.rows && col >= 0 && col < this.cols)

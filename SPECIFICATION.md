@@ -294,33 +294,48 @@ Printable characters are sent as text. Everything else follows IBM Personal
 Communications' (PCOMM) default 3270 keyboard, not x3270's Ctrl-letter
 mnemonics:
 
-| Key                   | 3270 action                                        |
-| --------------------- | -------------------------------------------------- |
-| Enter (main)          | Newline                                            |
-| Shift-Enter (main)    | BackNewline                                        |
-| Right Ctrl            | Enter                                              |
-| Ctrl-Enter, Fn-Enter  | Enter (Fn-Enter arrives as the keypad Enter)       |
-| Tab / Shift-Tab       | Tab / BackTab                                      |
-| Backspace, Delete     | Backspace, Delete                                  |
-| Arrows, Home          | Up, Down, Left, Right, Home                        |
-| Insert                | ToggleInsert                                       |
-| Alt-Insert            | PA1                                                |
-| Shift-Arrows          | select a rectangle from the cursor, as a drag does |
-| Ctrl-C                | copy the selection, or the field under the cursor  |
-| Ctrl-V, Shift-Insert  | paste the clipboard into the screen                |
-| Shift-Home            | FieldMark                                          |
-| Alt-Home              | PA2                                                |
-| End                   | EraseEOF                                           |
-| Alt-End               | EraseInput                                         |
-| Shift-PageUp          | PA3                                                |
-| Esc                   | Attn                                               |
-| Shift-Esc             | SysReq                                             |
-| Pause                 | Clear                                              |
-| Caps Lock             | Reset                                              |
-| F1–F12                | PF1–PF12                                           |
-| Shift-F1–F12          | PF13–PF24                                          |
-| Ctrl-B then 1–4       | aim the keyboard at that session                   |
-| Ctrl-B then Shift-1–4 | show that many sessions at once                    |
+| Key                               | 3270 action                                        |
+| --------------------------------- | -------------------------------------------------- |
+| Enter (main)                      | Newline                                            |
+| Shift-Enter (main)                | BackNewline                                        |
+| Right Ctrl                        | Enter, the moment it goes down                     |
+| Left Ctrl                         | Reset, on release with nothing pressed in between  |
+| Ctrl-Enter, Fn-Enter              | Enter (Fn-Enter arrives as the keypad Enter)       |
+| Tab / Shift-Tab                   | Tab / BackTab                                      |
+| Backspace, Delete                 | Backspace, Delete                                  |
+| Ctrl-Delete, Ctrl-Backspace       | DeleteWord                                         |
+| Arrows, Home                      | Up, Down, Left, Right, Home                        |
+| Alt-Left, Alt-Right               | PreviousWord, NextWord (never the browser's back)  |
+| Ctrl-Left, Ctrl-Right             | PreviousWord, NextWord                             |
+| End on the keypad                 | FieldEnd                                           |
+| Ctrl-End                          | FieldEnd too, for keyboards with no keypad         |
+| Ctrl-Home                         | FieldStart: the first cell of the field            |
+| Insert                            | ToggleInsert                                       |
+| Alt-Insert                        | PA1                                                |
+| Shift-Arrows                      | select a rectangle from the cursor, as a drag does |
+| Ctrl-C                            | copy the selection, or the field under the cursor  |
+| Ctrl-V, Shift-Insert              | paste the clipboard into the screen                |
+| Shift-PageDown, Ctrl-Shift-Insert | paste too, as in PCOMM                             |
+| Ctrl-Z, Alt-Backspace             | undo typing                                        |
+| Shift-Home                        | FieldMark                                          |
+| Alt-Home                          | PA2                                                |
+| End                               | EraseEOF                                           |
+| Alt-End                           | EraseInput                                         |
+| Shift-End                         | Erase field (DeleteField)                          |
+| Ctrl-F9                           | CursorSelect                                       |
+| Shift-PageUp                      | PA3                                                |
+| Esc                               | Attn                                               |
+| Shift-Esc                         | SysReq                                             |
+| Pause                             | Clear                                              |
+| Caps Lock                         | Reset                                              |
+| F1–F12                            | PF1–PF12                                           |
+| Shift-F1–F12                      | PF13–PF24                                          |
+| Ctrl-B then 1–4                   | aim the keyboard at that session                   |
+| Ctrl-B then Shift-1–4             | show that many sessions at once                    |
+
+Shift held on a key that prints nothing and has no Shift binding of its own
+counts as not held, so Shift left down from typing capitals does not swallow
+Backspace, Delete, Caps Lock, Pause or Right Ctrl.
 
 `BackNewline` is Newline's mirror and the one name in the table b3270 has no
 action for: the server finds the first typeable cell of the nearest row above
