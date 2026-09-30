@@ -669,8 +669,20 @@ const recorder = new Recorder({
 
 const capture = new ComboCapture();
 const lone = new LoneModifier();
+
+const revision = await fetch("./api/version")
+  .then((response) => {
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return response.json();
+  })
+  .then((body) =>
+    typeof body.revision === "string" ? body.revision : "unknown",
+  )
+  .catch(() => "unknown");
+
 const panels = new Panels({
   settings,
+  revision: () => revision,
   codePage: () => activeSession()?.codePage ?? "bracket",
   keymap,
   macros,

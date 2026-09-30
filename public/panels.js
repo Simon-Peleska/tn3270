@@ -35,6 +35,7 @@ import { charsLayout, printableCharacter } from "./panel-chars.js";
 /**
  * @typedef {object} PanelsDeps
  * @property {import('./settings.js').Settings} settings
+ * @property {() => string} revision
  * @property {() => string} codePage
  * @property {import('./keymap.js').Keymap} keymap
  * @property {import('./macros.js').Macros} macros

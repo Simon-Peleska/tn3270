@@ -9,7 +9,12 @@ const OPTIONS = [
 ];
 
 export const settingsLayout = {
-  title: "TN3270 Settings",
+  title: (panel) => {
+    const revision = panel.deps.revision();
+    return revision === "unknown"
+      ? "TN3270 Settings"
+      : `TN3270 Settings @ ${revision.slice(0, 8)}`;
+  },
 
   /** @param {import('./panels.js').Panels} panel @param {import('./panels.js').PanelView} view */
   render(panel, view) {

@@ -18,6 +18,56 @@ const log = logger("http");
 const registry = new SessionRegistry(config);
 
 const ROOT = resolve(".");
+
+async function gitDirectory() {
+  const dotGit = join(ROOT, ".git");
+
+  // Worktrees use a .git file pointing at the real git directory.
+  try {
+    const text = await readFile(dotGit, "utf8");
+    const match = /^gitdir:\s*(.+)$/m.exec(text);
+    if (match?.[1]) return resolve(ROOT, match[1].trim());
+  } catch {
+    // Normal checkout: .git is a directory.
+  }
+
+  return dotGit;
+}
+
+async function currentRevision() {
+  const injected = process.env["TN3270_REV"]?.trim();
+  if (injected) return injected;
+
+  try {
+    const dir = await gitDirectory();
+    const head = (await readFile(join(dir, "HEAD"), "utf8")).trim();
+
+    // Detached HEAD.
+    if (/^[0-9a-f]{40,64}$/i.test(head)) return head;
+
+    const ref = /^ref:\s*(.+)$/.exec(head)?.[1];
+    if (ref === undefined) return "unknown";
+
+    // Normal loose ref.
+    try {
+      return (await readFile(join(dir, ref), "utf8")).trim();
+    } catch {
+      // Ref may be in packed-refs.
+    }
+
+    const packed = await readFile(join(dir, "packed-refs"), "utf8");
+    const line = packed
+      .split(/\r?\n/)
+      .find((line) => line.endsWith(` ${ref}`));
+
+    return line?.split(" ")[0] ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+const REVISION = await currentRevision();
+
 const PUBLIC_DIR = join(ROOT, "public");
 
 /** @type {Readonly<Record<string, string>>} */
@@ -140,6 +190,11 @@ async function handleRequest(req, res) {
   const path = url.pathname;
   const client = clientIdentity(req);
   log.info("request", { method: req.method ?? "", path, ...client });
+
+  if (path === "/api/version" && req.method === "GET") {
+    sendJson(res, 200, { revision: REVISION });
+    return;
+  }
 
   if (path === "/api/sessions" && req.method === "POST") {
     const session = await registry.create(client);
