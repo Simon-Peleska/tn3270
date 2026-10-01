@@ -169,7 +169,11 @@ function onLine(panels, label, letter) {
 }
 
 test("settings renders its commands and opens each dialog", () => {
-  const { panels } = fixture();
+  const { panels, macros } = fixture();
+  macros.macros.push({
+    name: "Hello",
+    steps: [{ text: "h", action: "", args: [] }],
+  });
   panels.open("settings");
   const shown = screenOf(panels);
   assert.match(shown[0], /TN3270 Settings/);
@@ -600,6 +604,69 @@ test("A on a key command opens an empty binding ready for capture", () => {
   assert.equal(keymap.lookup().get("C:F5"), "Enter");
 });
 
+test("with no macros or steps yet, Macros opens straight into capturing the first step", () => {
+  const { panels, macros } = fixture();
+  panels.open("settings");
+  command(panels, "5");
+  assert.equal(panels.isMacroEditor(), true);
+  assert.deepEqual(macros.macros, [{ name: "Macro 1", steps: [] }]);
+  assert.equal(panels.capturingMacro(), true);
+
+  panels.captureMacro({ kind: "text", value: "x" });
+  panels.exitMacroCapture();
+  press(panels, "PF", ["3"]);
+  assert.match(screenOf(panels)[0], /TN3270 Macros/);
+  assert.match(screenOf(panels)[4], /Macro 1.*X/);
+
+  command(panels, "N");
+  assert.equal(panels.capturingMacro(), true);
+  assert.equal(macros.macros.length, 2);
+});
+
+test("S or a macro's number closes the panels and plays it", async () => {
+  const { panels, macros, calls } = fixture();
+  macros.macros.push(
+    { name: "One", steps: [{ text: "a", action: "Enter", args: [] }] },
+    { name: "Two", steps: [{ text: "b", action: "", args: [] }] },
+  );
+  panels.open("macros");
+  assert.equal(
+    panels.host.fieldAtCursor(panels.host.layout().fields)?.name,
+    "command",
+  );
+  command(panels, "3");
+  assert.match(screenOf(panels)[21], /E5041/);
+  assert.equal(panels.isOpen(), true);
+
+  command(panels, "2");
+  assert.equal(panels.isOpen(), false);
+  await Promise.resolve();
+  assert.deepEqual(calls.sent, [{ type: "paste", text: "b", segments: [] }]);
+
+  panels.open("macros");
+  onLine(panels, "1. One", "s");
+  press(panels, "Enter");
+  assert.equal(panels.isOpen(), false);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls.sent.slice(1), [
+    { type: "paste", text: "a", segments: [] },
+    { type: "action", action: "Enter", args: [] },
+  ]);
+});
+
+test("a macro is not run while another is still playing", () => {
+  const { panels, macros } = fixture();
+  macros.macros.push({
+    name: "One",
+    steps: [{ text: "a", action: "", args: [] }],
+  });
+  macros.playing = { macro: macros.macros[0], active: true };
+  panels.open("macros");
+  command(panels, "1");
+  assert.equal(panels.isOpen(), true);
+  assert.match(screenOf(panels)[21], /E5042/);
+});
+
 test("macros and recordings have separate list actions", () => {
   const { panels, macros, recorder, calls } = fixture();
   macros.macros.push({
@@ -609,12 +676,12 @@ test("macros and recordings have separate list actions", () => {
   panels.open("macros");
   assert.match(
     screenOf(panels)[2],
-    /N=New R=Rename E=Edit K=Edit Keybind D=Delete/,
+    /S=Run N=New R=Rename E=Edit K=Edit Keybind D=Delete/,
   );
-  assert.match(screenOf(panels)[4], /Hello.*H, I, ENTER/);
-  onLine(panels, "Hello", "r");
+  assert.match(screenOf(panels)[4], /1\. Hello.*H, I, ENTER/);
+  onLine(panels, "1. Hello", "r");
   press(panels, "Enter");
-  assert.match(screenOf(panels)[4], /Hello.*Hello/);
+  assert.match(screenOf(panels)[4], /1\. Hello.*Hello/);
   recorder.start();
   recorder.record({
     screen: [],
@@ -751,8 +818,6 @@ test("macro capture records one key per step and advances to the next field", ()
   macros.macros.push({ name: "Keys", steps: [] });
   panels.open("macro:Keys");
   panels.paint(24, 80);
-  onLine(panels, "New step", "a");
-  press(panels, "Enter");
   assert.equal(panels.capturingMacro(), true);
   assert.equal(macros.macros[0].steps.length, 0);
 
@@ -1213,8 +1278,6 @@ test("macro capture scrolls to keep the next step ready", () => {
   macros.macros.push({ name: "Long", steps: [] });
   panels.open("macro:Long");
   panels.paint(24, 80);
-  onLine(panels, "New step", "a");
-  press(panels, "Enter");
   for (let index = 0; index < 20; index++)
     panels.captureMacro({ kind: "text", value: String(index % 10) });
   assert.equal(macros.macros[0].steps.length, 20);
@@ -1230,8 +1293,6 @@ test("a macro step rejects pasted multi-character input", () => {
   const { panels, macros } = fixture();
   macros.macros.push({ name: "Single", steps: [] });
   panels.open("macro:Single");
-  onLine(panels, "New step", "a");
-  press(panels, "Enter");
   panels.aid("Enter", { "edit:insert": "ab" });
   assert.deepEqual(macros.macros[0].steps, []);
   assert.match(screenOf(panels)[21], /E5025/);

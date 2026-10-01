@@ -97,6 +97,8 @@ import { charsLayout, printableCharacter } from "./panel-chars.js";
  * @property {(panel: Panels, id: string) => Item[]} [items]
  * @property {(panel: Panels, values: Record<string, string>) => void} [input]
  * @property {(panel: Panels, command: string, id: string) => boolean} [command]
+ * @property {(panel: Panels, id: string) => void} [opened] when walked into, not back to
+ * @property {boolean} [cursorOnCommand] start on the command line, not the first line
  */
 
 /** @type {Readonly<Record<string, PanelLayout>>} */
@@ -180,6 +182,7 @@ export class Panels {
   open(id) {
     console.info("panel opened", { id });
     this.show([{ id, top: 0 }]);
+    layoutFor(id).opened?.(this, id);
   }
 
   /**
@@ -256,6 +259,7 @@ export class Panels {
    */
   push(id, insertAt) {
     this.show([...this.stack, { id, top: 0, insertAt }]);
+    layoutFor(id).opened?.(this, id);
   }
 
   /** @returns {void} */
@@ -685,7 +689,9 @@ export class Panels {
       (frame.id.startsWith("macro:")
         ? (focused ?? firstEdit)
         : (firstEdit ?? focused)) ??
-      names.find((name) => name.startsWith("line:")) ??
+      (layout.cursorOnCommand
+        ? undefined
+        : names.find((name) => name.startsWith("line:"))) ??
       "command";
     return { texts, fields, cursor };
   }
