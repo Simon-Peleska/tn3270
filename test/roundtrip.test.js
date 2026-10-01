@@ -208,7 +208,7 @@ test("a keystroke moves the cursor and the delta carries it", async (t) => {
   const grid = paintedGrid(screen);
   const before = screen.cursor.col;
   // The field in this trace is nondisplay, so the advancing cursor is the whole effect.
-  session.b3270.runActions([{ action: "String", args: ["hello"] }]);
+  session.runActions([{ action: "String", args: ["hello"] }]);
   await settle(session);
   assert.equal(
     screen.cursor.col,

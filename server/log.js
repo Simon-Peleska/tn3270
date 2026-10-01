@@ -25,6 +25,11 @@ export function setLogLevel(level) {
   threshold = level;
 }
 
+/** @returns {boolean} */
+export function logsDebug() {
+  return threshold === "debug";
+}
+
 /**
  * Mirror every line to a file, rolling over to `<path>.1` past `maxBytes`.
  *

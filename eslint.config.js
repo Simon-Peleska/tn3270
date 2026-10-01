@@ -4,7 +4,13 @@ import globals from "globals";
 export default [
   js.configs.recommended,
   {
-    files: ["server/**/*.js", "test/**/*.js", "test/**/*.mjs"],
+    files: [
+      "server/**/*.js",
+      "test/**/*.js",
+      "test/**/*.mjs",
+      "3270/**/*.js",
+      "3270/**/*.mjs",
+    ],
     languageOptions: {
       globals: globals.node,
     },

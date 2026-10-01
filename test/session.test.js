@@ -48,9 +48,9 @@ test("a stalled host cannot grow the input queue without limit", async (t) => {
   );
 });
 
-test("a viewer receives b3270's active code page and later changes", async (t) => {
+test("a viewer receives the emulator's active code page and later changes", async (t) => {
   const config = testConfig({
-    b3270: { path: "b3270", model: 4, settings: { codePage: "german" } },
+    emulator: { model: 4, settings: { codePage: "german" } },
   });
   const session = new Session(config);
   t.after(() => session.close());
@@ -123,7 +123,7 @@ test("every attached viewer receives the same delta", async (t) => {
   const beforeA = a.paints.length;
   const beforeB = b.paints.length;
 
-  session.b3270.runActions([{ action: "String", args: ["hello"] }]);
+  session.runActions([{ action: "String", args: ["hello"] }]);
   await waitUntil(() => a.paints.length > beforeA, "a delta to be broadcast");
   await waitUntil(
     () => b.paints.length > beforeB,
@@ -1235,10 +1235,10 @@ test("an AID key ends the history: what was typed before it cannot be undone", a
   assert.equal(row(), " abc        ", "the typing stands");
 });
 
-test("a b3270 resource set in the config reaches the emulator", async (t) => {
+test("a setting in the config reaches the emulator", async (t) => {
   const session = new Session(
     testConfig({
-      b3270: { path: "b3270", model: 2, settings: { oversize: "90x30" } },
+      emulator: { model: 2, settings: { oversize: "90x30" } },
     }),
   );
   t.after(() => session.close());
@@ -1342,12 +1342,12 @@ test("fitting the screen under a live connection drops it and reopens the same h
   assert.equal(session.lastHost, expectedHost);
 });
 
-test("the registry refuses to exceed maxSessions", async () => {
+test("the registry refuses to exceed maxSessions", () => {
   const registry = new SessionRegistry(
     testConfig({ sessions: { maxSessions: 1, idleTimeoutMs: 0 } }),
   );
-  await registry.create();
-  await assert.rejects(
+  registry.create();
+  assert.throws(
     () => registry.create(),
     (err) => {
       assert.ok(err instanceof AppError);
@@ -1356,22 +1356,6 @@ test("the registry refuses to exceed maxSessions", async () => {
     },
   );
   registry.closeAll();
-});
-
-test("the registry counts sessions still starting against maxSessions", async (t) => {
-  const registry = new SessionRegistry(
-    testConfig({ sessions: { maxSessions: 1, idleTimeoutMs: 0 } }),
-  );
-  t.after(() => registry.closeAll());
-
-  const first = registry.create();
-  await assert.rejects(registry.create(), (err) => {
-    assert.ok(err instanceof AppError);
-    assert.equal(err.code, "E3002");
-    return true;
-  });
-  await first;
-  assert.equal(registry.list().length, 1);
 });
 
 test("an unknown session id is a stable error, not a crash", () => {
@@ -1388,7 +1372,7 @@ test("an unknown session id is a stable error, not a crash", () => {
 
 test("a closed session removes itself from the registry", async () => {
   const registry = new SessionRegistry(testConfig());
-  const session = await registry.create();
+  const session = registry.create();
   await session.ready;
   assert.equal(registry.list().length, 1);
   session.close();

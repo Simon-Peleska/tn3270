@@ -8,7 +8,6 @@ import { setLogFile, setLogLevel, logger } from "./log.js";
 import { SessionRegistry } from "./registry.js";
 import { parseClientMessage } from "./protocol.js";
 import { AppError, describeError } from "./errors.js";
-import { proxyRestRequest } from "./restproxy.js";
 
 const config = loadConfig(process.env["TN3270_CONFIG"] ?? "config.jsonc");
 setLogLevel(config.logLevel);
@@ -56,9 +55,7 @@ async function currentRevision() {
     }
 
     const packed = await readFile(join(dir, "packed-refs"), "utf8");
-    const line = packed
-      .split(/\r?\n/)
-      .find((line) => line.endsWith(` ${ref}`));
+    const line = packed.split(/\r?\n/).find((line) => line.endsWith(` ${ref}`));
 
     return line?.split(" ")[0] ?? "unknown";
   } catch {
@@ -196,7 +193,7 @@ async function handleRequest(req, res) {
   }
 
   if (path === "/api/sessions" && req.method === "POST") {
-    const session = await registry.create(client);
+    const session = registry.create(client);
     await session.ready;
     sendJson(res, 201, {
       id: session.id,
@@ -221,19 +218,8 @@ async function handleRequest(req, res) {
   if (path === "/api/sessions" && req.method === "GET") {
     sendJson(res, 200, {
       sessions: registry.list(),
-      defaultHost: config.b3270.defaultHost,
+      defaultHost: config.emulator.defaultHost,
     });
-    return;
-  }
-
-  // Matched on the raw target, not the parsed path: percent-encoded action
-  // arguments must reach b3270 exactly as sent.
-  const restMatch = /^\/api\/sessions\/([0-9a-fA-F-]{36})(\/3270\/.*)$/.exec(
-    req.url ?? "",
-  );
-  if (restMatch !== null) {
-    const session = registry.get(String(restMatch[1]));
-    await proxyRestRequest(req, res, session, String(restMatch[2]), client);
     return;
   }
 

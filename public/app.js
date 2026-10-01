@@ -469,7 +469,7 @@ async function createSession() {
  * @property {ReturnType<typeof setTimeout> | null} retryTimer the backoff wait before the next reconnect
  * @property {boolean} reconnecting whether a dropped socket has reattached
  * @property {number} model
- * @property {import('../server/b3270.js').ModelInfo[]} models
+ * @property {import('../server/indications.js').ModelInfo[]} models
  * @property {boolean} hostLocked
  * @property {string} codePage
  * @property {string} oversize

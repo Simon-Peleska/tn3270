@@ -102,7 +102,7 @@ export class ScreenModel {
   /**
    * The fg/bg an erase carries become the screen-wide defaults.
    *
-   * @param {import('./b3270.js').EraseIndication} erase
+   * @param {import('./indications.js').EraseIndication} erase
    * @returns {void}
    */
   applyErase(erase) {
@@ -162,7 +162,7 @@ export class ScreenModel {
   }
 
   /**
-   * @param {import('./b3270.js').ScreenModeIndication} mode
+   * @param {import('./indications.js').ScreenModeIndication} mode
    * @returns {void}
    */
   applyScreenMode(mode) {
@@ -177,7 +177,7 @@ export class ScreenModel {
    * keeps its old value per cell. A colour changing back to the default comes
    * named, and a named background would hide the editable-field tint.
    *
-   * @param {import('./b3270.js').ScreenIndication} screen
+   * @param {import('./indications.js').ScreenIndication} screen
    * @returns {void}
    */
   applyScreen(screen) {

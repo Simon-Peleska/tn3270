@@ -94,7 +94,7 @@ export class Settings {
     this.model = 2;
     /** @type {string} `<cols>x<rows>`, or '' for the model's own size. */
     this.oversize = "";
-    /** @type {import('../server/b3270.js').ModelInfo[]} */
+    /** @type {import('../server/indications.js').ModelInfo[]} */
     this.models = [];
     /** @type {boolean} */
     this.connected = false;

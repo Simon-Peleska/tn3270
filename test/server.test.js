@@ -375,12 +375,12 @@ test("the log file names the session and the address every line came from", asyn
   await waitUntil(() => viewer.messages.length > 0, "the hello message");
 
   const attached = await logLine(server, "viewer attached");
-  const spawned = await logLine(server, "spawning");
+  const started = await logLine(server, "starting emulator");
 
   assert.match(attached, new RegExp(`session=${created.id}\\b`));
   assert.match(attached, /ip=127\.0\.0\.1\b/);
   // Even the lines no browser caused say which session they belong to.
-  assert.match(spawned, new RegExp(`session=${created.id}\\b`));
+  assert.match(started, new RegExp(`session=${created.id}\\b`));
   // Nobody authenticated, so no user field at all rather than an empty one.
   assert.doesNotMatch(attached, /user=/);
 });

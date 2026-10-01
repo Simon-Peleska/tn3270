@@ -64,6 +64,9 @@ export class FakeHost {
         for (const wake of this.waiters.splice(0)) wake();
       });
       socket.on("error", () => {});
+      socket.on("close", () => {
+        for (const wake of this.waiters.splice(0)) wake();
+      });
       for (const wake of this.waiters.splice(0)) wake();
     });
   }

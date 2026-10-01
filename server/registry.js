@@ -1,6 +1,5 @@
 import { Session } from "./session.js";
 import { AppError } from "./errors.js";
-import { reserveRestEndpoint } from "./restproxy.js";
 import { logger } from "./log.js";
 
 export class SessionRegistry {
@@ -10,49 +9,38 @@ export class SessionRegistry {
     this.log = logger("registry");
     /** @type {Map<string, Session>} */
     this.sessions = new Map();
-    this.creating = 0;
   }
 
   /**
    * @param {{ ip: string, user: string }} [client]
-   * @returns {Promise<Session>}
+   * @returns {Session}
    */
-  async create(client = { ip: "", user: "" }) {
-    const occupied = this.sessions.size + this.creating;
-    if (occupied >= this.config.sessions.maxSessions) {
+  create(client = { ip: "", user: "" }) {
+    if (this.sessions.size >= this.config.sessions.maxSessions) {
       throw new AppError(
         "E3002",
-        `${occupied} sessions are already open or starting`,
+        `${this.sessions.size} sessions are already open`,
       );
     }
-    this.creating++;
-    try {
-      const session = new Session(
-        this.config,
-        await reserveRestEndpoint(),
-        client.user,
-      );
-      session.startedBy = client.user || client.ip || "Unknown";
-      session.onClosed = () => {
-        this.sessions.delete(session.id);
-        this.log.info("session removed", {
-          session: session.id,
-          remaining: this.sessions.size,
-        });
-      };
-      this.sessions.set(session.id, session);
-      this.log.info("session created", {
+    const session = new Session(this.config);
+    session.startedBy = client.user || client.ip || "Unknown";
+    session.onClosed = () => {
+      this.sessions.delete(session.id);
+      this.log.info("session removed", {
         session: session.id,
-        ...client,
-        total: this.sessions.size,
+        remaining: this.sessions.size,
       });
+    };
+    this.sessions.set(session.id, session);
+    this.log.info("session created", {
+      session: session.id,
+      ...client,
+      total: this.sessions.size,
+    });
 
-      if (this.config.b3270.defaultHost !== null)
-        session.connect(this.config.b3270.defaultHost);
-      return session;
-    } finally {
-      this.creating--;
-    }
+    if (this.config.emulator.defaultHost !== null)
+      session.connect(this.config.emulator.defaultHost);
+    return session;
   }
 
   /**

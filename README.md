@@ -1,18 +1,20 @@
 # tn3270
 
-An IBM 3270 terminal in a browser tab. A Node server drives one real `b3270`
-process per session; the page draws the screen onto a canvas of its own, with no
+An IBM 3270 terminal in a browser tab. A Node server runs every session on
+node3270 (`3270/`), a port of x3270's `b3270` that runs in-process on a pool of
+worker threads; the page draws the screen onto a canvas of its own, with no
 bundler and one runtime dependency. Share the URL and the other person sees the
 same screen live.
 
 ```
-browser ──WS── node ──NDJSON── b3270 ──TN3270── mainframe
+browser ──WS── node (node3270) ──TN3270── mainframe
 ```
 
 ## Running it
 
-You need `b3270` (from the x3270 suite) on `PATH` and Node 22. With Nix, the
-flake brings both:
+You need Node 22. `b3270` and `s3270` (from the x3270 suite) on `PATH` are
+optional: node3270's tests compare against them and skip without them. With
+Nix, the flake brings all three:
 
 ```bash
 nix develop          # or: direnv allow
@@ -50,15 +52,11 @@ to its executable).
   Opening a panel is a keymap command, so that key is yours to change too.
 - **Fit to window**: ask the host for a screen the size of the pane rather than
   the model's 24×80, negotiated as IBM-DYNAMIC.
-- **Automation over REST**, speaking s3270's own `-httpd` protocol, so an
-  existing s3270 client only changes its base URL. Available as soon as the
-  session exists; protect this server behind authentication if clients should
-  not be able to drive one another's sessions.
 
 ## Configuring it
 
 `config.jsonc` — hand-parsed JSONC, comments and all. The host to dial, the
-model, any `b3270` resource, session limits, the idle timeout, allowed hosts,
+model, x3270 resources by name, session limits, the idle timeout, allowed hosts,
 and where the log rolls. `TN3270_CONFIG=other.jsonc npm start` picks a different
 one.
 

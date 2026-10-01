@@ -2,14 +2,6 @@
 
 Things that cost time once and should not cost it twice.
 
-## b3270 emits invalid JSON under a non-C locale
-
-`run-result` carries a `time` field formatted with the C library's locale. Under
-e.g. `de_DE` that is `"time":0,011` — a comma, which is not JSON, and the line is
-lost. The child is therefore spawned with `LC_ALL=C` and `LC_NUMERIC=C`
-(`server/b3270.js`). Symptom if it regresses: intermittent `E2003` immediately
-after any action.
-
 ## The wiki's field names are not always b3270's
 
 `Screen-mode indication` on the x3270 wiki documents `cols`. Real b3270 output is
@@ -41,20 +33,6 @@ gets the placeholder, and the placeholder is a plausible size, so nothing looks
 wrong. `session.ready` resolves on that first indication — wait on it, never on
 `rows > 0`.
 
-## `-httpd` has three traps worth knowing
-
-- `-httpd 127.0.0.1:0` binds an ephemeral port and then reports the literal
-  `:0`, so there is no way to learn which one. We bind a port ourselves, close
-  it, and hand b3270 the number (`reserveRestEndpoint` in
-  `server/restproxy.js`). A port taken again in between is not an exit: b3270
-  says `httpd bind: Address already in use` as a popup indication and keeps
-  running, and every REST call for that session then fails with `E7003`.
-- `-cookiefile` is read once at startup, not per request. Deleting the file
-  later changes nothing, and there is no indication saying when it has been
-  read — so the file lives as long as the child does.
-- Without `-cookiefile` the port is open to every process on the machine. It is
-  the only authentication the httpd has.
-
 ## b3270 starts in the model's alternate size, s3270 at 24×80
 
 Disconnected, `b3270 -model 4` reports `43 80` in the REST status line and
@@ -70,8 +48,8 @@ component by default, so `configure` fails looking for X utilities. The unwanted
 ones must be disabled explicitly (`--disable-x3270 --disable-c3270
 --disable-tcl3270`), while `pr3287` and `x3270if` stay enabled because the b3270
 build and install targets depend on them. `s3270` is headless as well and costs
-nothing in the closure, so it is built too, as the oracle for the REST proxy's
-comparison test. Its install target installs `pr3287` and `x3270if` a second
+nothing in the closure, so it is built too, as an oracle for node3270's
+comparison tests. Its install target installs `pr3287` and `x3270if` a second
 time, though, and two `install -c` runs racing over one path fail outright —
 hence `enableParallelInstalling = false`. See `nix/b3270.nix`.
 
