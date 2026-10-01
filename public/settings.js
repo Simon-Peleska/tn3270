@@ -3,22 +3,23 @@ export { THEMES } from "./themes.js";
 /** @typedef {import('./themes.js').Theme} Theme */
 
 /**
- * The first three are vendored in `public/fonts/`; the rest are the machine's.
+ * All but the last are vendored in `public/fonts/`; the last is the machine's.
  * @type {readonly { name: string, family: string }[]}
  */
 export const FONTS = Object.freeze([
   { name: "Fira Mono", family: '"Fira Mono", monospace' },
   { name: "IBM 3270", family: '"IBM 3270", monospace' },
   { name: "IBM Plex Mono", family: '"IBM Plex Mono", monospace' },
+  { name: "European Teletext", family: '"European Teletext", monospace' },
+  { name: "DejaVu Sans Mono", family: '"DejaVu Sans Mono", monospace' },
+  { name: "Liberation Mono", family: '"Liberation Mono", monospace' },
+  { name: "JetBrains Mono", family: '"JetBrains Mono", monospace' },
+  { name: "Inconsolata", family: '"Inconsolata", monospace' },
+  { name: "Courier Prime", family: '"Courier Prime", monospace' },
   {
     name: "System monospace",
     family: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
   },
-  { name: "Menlo / Consolas", family: "Menlo, Consolas, monospace" },
-  { name: "DejaVu Sans Mono", family: '"DejaVu Sans Mono", monospace' },
-  { name: "Liberation Mono", family: '"Liberation Mono", monospace' },
-  { name: "Courier New", family: '"Courier New", Courier, monospace' },
-  { name: "JetBrains Mono", family: '"JetBrains Mono", monospace' },
 ]);
 
 /**

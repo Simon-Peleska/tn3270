@@ -421,7 +421,7 @@ without anything standing between the source and what runs.
   restart, and the sessions a restart would end carry on. Open pages keep
   their old code until their next reload.
 
-A cold browser fetches about 810 KB in one wave, 590 KB of it fonts; a
+A cold browser fetches about 830 KB in one wave, 610 KB of it fonts; a
 reconnect's reload fetches the 230 KB of page code again and no fonts.
 
 ## Layout

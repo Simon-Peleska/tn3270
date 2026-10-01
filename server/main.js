@@ -76,12 +76,11 @@ const CONTENT_TYPES = Object.freeze({
   ".js": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".ico": "image/x-icon",
-  ".ttf": "font/ttf",
   ".woff2": "font/woff2",
 });
 
 /** Vendored fonts, three quarters of the page's weight, and never edited. */
-const IMMUTABLE = new Set([".ttf", ".woff2"]);
+const IMMUTABLE = new Set([".woff2"]);
 
 /** @type {Readonly<Record<string, number>>} Anything not named here is a 500. */
 const ERROR_STATUS = Object.freeze({

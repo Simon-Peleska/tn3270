@@ -1,22 +1,56 @@
 The font files in this directory are vendored so the settings page can offer
 them to any browser, not only to machines that happen to have them installed.
-All three are licensed under the SIL Open Font License, Version 1.1, which
-permits redistribution as part of a larger work.
+Each is the upstream Regular face, converted to WOFF2 with woff2_compress and
+otherwise unchanged.
 
-  3270-Regular.ttf        "IBM 3270", the IBM 3270 terminal font digitised by
-                          Ricardo Banffy.
-                          https://github.com/rbanffy/3270font
+Licensed under the SIL Open Font License, Version 1.1, which permits
+redistribution as part of a larger work:
 
-  FiraMono-Regular.ttf    "Fira Mono" by Carrois Apostrophe / Mozilla.
-                          https://github.com/mozilla/Fira
+  3270-Regular.woff2           "IBM 3270", the IBM 3270 terminal font
+                               digitised by Ricardo Banffy.
+                               https://github.com/rbanffy/3270font
 
-  IBMPlexMono-Regular.ttf "IBM Plex Mono" by IBM.
-                          https://github.com/IBM/plex
+  FiraMono-Regular.woff2       "Fira Mono" by Carrois Apostrophe / Mozilla.
+                               https://github.com/mozilla/Fira
 
-The full licence text is at https://scripts.sil.org/OFL. In summary: the fonts
+  IBMPlexMono-Regular.woff2    "IBM Plex Mono" by IBM.
+                               https://github.com/IBM/plex
+
+  LiberationMono-Regular.woff2 "Liberation Mono" 2.1.5 by Red Hat, Inc.
+                               https://github.com/liberationfonts/liberation-fonts
+
+  JetBrainsMono-Regular.woff2  "JetBrains Mono" 2.304 by the JetBrains Mono
+                               Project Authors.
+                               https://github.com/JetBrains/JetBrainsMono
+
+  Inconsolata-Regular.woff2    "Inconsolata" by the Inconsolata Project
+                               Authors.
+                               https://github.com/googlefonts/Inconsolata
+
+  CourierPrime-Regular.woff2   "Courier Prime" by the Courier Prime Project
+                               Authors.
+                               https://github.com/quoteunquoteapps/CourierPrime
+
+The full licence text is at https://openfontlicense.org. In summary: the fonts
 may be used, studied, modified and redistributed freely, they may not be sold on
 their own, and a modified version may not use the reserved font names.
 
-The other fonts the settings page offers are not shipped. They are named in a
-font stack and resolve to whatever the browser's own machine has, falling back
-to its default monospace face.
+Under other licences:
+
+  DejaVuSansMono.woff2         "DejaVu Sans Mono" 2.37 by the DejaVu fonts
+                               team, derived from Bitstream Vera. Bitstream
+                               Vera and Arev licences plus public domain
+                               changes; the full text, which has to travel
+                               with the font, is in LICENSE-DejaVu.
+                               https://github.com/dejavu-fonts/dejavu-fonts
+
+  EuropeanTeletext.woff2       "European Teletext" by Jayvee Enaguas
+                               (HarvettFox96), a raster face taken from
+                               European teletext services. Dedicated to the
+                               public domain under CC0 1.0 Universal:
+                               https://creativecommons.org/publicdomain/zero/1.0/
+                               Fetched from https://www.dafont.com/european-teletext.font
+
+The one font the settings page offers that is not shipped is "System
+monospace": a font stack that resolves to whatever the browser's own machine
+has, falling back to its default monospace face.

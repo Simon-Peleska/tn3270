@@ -452,6 +452,22 @@ test("sessions can be switched and restored after reload", async (t) => {
   assert.deepEqual(browser.exceptions, []);
 });
 
+test("every vendored font loads in a real browser", async (t) => {
+  const browser = await startBrowser(t);
+  const loaded = await browser.command("Runtime.evaluate", {
+    expression: `Promise.all([...document.fonts].map((face) =>
+      face.load().then(() => face.family, () => "broken: " + face.family)))`,
+    awaitPromise: true,
+    returnByValue: true,
+  });
+  const { FONTS } = await import("../public/settings.js");
+  const vendored = FONTS.filter((font) => font.name !== "System monospace");
+  assert.deepEqual(
+    [...loaded.result.result.value].sort(),
+    vendored.map((font) => font.name).sort(),
+  );
+});
+
 test("a server disconnect is reported clearly", async (t) => {
   const browser = await startBrowser(t);
   const disconnected = browser.consoleMessage("[E5002]");

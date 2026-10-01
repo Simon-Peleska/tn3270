@@ -6,7 +6,8 @@ tooling — `typescript`, `@types/*` and their trees — which is never
 redistributed and needs no notice here.
 
 Two more notices live next to the files they cover: `public/fonts/NOTICE` for
-the three vendored fonts (SIL Open Font License 1.1) and `test/traces/NOTICE`
+the nine vendored fonts (mostly SIL Open Font License 1.1; DejaVu's own
+licence is beside it in `public/fonts/LICENSE-DejaVu`) and `test/traces/NOTICE`
 for the recorded host traces taken from x3270's test suite.
 
 ## ws

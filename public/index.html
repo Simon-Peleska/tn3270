@@ -42,45 +42,117 @@
     <link rel="modulepreload" href="./themes.js" />
     <link rel="modulepreload" href="./store.js" />
 
-    <!-- Which font is wanted is a stored setting, so all three are asked for:
-         the fit cannot start until one has loaded. -->
+    <!-- Which font is wanted is a stored setting, so all of them are asked
+         for: the fit cannot start until one has loaded. -->
     <link
       rel="preload"
-      href="./fonts/3270-Regular.ttf"
+      href="./fonts/FiraMono-Regular.woff2"
       as="font"
-      type="font/ttf"
+      type="font/woff2"
       crossorigin
     />
     <link
       rel="preload"
-      href="./fonts/FiraMono-Regular.ttf"
+      href="./fonts/3270-Regular.woff2"
       as="font"
-      type="font/ttf"
+      type="font/woff2"
       crossorigin
     />
     <link
       rel="preload"
-      href="./fonts/IBMPlexMono-Regular.ttf"
+      href="./fonts/IBMPlexMono-Regular.woff2"
       as="font"
-      type="font/ttf"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="./fonts/EuropeanTeletext.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="./fonts/DejaVuSansMono.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="./fonts/LiberationMono-Regular.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="./fonts/JetBrainsMono-Regular.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="./fonts/Inconsolata-Regular.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="./fonts/CourierPrime-Regular.woff2"
+      as="font"
+      type="font/woff2"
       crossorigin
     />
 
     <style>
       /* Vendored so any browser gets them. See public/fonts/NOTICE. */
       @font-face {
-        font-family: "IBM 3270";
-        src: url("./fonts/3270-Regular.ttf") format("truetype");
+        font-family: "Fira Mono";
+        src: url("./fonts/FiraMono-Regular.woff2") format("woff2");
         font-display: block;
       }
       @font-face {
-        font-family: "Fira Mono";
-        src: url("./fonts/FiraMono-Regular.ttf") format("truetype");
+        font-family: "IBM 3270";
+        src: url("./fonts/3270-Regular.woff2") format("woff2");
         font-display: block;
       }
       @font-face {
         font-family: "IBM Plex Mono";
-        src: url("./fonts/IBMPlexMono-Regular.ttf") format("truetype");
+        src: url("./fonts/IBMPlexMono-Regular.woff2") format("woff2");
+        font-display: block;
+      }
+      @font-face {
+        font-family: "European Teletext";
+        src: url("./fonts/EuropeanTeletext.woff2") format("woff2");
+        font-display: block;
+      }
+      @font-face {
+        font-family: "DejaVu Sans Mono";
+        src: url("./fonts/DejaVuSansMono.woff2") format("woff2");
+        font-display: block;
+      }
+      @font-face {
+        font-family: "Liberation Mono";
+        src: url("./fonts/LiberationMono-Regular.woff2") format("woff2");
+        font-display: block;
+      }
+      @font-face {
+        font-family: "JetBrains Mono";
+        src: url("./fonts/JetBrainsMono-Regular.woff2") format("woff2");
+        font-display: block;
+      }
+      @font-face {
+        font-family: "Inconsolata";
+        src: url("./fonts/Inconsolata-Regular.woff2") format("woff2");
+        font-display: block;
+      }
+      @font-face {
+        font-family: "Courier Prime";
+        src: url("./fonts/CourierPrime-Regular.woff2") format("woff2");
         font-display: block;
       }
 
