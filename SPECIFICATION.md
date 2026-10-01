@@ -267,8 +267,8 @@ back from whatever they were bound to since.
 
 Macros are recorded from the Macros page under Settings. `S` on `Record` closes the panels
 and records until `S` on `Recording`. Then `Save as` offers a name in an open
-field: Enter saves it, `D` throws the recording away. `S` on a macro plays it,
-`E` renames it and `D` deletes it. Each macro shows its key. A macro can have
+field: Enter saves it, `D` throws the recording away. `S` on a macro, or its number on the
+command line, closes the panels and plays it; `R` renames it, `E` edits its steps and `D` deletes it. Each macro shows its key. A macro can have
 a key of its own, set on the Keys panel, where it is listed after the fixed
 commands as `Macro <name>`, and it follows the keymap's one rule: a key bound
 to a macro is taken from whatever had it. Renaming a macro keeps its key;
@@ -613,6 +613,8 @@ browser, `E6xxx` server transport, `E7xxx` the REST proxy.
 | `E5038` | First terminal session could not be opened             |
 | `E5039` | Session could not be terminated                        |
 | `E5040` | No saved recording is available to repeat              |
+| `E5041` | No macro has the number given on the command line      |
+| `E5042` | A macro was run while another is still playing         |
 | `E6001` | Static file not found                                  |
 | `E6002` | WebSocket upgrade path is not a session                |
 | `E6003` | WebSocket closed unexpectedly                          |

@@ -4,14 +4,20 @@ export const macrosLayout = {
   title: "TN3270 Macros",
   valueCol: 27,
   bottomReserve: 2,
+  cursorOnCommand: true,
+
+  /** @param {import('./panels.js').Panels} panel */
+  opened(panel) {
+    if (panel.deps.macros.macros.length === 0) macrosLayout.command(panel, "N");
+  },
 
   /** @param {import('./panels.js').Panels} _panel @param {import('./panels.js').PanelView} view */
   render(_panel, view) {
-    view.field("command", 2, 1, 1, "");
+    view.field("command", 2, 1, 3, "");
     view.say(
       2,
-      3,
-      "N=New R=Rename E=Edit K=Edit Keybind D=Delete",
+      5,
+      "S=Run N=New R=Rename E=Edit K=Edit Keybind D=Delete",
       "turquoise",
     );
   },
@@ -19,9 +25,9 @@ export const macrosLayout = {
   /** @param {import('./panels.js').Panels} panel @returns {import('./panels.js').Item[]} */
   items(panel) {
     const { macros, keymap } = panel.deps;
-    return macros.macros.map((macro) => ({
+    return macros.macros.map((macro, index) => ({
       key: `macro:${macro.name}`,
-      label: macro.name,
+      label: `${index + 1}. ${macro.name}`,
       value: `${macro.steps
         .flatMap((step) => [
           ...step.text.toUpperCase(),
@@ -32,6 +38,7 @@ export const macrosLayout = {
         .padEnd(
           34,
         )}${keymap.combosFor(macroCommand(macro.name)).length ? `Keybind ${keymap.labelFor(macroCommand(macro.name))}` : ""}`,
+      s: () => run(panel, macro),
       e: () => panel.push(`macro:${macro.name}`),
       k: () => panel.push(`keys:${macroCommand(macro.name)}`),
       editOn: "r",
@@ -50,8 +57,15 @@ export const macrosLayout = {
 
   /** @param {import('./panels.js').Panels} panel @param {string} command @returns {boolean} */
   command(panel, command) {
-    if (command !== "N") return false;
     const { macros } = panel.deps;
+    if (/^\d+$/.test(command)) {
+      const macro = macros.macros[Number(command) - 1];
+      if (macro === undefined)
+        panel.message = panel.problem("E5041", `There is no macro ${command}`);
+      else run(panel, macro);
+      return true;
+    }
+    if (command !== "N") return false;
     const name = macros.suggestedName();
     macros.macros.push({ name, steps: [] });
     macros.deps.persist(macros.macros);
@@ -60,10 +74,29 @@ export const macrosLayout = {
   },
 };
 
+/** @param {import('./panels.js').Panels} panel @param {import('./macros.js').Macro} macro */
+function run(panel, macro) {
+  const { macros } = panel.deps;
+  if (macros.playing !== null) {
+    panel.message = panel.problem("E5042", "A macro is already playing");
+    return;
+  }
+  panel.close();
+  void macros.play(macro);
+}
+
 export const macroEditLayout = {
   /** @param {import('./panels.js').Panels} panel */
   lineCommands(panel) {
     return !panel.macroCapture;
+  },
+
+  /** @param {import('./panels.js').Panels} panel @param {string} id */
+  opened(panel, id) {
+    const macro = panel.deps.macros.macros.find(
+      (entry) => entry.name === id.slice(6),
+    );
+    if (macro?.steps.length === 0) panel.startMacroCapture(0);
   },
 
   /** @param {import('./panels.js').Panels} panel @param {import('./panels.js').PanelView} view */
