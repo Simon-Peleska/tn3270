@@ -31,9 +31,9 @@ function tapModifier(init) {
   return alone === null ? null : mapKey(asReleased(alone), lookup);
 }
 
-test("the menu, keyboard, and recorder shortcuts are client commands", () => {
+test("the macros, keyboard, and recorder shortcuts are client commands", () => {
   for (const [letter, command] of [
-    ["m", "Menu"],
+    ["m", "Macros"],
     ["k", "ToggleKeyboard"],
     ["e", "ToggleRecording"],
     [".", "RepeatRecording"],
@@ -47,7 +47,8 @@ test("the menu, keyboard, and recorder shortcuts are client commands", () => {
     );
   }
   const keymap = new Keymap(() => {});
-  assert.equal(keymap.labelFor("Menu"), "Ctrl+M");
+  assert.equal(keymap.labelFor("Macros"), "Ctrl+M");
+  assert.equal(keymap.labelFor("Menu"), "Alt+Space");
   assert.equal(keymap.labelFor("ToggleKeyboard"), "Ctrl+K");
   assert.equal(keymap.labelFor("ToggleRecording"), "Ctrl+E");
   assert.equal(keymap.labelFor("RepeatRecording"), "Ctrl+.");

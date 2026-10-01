@@ -283,7 +283,7 @@ and password input is skipped.
 
 Opening a panel is a command like any other, so it is in the keymap of §5 and
 can be rebound there: `Menu`, `Settings`, `Macros`, `Recorder` and `Keys`,
-bound by default to `Alt+Space`, `Alt+,`, `Alt+M`, `Alt+R` and `Alt+K`. The
+bound by default to `Alt+Space`, `Alt+,`, `Ctrl+M` or `Alt+M`, `Alt+R` and `Alt+K`. The
 same combination pressed again closes the panel, and from inside another panel
 it opens its own. Copy, paste and clicks work on a panel the way they do on the
 screen.
@@ -355,7 +355,8 @@ go stops the paging at once. Enter, Clear, Attn and SysReq do not repeat.
 
 Plain Ctrl and Meta combinations are left to the browser, except Ctrl-B (the
 session prefix, below) and Ctrl-C/Ctrl-V, which copy and paste the system
-clipboard rather than reaching the host as 3270 actions. Alt is otherwise left
+clipboard rather than reaching the host as 3270 actions, and `Ctrl+M`, which
+opens Macros. Alt is otherwise left
 to the browser too, except the PA-key and Dup/FieldMark/EraseInput bindings
 above, the session digits below, and whatever the panel commands of §4.1 are
 bound to — by default `Alt+Space`, `Alt+,`, `Alt+M`, `Alt+R` and `Alt+K`, which
