@@ -86,7 +86,7 @@ node /tmp/hang.mjs
 nothing to "fix" here — recorded for anyone who hits it.
 
 Fuzz seed `keyboard 151094781` (`node scripts/fuzz.mjs --kind keyboard --from 151094781 --seconds 1`,
-or replay it directly via `CASES.keyboard(151094781)` in `test/fuzz.js`) makes b3270 hang on a
+or replay it directly via `CASES.keyboard(rng(151094781))` in `test/fuzz.js`) makes b3270 hang on a
 `RestoreInput` call partway through a long action sequence (reverse-input mode is toggled on just
 before it). node3270 runs the same sequence to completion without incident. It was not minimized
 further since node3270 already agrees with correct behavior there; `scripts/fuzz.mjs`'s SKIP

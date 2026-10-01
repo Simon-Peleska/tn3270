@@ -293,7 +293,10 @@ export async function scenario(
       }
       let finished = false;
       const done = emulator.run(name, args);
-      const finish = () => (finished = true);
+      const finish = () => {
+        finished = true;
+        host.wake();
+      };
       done.then(finish, finish);
       // A String can send several AIDs, each waiting for the host to unlock the keyboard.
       let records = host.received.split("ffef").length;
@@ -308,10 +311,8 @@ export async function scenario(
         const nvtData = host.received.slice(before).startsWith("05");
         records = host.received.split("ffef").length;
         before = host.received.length;
-        if (!finished && !nvtData) {
-          host.socket?.write(UNLOCK_KEYBOARD);
-          await sync(host);
-        }
+        // No timing mark after the unlock: its answer would race the next AID of a String.
+        if (!finished && !nvtData) host.socket?.write(UNLOCK_KEYBOARD);
       }
       await done;
     }
@@ -356,15 +357,28 @@ export function assertSameLines(ours, theirs) {
   theirs = theirs.filter((line) => !isStats(line));
   // b3270 flushes screen changes between socket reads, so whether the cursor showing up on
   // connect comes before or after the next connection state depends on how the host's
-  // negotiation was split into packets. Both orders count as connection first.
+  // negotiation was split into packets. Both orders count as connection first, for a run of
+  // cursor changes ahead of a run of connection states too.
   const connectionFirst = (/** @type {string[]} */ lines) => {
+    const isCursor = (/** @type {string} */ line) =>
+      /^\{"screen":\{"cursor":\{[^}]*\}\}\}$/.test(line);
     lines = [...lines];
-    for (let j = 0; j + 1 < lines.length; j++)
-      if (
-        /^\{"screen":\{"cursor":\{[^}]*\}\}\}$/.test(lines[j]) &&
-        lines[j + 1].startsWith('{"connection":')
-      )
-        [lines[j], lines[j + 1]] = [lines[j + 1], lines[j]];
+    for (let j = 0; j < lines.length; j++) {
+      if (!isCursor(lines[j])) continue;
+      let cursorsEnd = j;
+      while (cursorsEnd < lines.length && isCursor(lines[cursorsEnd]))
+        cursorsEnd++;
+      let connectionsEnd = cursorsEnd;
+      while (lines[connectionsEnd]?.startsWith('{"connection":'))
+        connectionsEnd++;
+      lines.splice(
+        j,
+        connectionsEnd - j,
+        ...lines.slice(cursorsEnd, connectionsEnd),
+        ...lines.slice(j, cursorsEnd),
+      );
+      j = connectionsEnd - 1;
+    }
     return lines;
   };
   ours = connectionFirst(ours);

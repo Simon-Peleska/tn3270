@@ -59,16 +59,22 @@ export class FakeHost {
 
     this.server = createServer((socket) => {
       this.socket = socket;
+      // A record and the timing mark after it are two small writes; Nagle would hold the second
+      // for the delayed ACK of the first, 40 ms a step.
+      socket.setNoDelay(true);
       socket.on("data", (chunk) => {
         this.received += chunk.toString("hex");
-        for (const wake of this.waiters.splice(0)) wake();
+        this.wake();
       });
       socket.on("error", () => {});
-      socket.on("close", () => {
-        for (const wake of this.waiters.splice(0)) wake();
-      });
-      for (const wake of this.waiters.splice(0)) wake();
+      socket.on("close", () => this.wake());
+      this.wake();
     });
+  }
+
+  /** Rechecks every waitUntil now, for a change that came from elsewhere than the socket. */
+  wake() {
+    for (const wake of this.waiters.splice(0)) wake();
   }
 
   /** @returns {number} */

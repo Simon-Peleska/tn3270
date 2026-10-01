@@ -1,10 +1,11 @@
 // Differential fuzzing against b3270: random seeds until the time is up, several at once.
 //   node scripts/fuzz.mjs [--kind keyboard|datastream|nvt|all] [--seconds 25] [--from SEED] [--jobs 8]
 // Without --from, the seeds start at a random point; each failure prints its seed and steps,
-// and test/fuzz.js's check(kind, seed) replays it.
+// and test/fuzz.js's check(kind, rng(seed), ...) replays it. npm run fuzz is the coverage-guided
+// alternative.
 
 import { parseArgs } from "node:util";
-import { CASES, check } from "../test/fuzz.js";
+import { CASES, check, rng } from "../test/fuzz.js";
 
 const { values } = parseArgs({
   options: {
@@ -45,7 +46,10 @@ async function worker() {
       );
     });
     try {
-      const skipped = await Promise.race([check(kind, mySeed), hang]);
+      const skipped = await Promise.race([
+        check(kind, rng(mySeed), `seed ${mySeed}`),
+        hang,
+      ]);
       if (skipped) {
         skips.push(`${kind} ${mySeed}`);
         console.log(`SKIP ${skipped}\n`);

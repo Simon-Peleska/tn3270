@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { assertSameLines, scenario, startB3270, startOurs } from "./harness.js";
+import { FuzzedDataProvider } from "@jazzer.js/core/dist/FuzzedDataProvider.js";
 import { CODE_TABLE } from "../src/ctlr.js";
 
-// Seeded random scenarios that b3270 and node3270 must play out identically: keyboard actions on a
+// Random scenarios that b3270 and node3270 must play out identically: keyboard actions on a
 // formatted screen, random 3270 data streams from the host, and random NVT text and escapes.
-// A case is a pure function of its seed, so a failing seed replays exactly.
+// Every choice comes from an Rng: a seed for scripts/fuzz.mjs, or the input of Jazzer.js's
+// coverage-guided fuzz() below (npm run fuzz). A case is a pure function of either, so a failure
+// replays exactly.
 
 /** @typedef {[string, ...(string | number)[]]} Step */
 
@@ -29,6 +32,23 @@ export function rng(seed) {
   };
 }
 /** @typedef {ReturnType<typeof rng>} Rng */
+
+/**
+ * The same choices, read from a fuzzer's input. A finished input reads as all zeros, which keeps
+ * every case finite.
+ * @param {Buffer} data @returns {Rng}
+ */
+export function fromData(data) {
+  const p = new FuzzedDataProvider(data);
+  const int = (/** @type {number} */ max) =>
+    max <= 1 ? 0 : p.consumeIntegralInRange(0, max - 1);
+  return {
+    next: () => p.consumeProbabilityFloat(),
+    int,
+    pick: (items) => items[int(items.length)],
+    chance: (chance) => p.consumeProbabilityFloat() < chance,
+  };
+}
 
 const TYPED_CHARS = [
   ..."abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
@@ -180,9 +200,8 @@ function readAction(r) {
   }
 }
 
-/** Keyboard work on three-fields.trc's formatted screen. @param {number} seed */
-export function keyboardCase(seed) {
-  const r = rng(seed);
+/** Keyboard work on three-fields.trc's formatted screen. @param {Rng} r */
+export function keyboardCase(r) {
   /** @type {Step[]} */
   const actions = [];
   const steps = 20 + r.int(30);
@@ -319,9 +338,8 @@ function record3270(bytes) {
   return `0000000000${body.toString("hex")}ffef`;
 }
 
-/** Random host writes on three-fields.trc, mixed with typing and reading. @param {number} seed */
-export function dataStreamCase(seed) {
-  const r = rng(seed);
+/** Random host writes on three-fields.trc, mixed with typing and reading. @param {Rng} r */
+export function dataStreamCase(r) {
   /** @type {Step[]} */
   const actions = [];
   const steps = 15 + r.int(25);
@@ -387,9 +405,8 @@ function nvtBytes(r) {
   ).toString("hex");
 }
 
-/** NVT host output on nvt-data.trc, mixed with typing and reading. @param {number} seed */
-export function nvtCase(seed) {
-  const r = rng(seed);
+/** NVT host output on nvt-data.trc, mixed with typing and reading. @param {Rng} r */
+export function nvtCase(r) {
   /** @type {Step[]} */
   const actions = [];
   const steps = 10 + r.int(25);
@@ -424,15 +441,15 @@ export const CASES = {
 };
 
 /**
- * Plays one case against both emulators; a mismatch names the seed and lists the steps to replay.
+ * Plays one case against both emulators; a mismatch names the case and lists the steps to replay.
  * b3270 hangs or crashes on some inputs (see test/script.test.js); then there is nothing to compare,
  * and the case only has to finish on our side.
- * @param {keyof typeof CASES} kind @param {number} seed
+ * @param {keyof typeof CASES} kind @param {Rng} r @param {string} label what replays it, like "seed 42"
  * @returns {Promise<string>} "" when compared, otherwise why b3270 was skipped
  */
-export async function check(kind, seed) {
-  const { trace, actions } = CASES[kind](seed);
-  const name = `fuzz ${kind} seed ${seed} (${trace})`;
+export async function check(kind, r, label) {
+  const { trace, actions } = CASES[kind](r);
+  const name = `fuzz ${kind} ${label} (${trace})`;
   const b3270 = startB3270();
   const stuck = setTimeout(() => b3270.stop(), 8000);
   const [theirs, ours] = await Promise.allSettled([
@@ -452,4 +469,18 @@ export async function check(kind, seed) {
     error.message = `${name}: ${error.message}\nsteps: ${JSON.stringify(actions)}`;
     throw error;
   }
+}
+
+/**
+ * Jazzer.js's entry point: the input picks the kind of case and every choice in it, and Jazzer
+ * keeps the inputs that reach new code in 3270/src/. A mismatch lands in test/fuzz-findings/,
+ * which fuzz.test.js replays on every run.
+ * @param {Buffer} data @param {string} [label]
+ */
+export async function fuzz(data, label = "Jazzer input") {
+  const r = fromData(data);
+  const kind = r.pick(
+    /** @type {(keyof typeof CASES)[]} */ (Object.keys(CASES)),
+  );
+  return check(kind, r, label);
 }
