@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:net";
 import { writeFile, rm } from "node:fs/promises";
@@ -243,6 +243,18 @@ test("static files and the session list are served", async (t) => {
 
   const list = await (await fetch(`${base}/api/sessions`)).json();
   assert.ok(Array.isArray(list.sessions));
+});
+
+test("the version endpoint names the commit the server runs", async (t) => {
+  const server = await startServer();
+  t.after(() => server.stop());
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/api/version`);
+  assert.equal(response.status, 200);
+  const head = execFileSync("git", ["rev-parse", "HEAD"], {
+    encoding: "utf8",
+  }).trim();
+  assert.deepEqual(await response.json(), { revision: head });
 });
 
 test("fonts are cached forever, and the page's own code never", async (t) => {

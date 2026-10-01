@@ -9,6 +9,7 @@ const OPTIONS = [
 ];
 
 export const settingsLayout = {
+  /** @param {import('./panels.js').Panels} panel */
   title: (panel) => {
     const revision = panel.deps.revision();
     return revision === "unknown"

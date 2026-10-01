@@ -15,6 +15,7 @@ import { adminLayout } from "../public/panel-admin.js";
  */
 function fixture() {
   let codePage = "bracket";
+  let revision = "unknown";
   const calls = {
     /** @type {string[]} */ themes: [],
     /** @type {string[]} */ fonts: [],
@@ -61,6 +62,7 @@ function fixture() {
   let panelInstance = null;
   const panels = new Panels({
     settings,
+    revision: () => revision,
     codePage: () => codePage,
     keymap,
     macros,
@@ -108,6 +110,9 @@ function fixture() {
     recorder,
     setCodePage: (/** @type {string} */ value) => {
       codePage = value;
+    },
+    setRevision: (/** @type {string} */ value) => {
+      revision = value;
     },
   };
 }
@@ -167,6 +172,16 @@ function onLine(panels, label, letter) {
   press(panels, "MoveCursor1", [String(row + 1), "2"]);
   type(panels, letter);
 }
+
+test("the settings title names the running revision, when the server knows it", () => {
+  const { panels, setRevision } = fixture();
+  panels.open("settings");
+  assert.match(screenOf(panels)[0], /TN3270 Settings\s*$/);
+
+  setRevision("ec8ac5531c215736d67a8e4a4aae23c18a494396");
+  panels.open("settings");
+  assert.match(screenOf(panels)[0], /TN3270 Settings @ ec8ac553\s*$/);
+});
 
 test("settings renders its commands and opens each dialog", () => {
   const { panels, macros } = fixture();
