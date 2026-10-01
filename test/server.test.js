@@ -254,7 +254,7 @@ test("fonts are cached forever, and the page's own code never", async (t) => {
   assert.equal(code.status, 200);
   assert.equal(code.headers.get("cache-control"), null);
 
-  const font = await fetch(`${base}/fonts/3270-Regular.ttf`);
+  const font = await fetch(`${base}/fonts/3270-Regular.woff2`);
   assert.equal(font.status, 200);
   assert.equal(
     font.headers.get("cache-control"),
@@ -286,7 +286,7 @@ test("the page preloads every module it imports, and every font", async (t) => {
     );
 
   for (const font of readdirSync("public/fonts").filter((f) =>
-    f.endsWith(".ttf"),
+    f.endsWith(".woff2"),
   ))
     assert.ok(
       html.includes(`href="./fonts/${font}"`),
