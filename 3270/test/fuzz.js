@@ -1,13 +1,27 @@
 import assert from "node:assert/strict";
-import { assertSameLines, scenario, startB3270, startOurs } from "./harness.js";
-import { FuzzedDataProvider } from "@jazzer.js/core/dist/FuzzedDataProvider.js";
+import {
+  TRACES,
+  assertSameLines,
+  scenario,
+  startB3270,
+  startOurs,
+  telnetUnits,
+} from "./harness.js";
+import { parseTrace } from "../../test/fakehost.js";
 import { CODE_TABLE } from "../src/ctlr.js";
+import {
+  RESOLVING,
+  Session,
+  TCP_PENDING,
+  changeCstate,
+} from "../src/session.js";
+import { netConnected, netInput } from "../src/telnet.js";
 
 // Random scenarios that b3270 and node3270 must play out identically: keyboard actions on a
 // formatted screen, random 3270 data streams from the host, and random NVT text and escapes.
-// Every choice comes from an Rng: a seed for scripts/fuzz.mjs, or the input of Jazzer.js's
-// coverage-guided fuzz() below (npm run fuzz). A case is a pure function of either, so a failure
-// replays exactly.
+// Every choice comes from a seeded Rng, so a failure replays exactly. Jazzer.js's coverage-guided
+// fuzz() below (npm run fuzz) runs host data streams through node3270 alone, in-process, for
+// speed; scripts/fuzz.mjs --corpus then plays what it kept against b3270.
 
 /** @typedef {[string, ...(string | number)[]]} Step */
 
@@ -32,23 +46,6 @@ export function rng(seed) {
   };
 }
 /** @typedef {ReturnType<typeof rng>} Rng */
-
-/**
- * The same choices, read from a fuzzer's input. A finished input reads as all zeros, which keeps
- * every case finite.
- * @param {Buffer} data @returns {Rng}
- */
-export function fromData(data) {
-  const p = new FuzzedDataProvider(data);
-  const int = (/** @type {number} */ max) =>
-    max <= 1 ? 0 : p.consumeIntegralInRange(0, max - 1);
-  return {
-    next: () => p.consumeProbabilityFloat(),
-    int,
-    pick: (items) => items[int(items.length)],
-    chance: (chance) => p.consumeProbabilityFloat() < chance,
-  };
-}
 
 const TYPED_CHARS = [
   ..."abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
@@ -444,12 +441,12 @@ export const CASES = {
  * Plays one case against both emulators; a mismatch names the case and lists the steps to replay.
  * b3270 hangs or crashes on some inputs (see test/script.test.js); then there is nothing to compare,
  * and the case only has to finish on our side.
- * @param {keyof typeof CASES} kind @param {Rng} r @param {string} label what replays it, like "seed 42"
+ * @param {string} label what replays it, like "keyboard seed 42"
+ * @param {{trace: string, actions: Step[]}} fuzzCase
  * @returns {Promise<string>} "" when compared, otherwise why b3270 was skipped
  */
-export async function check(kind, r, label) {
-  const { trace, actions } = CASES[kind](r);
-  const name = `fuzz ${kind} ${label} (${trace})`;
+export async function check(label, { trace, actions }) {
+  const name = `fuzz ${label} (${trace})`;
   const b3270 = startB3270();
   const stuck = setTimeout(() => b3270.stop(), 8000);
   const [theirs, ours] = await Promise.allSettled([
@@ -472,15 +469,53 @@ export async function check(kind, r, label) {
 }
 
 /**
- * Jazzer.js's entry point: the input picks the kind of case and every choice in it, and Jazzer
- * keeps the inputs that reach new code in 3270/src/. A mismatch lands in test/fuzz-findings/,
- * which fuzz.test.js replays on every run.
- * @param {Buffer} data @param {string} [label]
+ * A fuzz input as the host's 3270 data stream: each run of bytes between 0xFF bytes is one
+ * TN3270E record. Byte-level mutations then stay local, and Jazzer's tracing of the comparisons
+ * in ctlr.js hands it the order codes and attribute values to try.
+ * @param {Buffer} data @returns {string[]} the records, in hex
  */
-export async function fuzz(data, label = "Jazzer input") {
-  const r = fromData(data);
-  const kind = r.pick(
-    /** @type {(keyof typeof CASES)[]} */ (Object.keys(CASES)),
-  );
-  return check(kind, r, label);
+function rawRecords(data) {
+  /** @type {string[]} */
+  const records = [];
+  let start = 0;
+  while (start < data.length) {
+    let end = data.indexOf(0xff, start);
+    if (end === -1) end = data.length;
+    if (end > start) records.push(record3270([...data.subarray(start, end)]));
+    start = end + 1;
+  }
+  return records;
+}
+
+/** A fuzz input as a case to play against b3270. @param {Buffer} data */
+export function rawCase(data) {
+  /** @type {Step[]} */
+  const actions = rawRecords(data).map((hex) => ["host", hex]);
+  actions.push(["Ascii"], ["ReadBuffer"]);
+  return { trace: "three-fields.trc", actions };
+}
+
+const NEGOTIATION = telnetUnits(parseTrace(TRACES + "three-fields.trc"));
+
+/**
+ * Jazzer.js's entry point: node3270 alone, connected without a socket to three-fields.trc's
+ * negotiation, takes the input as host records. Thousands of runs a second, where a run against
+ * b3270 takes a fifth of one; Jazzer keeps the inputs that reach new code in 3270/src/, and
+ * scripts/fuzz.mjs --corpus checks those against b3270. Only a crash fails here.
+ * @param {Buffer} data
+ */
+export function fuzz(data) {
+  const session = new Session({ model: "3279-4-E" });
+  session.indications(() => {});
+  const s = session.s;
+  changeCstate(s, RESOLVING);
+  changeCstate(s, TCP_PENDING);
+  netConnected(s);
+  for (const unit of NEGOTIATION) netInput(s, unit);
+  for (const hex of rawRecords(data)) {
+    if (!netInput(s, Buffer.from(hex, "hex"))) break;
+    session.flush();
+  }
+  clearTimeout(s.ui?.statsTimer ?? undefined);
+  clearTimeout(s.unlockTimer ?? undefined);
 }

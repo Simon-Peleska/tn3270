@@ -29,17 +29,23 @@ and points a session at it, which is also what the tests use.
 npm test             # node --test, no browser driver and no host needed
 npm run test:browser # optional Chromium smoke test of the real page
 npm run typecheck    # tsc over the JSDoc types; this is the "no any" gate
-npm run fuzz -- -max_total_time=600 -jobs=8 -workers=8  # node3270 against b3270
+npm run fuzz -- -max_total_time=600 -fork=8 -ignore_crashes=1  # grow the corpus
+node 3270/scripts/fuzz.mjs --corpus 3270/test/fuzz-corpus     # replay it against b3270
 ```
 
 The optional browser smoke test needs `chromium` on `PATH` (or `CHROMIUM` set
 to its executable).
 
-`npm run fuzz` is Jazzer.js's coverage-guided fuzzing of node3270 against a
-real `b3270` (needs it on `PATH`). Anything after `--` goes to libFuzzer. It
-keeps its corpus in `3270/test/fuzz-corpus/` and saves each mismatch, crash or
-hang in `3270/test/fuzz-findings/`. `npm test` replays every file there, so
-commit a finding once it's fixed.
+Fuzzing has two stages. `npm run fuzz` is Jazzer.js's coverage-guided fuzzing
+of host data streams through node3270 alone, in process, at a few thousand
+inputs a second; it keeps the inputs that reach new code in
+`3270/test/fuzz-corpus/` and saves crashes and hangs in
+`3270/test/fuzz-findings/`. Anything after `--` goes to libFuzzer; `-fork` with
+`-ignore_crashes=1` keeps fuzzing after a finding, which `-jobs` does not.
+`scripts/fuzz.mjs --corpus` then plays every kept input through node3270 and a
+real `b3270` (needs it on `PATH`) and reports where they differ. `npm test`
+replays every file in `3270/test/fuzz-findings/`, so commit a finding once it's
+fixed.
 
 ## What it does
 

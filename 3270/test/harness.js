@@ -355,31 +355,32 @@ export function assertSameLines(ours, theirs) {
   );
   ours = ours.filter((line) => !isStats(line));
   theirs = theirs.filter((line) => !isStats(line));
-  // b3270 flushes screen changes between socket reads, so whether the cursor showing up on
-  // connect comes before or after the next connection state depends on how the host's
-  // negotiation was split into packets. Both orders count as connection first, for a run of
-  // cursor changes ahead of a run of connection states too.
+  // b3270 flushes screen changes later than connection states, so how many connection states
+  // its cursor changes trail depends on how busy the machine is. In each stretch of nothing but
+  // cursor and connection lines, the connection lines go first; each kind keeps its own order.
+  const isCursor = (/** @type {string} */ line) =>
+    /^\{"screen":\{"cursor":\{[^}]*\}\}\}$/.test(line);
+  const isConnection = (/** @type {string} */ line) =>
+    line.startsWith('{"connection":');
   const connectionFirst = (/** @type {string[]} */ lines) => {
-    const isCursor = (/** @type {string} */ line) =>
-      /^\{"screen":\{"cursor":\{[^}]*\}\}\}$/.test(line);
-    lines = [...lines];
-    for (let j = 0; j < lines.length; j++) {
-      if (!isCursor(lines[j])) continue;
-      let cursorsEnd = j;
-      while (cursorsEnd < lines.length && isCursor(lines[cursorsEnd]))
-        cursorsEnd++;
-      let connectionsEnd = cursorsEnd;
-      while (lines[connectionsEnd]?.startsWith('{"connection":'))
-        connectionsEnd++;
-      lines.splice(
-        j,
-        connectionsEnd - j,
-        ...lines.slice(cursorsEnd, connectionsEnd),
-        ...lines.slice(j, cursorsEnd),
-      );
-      j = connectionsEnd - 1;
+    /** @type {string[]} */
+    const out = [];
+    for (let j = 0; j < lines.length;) {
+      let end = j;
+      while (
+        end < lines.length &&
+        (isCursor(lines[end]) || isConnection(lines[end]))
+      )
+        end++;
+      if (end === j) {
+        out.push(lines[j++]);
+        continue;
+      }
+      const stretch = lines.slice(j, end);
+      out.push(...stretch.filter(isConnection), ...stretch.filter(isCursor));
+      j = end;
     }
-    return lines;
+    return out;
   };
   ours = connectionFirst(ours);
   theirs = connectionFirst(theirs);
