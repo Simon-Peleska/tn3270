@@ -1211,6 +1211,26 @@ test("undo takes the typing back out a step at a time, and redo puts it back", a
   await waitUntil(() => row() === " abc 456 789", "the paste to come back");
 });
 
+test("typing the instant the field map arrives is still a step to undo", async (t) => {
+  const fixture = await startTracedSession("test/traces/three-fields.trc");
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  const controller = collectingViewer("controller");
+  session.attach(controller);
+  const row = () => session.screen.rowText(0).slice(0, 12);
+
+  // Before any flush has looked at the formatted screen, as a fast typist or a
+  // slow machine would.
+  const applyFields = session.screen.applyFields.bind(session.screen);
+  session.screen.applyFields = (...args) => {
+    applyFields(...args);
+    if (!session.screen.fieldsFormatted || row() !== "            ") return;
+    session.handleClientMessage(controller, { type: "text", value: "abc" });
+  };
+  await waitUntil(() => row() === " abc        ", "the typing to land");
+  await waitUntil(() => session.undoStack.length === 1, "a step of history");
+});
+
 test("an AID key ends the history: what was typed before it cannot be undone", async (t) => {
   const fixture = await startTracedSession("test/traces/three-fields.trc");
   t.after(() => fixture.close());

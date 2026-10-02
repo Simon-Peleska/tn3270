@@ -514,7 +514,7 @@ export class Session {
   }
 
   /**
-   * Everything that edits the screen goes through here, so that one thing the
+   * Every edit the user makes goes through here, so that one thing the
    * user did is one undo step: b3270 reports a batch in pieces, and the states
    * in the middle of it were never anyone's.
    *
@@ -522,6 +522,9 @@ export class Session {
    * @returns {string} the r-tag
    */
   runEdit(actions) {
+    // The state the edit starts from is the step to undo back to, even when no
+    // flush has recorded it yet.
+    this.recordHistory();
     this.historyTag = this.runActions(actions);
     return this.historyTag;
   }
@@ -585,6 +588,7 @@ export class Session {
    * @returns {string | null} the r-tag, or null for nothing to step to
    */
   stepHistory(back) {
+    this.recordHistory();
     const from = back ? this.undoStack : this.redoStack;
     const to = back ? this.redoStack : this.undoStack;
     const target = from.pop();
@@ -621,8 +625,10 @@ export class Session {
       args: [String(target.cursor.row + 1), String(target.cursor.col + 1)],
     });
 
+    // Not runEdit: the restore must not record the state it is leaving as a step.
     this.snapshot = target;
-    return this.runEdit(actions);
+    this.historyTag = this.runActions(actions);
+    return this.historyTag;
   }
 
   /** @returns {string} `<rows>x<cols>` */

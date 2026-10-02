@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import net from "node:net";
+import { readFileSync } from "node:fs";
 import tls from "node:tls";
 import { codePage } from "./charset.js";
 import {
@@ -1012,8 +1013,19 @@ export class Session extends EventEmitter {
       this.log.warn(`N1109 open ${target}: invalid port ${spec.port}`);
       return ["Connection failed:", `${host}/${spec.port}:`, "Invalid port"];
     }
+    const caFile = this.s.options.caFile;
+    let ca;
+    if (prefixes.includes("L") && caFile) {
+      try {
+        ca = readFileSync(caFile);
+      } catch (e) {
+        this.log.warn(`N1110 open ${target}: cannot read caFile\n${e}`);
+        return ["Connection failed:", `caFile ${caFile}: ${e}`];
+      }
+    }
     /** @type {tls.ConnectionOptions | false} */
     const tlsOptions = prefixes.includes("L") && {
+      ...(ca && { ca }),
       rejectUnauthorized:
         this.s.options.verifyHostCert && !prefixes.includes("Y"),
       ...(accept !== null && {

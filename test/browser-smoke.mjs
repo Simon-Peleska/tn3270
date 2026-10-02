@@ -26,7 +26,9 @@ async function stopProcess(child) {
 }
 
 async function startBrowser(t) {
-  const host = await FakeHost.listen("test/traces/fields.trc", 0);
+  const host = await FakeHost.listen("test/traces/fields.trc", 0, {
+    tls: true,
+  });
   const serverPort = await freePort();
   const debugPort = await freePort();
   const temp = await mkdtemp(join(tmpdir(), "tn3270-browser-"));
@@ -36,11 +38,7 @@ async function startBrowser(t) {
     JSON.stringify(
       testConfig({
         server: { host: "127.0.0.1", port: serverPort },
-        b3270: {
-          path: "b3270",
-          model: 4,
-          defaultHost: `127.0.0.1:${host.port}`,
-        },
+        emulator: { defaultHost: `127.0.0.1:${host.port}` },
         logFile: "",
       }),
     ),

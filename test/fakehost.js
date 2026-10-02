@@ -1,5 +1,7 @@
 import { createServer } from "node:net";
+import { createServer as createTlsServer } from "node:tls";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 /**
  * Replays a recorded x3270 trace; a port of x3270's Common/Test/playback.py.
@@ -8,6 +10,11 @@ import { readFileSync } from "node:fs";
 
 const IAC_DO_TIMING_MARK = Buffer.from([0xff, 0xfd, 0x06]);
 const IAC_WONT_TIMING_MARK = "fffc06";
+
+/** The fake host's self-signed certificate, for an emulator's caFile. */
+export const FAKEHOST_CA = fileURLToPath(
+  new URL("tls/fakehost.crt", import.meta.url),
+);
 
 /**
  * @param {string} file
@@ -30,10 +37,11 @@ export class FakeHost {
   /**
    * @param {string} traceFile
    * @param {number} [port] 0 picks a free port.
+   * @param {{ tls?: boolean }} [options] tls serves TLS with FAKEHOST_CA.
    * @returns {Promise<FakeHost>}
    */
-  static async listen(traceFile, port = 0) {
-    const host = new FakeHost(traceFile);
+  static async listen(traceFile, port = 0, options = {}) {
+    const host = new FakeHost(traceFile, options);
     await new Promise((resolve, reject) => {
       host.server.once("error", reject);
       host.server.listen(port, "127.0.0.1", () => {
@@ -44,8 +52,8 @@ export class FakeHost {
     return host;
   }
 
-  /** @param {string} traceFile */
-  constructor(traceFile) {
+  /** @param {string} traceFile @param {{ tls?: boolean }} [options] */
+  constructor(traceFile, { tls = false } = {}) {
     /** @type {string[]} */
     this.payloads = parseTrace(traceFile);
     /** @type {number} */
@@ -57,7 +65,8 @@ export class FakeHost {
     /** @type {Array<() => void>} */
     this.waiters = [];
 
-    this.server = createServer((socket) => {
+    /** @param {import('node:net').Socket} socket */
+    const onConnection = (socket) => {
       this.socket = socket;
       // A record and the timing mark after it are two small writes; Nagle would hold the second
       // for the delayed ACK of the first, 40 ms a step.
@@ -69,7 +78,16 @@ export class FakeHost {
       socket.on("error", () => {});
       socket.on("close", () => this.wake());
       this.wake();
-    });
+    };
+    this.server = tls
+      ? createTlsServer(
+          {
+            key: readFileSync(new URL("tls/fakehost.key", import.meta.url)),
+            cert: readFileSync(FAKEHOST_CA),
+          },
+          onConnection,
+        )
+      : createServer(onConnection);
   }
 
   /** Rechecks every waitUntil now, for a change that came from elsewhere than the socket. */
@@ -170,19 +188,22 @@ if (
   process.argv[1] &&
   import.meta.url.endsWith(process.argv[1].replace(/^.*\//, ""))
 ) {
-  const [, , traceFile, portArg] = process.argv;
+  const args = process.argv.slice(2);
+  const tls = args.includes("--tls");
+  const [traceFile, portArg] = args.filter((arg) => arg !== "--tls");
   if (traceFile) {
     const host = await FakeHost.listen(
       traceFile,
       portArg ? Number(portArg) : 4001,
+      { tls },
     );
     process.stdout.write(
-      `fake host replaying ${traceFile} on 127.0.0.1:${host.port}\n`,
+      `fake host replaying ${traceFile} on 127.0.0.1:${host.port}${tls ? " over TLS" : ""}\n`,
     );
 
     // The whole trace from the top per connection: a reconnect would otherwise
     // hang in telnet negotiation with nothing to draw.
-    host.server.on("connection", (socket) => {
+    host.server.on(tls ? "secureConnection" : "connection", (socket) => {
       for (const hex of host.payloads) socket.write(Buffer.from(hex, "hex"));
       process.stdout.write(
         `emulator connected; sent ${host.payloads.length} payload(s)\n`,

@@ -111,7 +111,9 @@ async function openViewer(url, headers = {}) {
 
 test("two browsers share one session over the real server", async (t) => {
   const server = await startServer();
-  const host = await FakeHost.listen("test/traces/reverse.trc", 0);
+  const host = await FakeHost.listen("test/traces/reverse.trc", 0, {
+    tls: true,
+  });
   t.after(async () => {
     await host.close();
     await server.stop();

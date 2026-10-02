@@ -1,6 +1,6 @@
 import { validateConfig } from "../server/config.js";
 import { Session } from "../server/session.js";
-import { FakeHost } from "./fakehost.js";
+import { FAKEHOST_CA, FakeHost } from "./fakehost.js";
 import { Grid } from "../public/grid.js";
 
 /**
@@ -8,13 +8,20 @@ import { Grid } from "../public/grid.js";
  * @returns {import('../server/config.js').Config}
  */
 export function testConfig(overrides = {}) {
+  const emulator = /** @type {{ settings?: object }} */ (
+    overrides.emulator ?? {}
+  );
   return validateConfig({
     server: { host: "127.0.0.1", port: 8017 },
-    // The traces were recorded against a model 4 (43x80).
-    emulator: { model: 4 },
     sessions: { idleTimeoutMs: 0 },
     logLevel: "error",
     ...overrides,
+    // The traces were recorded against a model 4 (43x80).
+    emulator: {
+      model: 4,
+      ...emulator,
+      settings: { caFile: FAKEHOST_CA, ...emulator.settings },
+    },
   });
 }
 
@@ -102,7 +109,7 @@ export async function settle(session) {
  * @param {{ records?: number, config?: Record<string, unknown> }} [options]
  */
 export async function startTracedSession(traceFile, options = {}) {
-  const host = await FakeHost.listen(traceFile, 0);
+  const host = await FakeHost.listen(traceFile, 0, { tls: true });
   const session = new Session(testConfig(options.config));
 
   await session.ready;
