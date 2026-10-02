@@ -181,7 +181,16 @@ export class Session {
     // b3270 reports the host back without its port, so reopening from what it
     // says would silently land on telnet 23.
     this.lastHost = host;
-    this.b3270.open(host);
+    this.b3270.open(this.openTarget(host));
+  }
+
+  /**
+   * @param {string} host
+   * @returns {string}
+   */
+  openTarget(host) {
+    if (!this.config.b3270.tls || /^(?:[A-Z]:)*L:/i.test(host)) return host;
+    return `L:${host}`;
   }
 
   /** @returns {void} */
@@ -383,7 +392,10 @@ export class Session {
         this.pendingOversize = false;
         const actions = this.sizeActions(model);
         if (this.lastHost !== null)
-          actions.push({ action: "Open", args: [this.lastHost] });
+          actions.push({
+            action: "Open",
+            args: [this.openTarget(this.lastHost)],
+          });
         this.b3270.runActions(actions);
       }
       return;

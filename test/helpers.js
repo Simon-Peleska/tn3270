@@ -11,7 +11,7 @@ export function testConfig(overrides = {}) {
   return validateConfig({
     server: { host: "127.0.0.1", port: 8017 },
     // The traces were recorded against a model 4 (43x80).
-    b3270: { path: "b3270", model: 4 },
+    b3270: { path: "b3270", model: 4, tls: false },
     sessions: { idleTimeoutMs: 0 },
     logLevel: "error",
     ...overrides,

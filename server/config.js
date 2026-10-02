@@ -4,7 +4,7 @@ import { AppError } from "./errors.js";
 /**
  * @typedef {object} Config
  * @property {{ host: string, port: number }} server
- * @property {{ path: string, model: number, defaultHost: string | null, settings: Record<string, string>, extraArgs: string[] }} b3270
+ * @property {{ path: string, model: number, defaultHost: string | null, tls: boolean, settings: Record<string, string>, extraArgs: string[] }} b3270
  * @property {{ maxSessions: number, maxViewersPerSession: number, idleTimeoutMs: number }} sessions
  * @property {{ allowedHosts: string[], trustProxyHeaders: boolean }} security
  * @property {'debug' | 'info' | 'warn' | 'error'} logLevel
@@ -96,6 +96,7 @@ const DEFAULTS = {
     path: "b3270",
     model: 2,
     defaultHost: null,
+    tls: true,
     // A TELNET NOP when the line has been quiet this long, so a firewall or
     // NAT that drops idle connections never sees one idle.
     settings: { nopSeconds: "60" },
@@ -330,6 +331,7 @@ export function validateConfig(raw) {
       path: str(b3270Section, "b3270", "path", DEFAULTS.b3270.path),
       model,
       defaultHost: rawDefaultHost === undefined ? null : rawDefaultHost,
+      tls: bool(b3270Section, "b3270", "tls", DEFAULTS.b3270.tls),
       settings: {
         ...DEFAULTS.b3270.settings,
         ...resources(b3270Section, "b3270", "settings"),

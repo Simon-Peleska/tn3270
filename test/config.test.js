@@ -59,11 +59,16 @@ test("missing sections fall back to defaults", () => {
   const config = validateConfig({});
   assert.equal(config.server.host, "127.0.0.1");
   assert.equal(config.b3270.defaultHost, null);
+  assert.equal(config.b3270.tls, true);
   assert.deepEqual(config.security.allowedHosts, []);
   // Without a proxy in front, any client could forge its own address.
   assert.equal(config.security.trustProxyHeaders, false);
   assert.equal(config.logFile, "log/tn3270.log");
   assert.equal(config.logMaxBytes, 10 * 1024 * 1024);
+});
+
+test("TLS can be disabled explicitly", () => {
+  assert.equal(validateConfig({ b3270: { tls: false } }).b3270.tls, false);
 });
 
 test("a wrongly typed setting is rejected with its own code", () => {

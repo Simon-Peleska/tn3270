@@ -15,6 +15,9 @@
     // Used when a session is created without one; null starts disconnected.
     "defaultHost": "http://localhost:8017",
 
+    // Connect to hosts over TLS by default. Set false for plain telnet.
+    "tls": true,
+
     // Any b3270 resource, passed as -xrm. A bare name is qualified "b3270.<name>";
     // write "b3270.x" or "*x" in full for a different qualifier.
     // https://x3270.miraheze.org/wiki/Category:Resources
