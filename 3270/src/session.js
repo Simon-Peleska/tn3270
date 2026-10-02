@@ -1013,9 +1013,10 @@ export class Session extends EventEmitter {
       this.log.warn(`N1109 open ${target}: invalid port ${spec.port}`);
       return ["Connection failed:", `${host}/${spec.port}:`, "Invalid port"];
     }
+    const useTls = prefixes.includes("L");
     const caFile = this.s.options.caFile;
     let ca;
-    if (prefixes.includes("L") && caFile) {
+    if (useTls && caFile) {
       try {
         ca = readFileSync(caFile);
       } catch (e) {
@@ -1024,8 +1025,8 @@ export class Session extends EventEmitter {
       }
     }
     /** @type {tls.ConnectionOptions | false} */
-    const tlsOptions = prefixes.includes("L") && {
-      ...(ca && { ca }),
+    const tlsOptions = useTls && {
+      ca,
       rejectUnauthorized:
         this.s.options.verifyHostCert && !prefixes.includes("Y"),
       ...(accept !== null && {

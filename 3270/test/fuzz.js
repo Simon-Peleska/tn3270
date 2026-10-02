@@ -468,20 +468,27 @@ export async function check(label, { trace, actions }) {
   }
 }
 
+const RECORD_HEADER = Buffer.alloc(5);
+const EOR = Buffer.from([0xff, 0xef]);
+
 /**
  * A fuzz input as the host's 3270 data stream: each run of bytes between 0xFF bytes is one
  * TN3270E record. Byte-level mutations then stay local, and Jazzer's tracing of the comparisons
  * in ctlr.js hands it the order codes and attribute values to try.
- * @param {Buffer} data @returns {string[]} the records, in hex
+ * No record holds a 0xFF, so there is no IAC to double.
+ * @param {Buffer} data @returns {Buffer[]}
  */
 function rawRecords(data) {
-  /** @type {string[]} */
+  /** @type {Buffer[]} */
   const records = [];
   let start = 0;
   while (start < data.length) {
     let end = data.indexOf(0xff, start);
     if (end === -1) end = data.length;
-    if (end > start) records.push(record3270([...data.subarray(start, end)]));
+    if (end > start)
+      records.push(
+        Buffer.concat([RECORD_HEADER, data.subarray(start, end), EOR]),
+      );
     start = end + 1;
   }
   return records;
@@ -490,7 +497,10 @@ function rawRecords(data) {
 /** A fuzz input as a case to play against b3270. @param {Buffer} data */
 export function rawCase(data) {
   /** @type {Step[]} */
-  const actions = rawRecords(data).map((hex) => ["host", hex]);
+  const actions = rawRecords(data).map((record) => [
+    "host",
+    record.toString("hex"),
+  ]);
   actions.push(["Ascii"], ["ReadBuffer"]);
   return { trace: "three-fields.trc", actions };
 }
@@ -512,8 +522,8 @@ export function fuzz(data) {
   changeCstate(s, TCP_PENDING);
   netConnected(s);
   for (const unit of NEGOTIATION) netInput(s, unit);
-  for (const hex of rawRecords(data)) {
-    if (!netInput(s, Buffer.from(hex, "hex"))) break;
+  for (const record of rawRecords(data)) {
+    if (!netInput(s, record)) break;
     session.flush();
   }
   clearTimeout(s.ui?.statsTimer ?? undefined);

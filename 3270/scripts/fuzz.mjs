@@ -22,8 +22,9 @@ const { values } = parseArgs({
 const kinds = /** @type {(keyof typeof CASES)[]} */ (
   values.kind === "all" ? Object.keys(CASES) : [values.kind]
 );
-const corpus = values.corpus ? readdirSync(values.corpus) : null;
-const deadline = corpus ? Infinity : Date.now() + Number(values.seconds) * 1000;
+const corpusDir = values.corpus;
+const corpus = corpusDir ? readdirSync(corpusDir) : null;
+const deadline = Date.now() + Number(values.seconds) * 1000;
 let seed = values.from ? Number(values.from) : Math.floor(Math.random() * 1e9);
 const first = seed;
 // A node3270 bug that blocks the event loop also blocks the hang guard and the summary; this
@@ -35,18 +36,25 @@ const failures = [];
 /** Cases b3270 itself hung or crashed on. @type {string[]} */
 const skips = [];
 
+/**
+ * The next case to play: a corpus file until none are left, or else a seed until the time is up.
+ * @returns {[string, ReturnType<typeof rawCase>] | null}
+ */
+function next() {
+  if (corpus && corpusDir) {
+    const file = corpus.pop();
+    if (file === undefined) return null;
+    return [`raw ${file}`, rawCase(readFileSync(join(corpusDir, file)))];
+  }
+  if (Date.now() >= deadline) return null;
+  const mySeed = seed++;
+  const kind = kinds[mySeed % kinds.length];
+  return [`${kind} seed ${mySeed}`, CASES[kind](rng(mySeed))];
+}
+
 async function worker() {
-  while (Date.now() < deadline) {
-    const mySeed = seed++;
-    const kind = kinds[mySeed % kinds.length];
-    const file = corpus?.pop();
-    if (corpus && !file) return;
-    const [label, fuzzCase] = file
-      ? [
-          `raw ${file}`,
-          rawCase(readFileSync(join(String(values.corpus), file))),
-        ]
-      : [`${kind} seed ${mySeed}`, CASES[kind](rng(mySeed))];
+  for (let job = next(); job; job = next()) {
+    const [label, fuzzCase] = job;
     /** @type {NodeJS.Timeout | undefined} */
     let timer;
     const hang = new Promise((_, reject) => {

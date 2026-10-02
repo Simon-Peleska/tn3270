@@ -625,10 +625,9 @@ export class Session {
       args: [String(target.cursor.row + 1), String(target.cursor.col + 1)],
     });
 
-    // Not runEdit: the restore must not record the state it is leaving as a step.
+    const tag = this.runEdit(actions);
     this.snapshot = target;
-    this.historyTag = this.runActions(actions);
-    return this.historyTag;
+    return tag;
   }
 
   /** @returns {string} `<rows>x<cols>` */
