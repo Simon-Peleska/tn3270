@@ -301,7 +301,11 @@ function drawChrome(slot) {
   const positionCol = canvas.cols - position.length - 1;
   const buttons = statusButtons(slot, canvas.cols);
   const buttonsStart = buttons.at(-1)?.col ?? positionCol - 1;
-  const width = Math.max(0, buttonsStart - 2);
+  // Browser zoom and OS display scaling together; the page cannot tell them apart.
+  const scale = Math.round((window.devicePixelRatio || 1) * 100);
+  const scaleText = scale === 100 ? "" : `Zoom ${scale}%`;
+  const scaleCol = buttonsStart - scaleText.length - 1;
+  const width = Math.max(0, (scaleText === "" ? buttonsStart : scaleCol) - 2);
   const said = sharingText(slot);
   overlay.put(bottom, 0, wide(""), style);
   if (said === null)
@@ -312,6 +316,7 @@ function drawChrome(slot) {
       style,
     );
   else overlay.put(bottom, 1, said.slice(0, width), loud);
+  if (scaleText !== "") overlay.put(bottom, scaleCol, scaleText, loud);
   for (const button of buttons)
     overlay.put(bottom, button.col, button.label, loud);
   overlay.put(bottom, positionCol, position, style);
@@ -1798,6 +1803,17 @@ try {
   throw cause;
 }
 resizeObserver.observe(screenEl);
+function watchScale() {
+  matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`).addEventListener(
+    "change",
+    () => {
+      applyLayout();
+      watchScale();
+    },
+    { once: true },
+  );
+}
+watchScale();
 canvasEl.addEventListener("click", canvasClicked);
 screenEl.style.background = settings.theme().colors.background;
 
