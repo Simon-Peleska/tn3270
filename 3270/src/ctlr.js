@@ -726,52 +726,21 @@ export function write(s, buf, eraseFlag) {
           abort("N2008", "record too short, missing RA character");
           break;
         }
+        // b3270 repeats a DBCS pair only in a DBCS session, which node3270 never is.
         let raGe = false;
-        if (s.defaultCs === CS_DBCS) {
-          if ((baddr - s.bufferAddr) % 2) {
-            abort("N2009", "DBCS RA with odd length");
-            break;
-          }
-          const c1 = buf[cp];
+        if (buf[cp] === ORDER_GE) {
+          raGe = true;
           cp++;
           if (cp >= end) {
-            abort(
-              "N2010",
-              "record too short, missing second half of RA DBCS character",
-            );
+            abort("N2013", "record too short, missing RA GE character");
             break;
           }
-          const c2 = buf[cp];
-          if (c1 === EBC_NULL) {
-            if (![0x00, 0x15, 0x19, 0x0c, 0x0d, 0x1c, 0x1e].includes(c2)) {
-              abort("N2011", "invalid DBCS RA control character");
-              break;
-            }
-          } else if (c1 < 0x40 || c1 > 0xfe || c2 < 0x40 || c2 > 0xfe) {
-            abort("N2012", "invalid DBCS RA character");
-            break;
-          }
-          do {
-            addWithDefaults(s, s.bufferAddr, c1, s.defaultCs);
-            s.bufferAddr = inc(s, s.bufferAddr);
-            addWithDefaults(s, s.bufferAddr, c2, s.defaultCs);
-            s.bufferAddr = inc(s, s.bufferAddr);
-          } while (s.bufferAddr !== baddr);
-        } else {
-          if (buf[cp] === ORDER_GE) {
-            raGe = true;
-            cp++;
-            if (cp >= end) {
-              abort("N2013", "record too short, missing RA GE character");
-              break;
-            }
-          }
-          const c = buf[cp];
-          do {
-            addWithDefaults(s, s.bufferAddr, c, raGe ? CS_GE : s.defaultCs);
-            s.bufferAddr = inc(s, s.bufferAddr);
-          } while (s.bufferAddr !== baddr);
         }
+        const c = buf[cp];
+        do {
+          addWithDefaults(s, s.bufferAddr, c, raGe ? CS_GE : s.defaultCs);
+          s.bufferAddr = inc(s, s.bufferAddr);
+        } while (s.bufferAddr !== baddr);
         currentFa = fieldAttribute(s, s.bufferAddr);
         lastCmd = true;
         lastZpt = false;
@@ -991,7 +960,10 @@ export function write(s, buf, eraseFlag) {
           } else if (c2 === ORDER_SF || c2 === ORDER_SFE) {
             cp--;
           } else {
-            abort("N2026", "invalid DBCS control character");
+            abort(
+              "N2026",
+              `invalid DBCS control character X'00${hex2(c2).toUpperCase()}'`,
+            );
             break;
           }
         }
@@ -1021,7 +993,10 @@ export function write(s, buf, eraseFlag) {
           }
           second = buf[cp];
           if (c1 < 0x40 || c1 > 0xfe || second < 0x40 || second > 0xfe) {
-            abort("N2028", "invalid DBCS character");
+            abort(
+              "N2028",
+              `invalid DBCS character X'${hex2(c1).toUpperCase()}${hex2(second).toUpperCase()}'`,
+            );
             break;
           }
         }
