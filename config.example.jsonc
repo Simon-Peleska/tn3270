@@ -12,6 +12,9 @@
     // Used when a session is created without one; null starts disconnected.
     "defaultHost": "http://localhost:8017",
 
+    // Connect to hosts over TLS by default. Set false for plain telnet.
+    "tls": true,
+
     // Threads the sessions are spread over; 0 is one per CPU core.
     "workers": 0,
 

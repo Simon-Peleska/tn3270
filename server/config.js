@@ -5,7 +5,7 @@ import { AppError } from "./errors.js";
 /**
  * @typedef {object} Config
  * @property {{ host: string, port: number }} server
- * @property {{ model: number, defaultHost: string | null, settings: Settings, workers: number }} emulator
+ * @property {{ model: number, defaultHost: string | null, tls: boolean, settings: Settings, workers: number }} emulator
  * @property {{ maxSessions: number, maxViewersPerSession: number, idleTimeoutMs: number }} sessions
  * @property {{ allowedHosts: string[], trustProxyHeaders: boolean }} security
  * @property {'debug' | 'info' | 'warn' | 'error'} logLevel
@@ -98,6 +98,7 @@ const DEFAULTS = {
   emulator: {
     model: 2,
     defaultHost: null,
+    tls: true,
     settings: {
       // A TELNET NOP when the line has been quiet this long, so a firewall or
       // NAT that drops idle connections never sees one idle.
@@ -356,6 +357,7 @@ export function validateConfig(raw) {
     emulator: {
       model,
       defaultHost: rawDefaultHost === undefined ? null : rawDefaultHost,
+      tls: bool(emulatorSection, "emulator", "tls", DEFAULTS.emulator.tls),
       settings: {
         ...DEFAULTS.emulator.settings,
         ...settings(emulatorSection, "emulator", "settings"),

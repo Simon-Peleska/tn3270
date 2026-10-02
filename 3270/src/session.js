@@ -1014,7 +1014,8 @@ export class Session extends EventEmitter {
     }
     /** @type {tls.ConnectionOptions | false} */
     const tlsOptions = prefixes.includes("L") && {
-      rejectUnauthorized: !prefixes.includes("Y"),
+      rejectUnauthorized:
+        this.s.options.verifyHostCert && !prefixes.includes("Y"),
       ...(accept !== null && {
         checkServerIdentity: (_, cert) => tls.checkServerIdentity(accept, cert),
       }),
