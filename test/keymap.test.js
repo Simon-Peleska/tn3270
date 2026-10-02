@@ -46,9 +46,13 @@ test("the macros, keyboard, and recorder shortcuts are client commands", () => {
       { kind: "client", command },
     );
   }
+  assert.deepEqual(
+    mapKey(key({ key: "m", code: "KeyM", altKey: true }), lookup),
+    { kind: "client", command: "Menu" },
+  );
   const keymap = new Keymap(() => {});
   assert.equal(keymap.labelFor("Macros"), "Ctrl+M");
-  assert.equal(keymap.labelFor("Menu"), "Alt+Space");
+  assert.equal(keymap.labelFor("Menu"), "Alt+M");
   assert.equal(keymap.labelFor("ToggleKeyboard"), "Ctrl+K");
   assert.equal(keymap.labelFor("ToggleRecording"), "Ctrl+E");
   assert.equal(keymap.labelFor("RepeatRecording"), "Ctrl+.");
@@ -538,7 +542,7 @@ test("a printable key is text and Alt is otherwise left to the page", () => {
   });
   // Opening a panel is a command like any other, so the keymap claims it.
   assert.deepEqual(
-    mapKey(key({ key: " ", code: "Space", altKey: true }), lookup),
+    mapKey(key({ key: "m", code: "KeyM", altKey: true }), lookup),
     { kind: "client", command: "Menu" },
   );
   // An Alt combo nothing binds still belongs to the browser.

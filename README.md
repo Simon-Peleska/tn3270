@@ -44,7 +44,7 @@ to its executable).
 - **Panels that behave like a host application** for everything the browser
   itself offers: settings (with macros and the recorder under them) and the
   key bindings, each drawn into the terminal with a title, a command line and
-  PF keys. `Alt+Space` opens the menu; `0` and `1` go from there, and `=0` and
+  PF keys. `Alt+M` opens the menu; `0` and `1` go from there, and `=0` and
   `=1` jump from anywhere. `[Rec]` on the status row records the session as a
   script.
   Opening a panel is a keymap command, so that key is yours to change too.

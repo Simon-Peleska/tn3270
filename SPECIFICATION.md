@@ -283,7 +283,7 @@ and password input is skipped.
 
 Opening a panel is a command like any other, so it is in the keymap of §5 and
 can be rebound there: `Menu`, `Settings`, `Macros`, `Recorder` and `Keys`,
-bound by default to `Alt+Space`, `Alt+,`, `Ctrl+M` or `Alt+M`, `Alt+R` and `Alt+K`. The
+bound by default to `Alt+M`, `Alt+,`, `Ctrl+M`, `Alt+R` and `Alt+K`. The
 same combination pressed again closes the panel, and from inside another panel
 it opens its own. Copy, paste and clicks work on a panel the way they do on the
 screen.
@@ -359,7 +359,7 @@ clipboard rather than reaching the host as 3270 actions, and `Ctrl+M`, which
 opens Macros. Alt is otherwise left
 to the browser too, except the PA-key and Dup/FieldMark/EraseInput bindings
 above, the session digits below, and whatever the panel commands of §4.1 are
-bound to — by default `Alt+Space`, `Alt+,`, `Alt+M`, `Alt+R` and `Alt+K`, which
+bound to — by default `Alt+M`, `Alt+,`, `Ctrl+M`, `Alt+R` and `Alt+K`, which
 open a panel over the session and, pressed again, close it. While a panel is open the keys in this
 table are its own (§4.1) and nothing reaches the host. There is no local echo:
 what appears on screen is what the host put there.
