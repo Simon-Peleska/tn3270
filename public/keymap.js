@@ -201,7 +201,7 @@ export const DEFAULT_BINDINGS = Object.freeze({
   // Bound, so the browser never sees them: Ctrl+R would reload the page.
   Undo: [combo("Z", { ctrl: true }), combo("Backspace", { alt: true })],
   Redo: [combo("R", { ctrl: true })],
-  Menu: [combo(" ", { alt: true })],
+  Menu: [combo("M", { alt: true })],
   ToggleKeyboard: [combo("K", { ctrl: true })],
   OpenChars: [combo("C", { alt: true })],
   ToggleRecording: [combo("E", { ctrl: true })],
@@ -212,7 +212,7 @@ export const DEFAULT_BINDINGS = Object.freeze({
   StopSharing: [combo("S", { ctrl: true, shift: true })],
   StopEditing: [combo("X", { ctrl: true, shift: true })],
   Settings: [combo(",", { alt: true })],
-  Macros: [combo("M", { ctrl: true }), combo("M", { alt: true })],
+  Macros: [combo("M", { ctrl: true })],
   Recorder: [combo("R", { alt: true })],
   Keys: [combo("K", { alt: true })],
   PA1: [combo("Insert", { alt: true })],
