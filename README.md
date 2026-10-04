@@ -23,7 +23,8 @@ npm start            # http://127.0.0.1:8017
 ```
 
 No mainframe? `npm run start:fake` starts a replayed host alongside the server
-and points a session at it, which is also what the tests use.
+and points a session at it, which is also what the tests use. `npm run start:recording -- recording.json`
+does the same with a session saved from the Recorder panel.
 
 ```bash
 npm test             # node --test, no browser driver and no host needed
@@ -46,6 +47,12 @@ inputs a second; it keeps the inputs that reach new code in
 real `b3270` (needs it on `PATH`) and reports where they differ. `npm test`
 replays every file in `3270/test/fuzz-findings/`, so commit a finding once it's
 fixed.
+
+`npm test` also fuzzes macros: `test/macroreplay.test.js` types random input
+against a fake host, then plays the session recording and the page's macro on
+fresh sessions and checks they end on the same screen and cursor. A failure
+prints its seed and the shrunk input; `MACRO_FUZZ_RUNS=2000 MACRO_FUZZ_SEED=7`
+runs more or other seeds.
 
 ## What it does
 

@@ -77,7 +77,7 @@ export const ERRORS = Object.freeze({
   E5039: "Session could not be terminated",
   E5040: "No saved recording is available to repeat",
   E5041: "No macro has the number given on the command line",
-  E5042: "A macro was run while another is still playing",
+  // E5042 is spent.
 
   E6001: "Static file not found",
   E6002: "WebSocket upgrade path is not a session",

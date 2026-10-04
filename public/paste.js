@@ -78,27 +78,3 @@ export function pasteSegments(cells, fieldsFormatted, cols, cursor, text) {
   }
   return segments;
 }
-
-/**
- * A paste as it goes to the server: split here, against the screen this page
- * shows, so the server only types what it is given.
- *
- * @param {{ cells: { ch: string | null, editable: boolean }[], cols: number,
- *   fieldsFormatted: boolean, cursor: { row: number, col: number } | null } | null} screen
- *   null when no screen is shown yet
- * @param {string} text
- * @returns {import('../server/protocol.js').PasteMessage}
- */
-export function pasteMessage(screen, text) {
-  const segments =
-    screen === null || screen.cursor === null
-      ? []
-      : pasteSegments(
-          screen.cells,
-          screen.fieldsFormatted,
-          screen.cols,
-          screen.cursor,
-          text,
-        );
-  return { type: "paste", text, segments };
-}

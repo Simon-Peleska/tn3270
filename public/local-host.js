@@ -9,6 +9,7 @@
 
 import { Grid } from "./grid.js";
 import { paintRow } from "./paint-runs.js";
+import { pasteSegments } from "./paste.js";
 
 /**
  * @typedef {object} Text protected text
@@ -207,7 +208,15 @@ export class LocalHost {
       return;
     }
     if (message.type === "paste") {
-      for (const segment of message.segments) {
+      const grid = this.grid();
+      const segments = pasteSegments(
+        grid.cells,
+        grid.fieldsFormatted,
+        grid.cols,
+        this.cursor,
+        message.text,
+      );
+      for (const segment of segments) {
         this.cursor = { row: segment.row, col: segment.col };
         for (const ch of segment.text) this.type(fields, ch);
       }

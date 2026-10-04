@@ -8,7 +8,8 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { CASES, check, rawCase, rng } from "../test/fuzz.js";
+import { CASES, check, rawCase } from "../test/fuzz.js";
+import { rng } from "../test/rng.js";
 
 const { values } = parseArgs({
   options: {

@@ -1,5 +1,5 @@
 import { Pane, Screen } from "./canvas.js";
-import { renderOia, cursorPosition, keyboardLocked } from "./oia.js";
+import { renderOia, cursorPosition } from "./oia.js";
 import {
   ComboCapture,
   Keymap,
@@ -42,7 +42,6 @@ import {
   terminateSession,
 } from "./session-api.js";
 import { computeHints } from "./hints.js";
-import { pasteMessage } from "./paste.js";
 
 /**
  * @param {string} fg
@@ -594,25 +593,6 @@ function connectHost(host) {
 }
 
 /**
- * Macro playback paces itself by the host's keyboard lock, not a timer.
- * @type {Map<SessionSlot, (() => void)[]>}
- */
-const unlockWaiters = new Map();
-
-/**
- * @param {SessionSlot | null} slot
- * @returns {Promise<void>}
- */
-function waitForUnlock(slot) {
-  if (slot === null || !keyboardLocked(slot.lock)) return Promise.resolve();
-  return new Promise((resolve) => {
-    const waiters = unlockWaiters.get(slot) ?? [];
-    waiters.push(resolve);
-    unlockWaiters.set(slot, waiters);
-  });
-}
-
-/**
  * @param {string} filename
  * @param {string} content
  * @returns {void}
@@ -641,15 +621,12 @@ const keymap = new Keymap((bindings) => {
 
 const macros = new Macros({
   dispatch: (message) => sendTo(activeSession(), message),
-  paste: (text) => sendTo(activeSession(), pasteFor(activeSession(), text)),
-  waitForUnlock: () => waitForUnlock(activeSession()),
   persist: (values) => {
     saveMacros(values).catch((cause) => {
       showError("E5009", "Macros could not be saved in this browser.", cause);
     });
   },
   keymap,
-  redraw,
 });
 
 /** @type {SessionSlot | null} */
@@ -903,15 +880,6 @@ const resizeObserver = new ResizeObserver(() => {
 function send(message) {
   macros.record(message);
   sendTo(activeSession(), message);
-}
-
-/**
- * @param {SessionSlot | null} slot
- * @param {string} text
- * @returns {import('../server/protocol.js').PasteMessage}
- */
-function pasteFor(slot, text) {
-  return pasteMessage(slot?.pane?.host ?? null, text);
 }
 
 /**
@@ -1181,13 +1149,6 @@ function handleServerMessage(slot, message) {
     slot.editor = message.editor;
     slot.requests = message.requests;
     slot.editRequested = message.editRequested;
-    if (!keyboardLocked(slot.lock)) {
-      const waiters = unlockWaiters.get(slot);
-      if (waiters !== undefined) {
-        unlockWaiters.delete(slot);
-        for (const resolve of waiters) resolve();
-      }
-    }
     if (displayed(slot)) redraw();
     // A new pane's session is only reachable once its socket has said hello,
     // which is after the layout that made the pane.
@@ -1579,16 +1540,19 @@ screenEl.addEventListener(
     }
 
     if (mapped.command === "RepeatRecording") {
-      if (panel || macros.playing !== null) return;
+      if (panel) return;
       const recording = recorder.recordings.at(-1);
-      if (recording === undefined || !macros.playRecording(recording))
+      if (
+        recording === undefined ||
+        !macros.playRecording(recording, event.repeat)
+      )
         showError("E5040", "There is no saved recording to repeat.");
       return;
     }
 
     if (isMacroCommand(mapped.command)) {
       const macro = macros.macroFor(mapped.command);
-      if (panel || event.repeat || macros.playing !== null) return;
+      if (panel || event.repeat) return;
       if (macro !== null) macros.play(macro);
       return;
     }
@@ -1626,8 +1590,8 @@ screenEl.addEventListener(
       .readText()
       .then((text) => {
         if (text === "") return;
-        if (panel) panels.receive(pasteMessage(panels.host.grid(), text));
-        else send(pasteFor(activeSession(), text));
+        if (panel) panels.receive({ type: "paste", text });
+        else send({ type: "paste", text });
       })
       .catch((cause) => {
         showError(
@@ -1650,8 +1614,8 @@ screenEl.addEventListener(
     const text = event.clipboardData?.getData("text/plain") ?? "";
     if (text === "") return;
     if (panels.capturingMacro()) return;
-    if (panels.isOpen()) panels.receive(pasteMessage(panels.host.grid(), text));
-    else send(pasteFor(activeSession(), text));
+    if (panels.isOpen()) panels.receive({ type: "paste", text });
+    else send({ type: "paste", text });
   },
   true,
 );

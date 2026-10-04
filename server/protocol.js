@@ -5,9 +5,9 @@ import { AppError } from "./errors.js";
  *
  * @typedef {{ type: 'action', action: string, args?: string[], repeat?: boolean }} ActionMessage
  * @typedef {{ type: 'text', value: string }} TextMessage
- * @typedef {{ row: number, col: number, text: string }} PasteSegment
- * @typedef {{ type: 'paste', text: string, segments: PasteSegment[] }} PasteMessage
- *   split by the page against the screen it shows; `text` is what a recording keeps
+ * @typedef {{ type: 'paste', text: string }} PasteMessage
+ * @typedef {{ type: 'macro', steps: (ActionMessage | TextMessage | PasteMessage)[], repeat?: boolean }} MacroMessage
+ *   played in order, as one entry in the input queue
  * @typedef {{ type: 'connect', host: string | null }} ConnectMessage
  * @typedef {{ type: 'disconnect' }} DisconnectMessage
  * @typedef {{ type: 'model', model: number }} ModelMessage
@@ -18,7 +18,7 @@ import { AppError } from "./errors.js";
  * @typedef {{ type: 'stopSharing' }} StopSharingMessage
  * @typedef {{ type: 'stopEditing' }} StopEditingMessage
  * @typedef {{ type: 'recorder', action: 'start' | 'stop' }} RecorderMessage
- * @typedef {ActionMessage | TextMessage | PasteMessage | ConnectMessage | DisconnectMessage | ModelMessage | OversizeMessage | RefreshMessage | AskEditMessage | AnswerMessage | StopSharingMessage | StopEditingMessage | RecorderMessage} ClientMessage
+ * @typedef {ActionMessage | TextMessage | PasteMessage | MacroMessage | ConnectMessage | DisconnectMessage | ModelMessage | OversizeMessage | RefreshMessage | AskEditMessage | AnswerMessage | StopSharingMessage | StopEditingMessage | RecorderMessage} ClientMessage
  *
  * @typedef {object} HelloMessage
  * @property {'hello'} type
@@ -116,6 +116,7 @@ import { AppError } from "./errors.js";
  * @property {string[]} screen one plain-text line per row, as of just before this step
  * @property {PaintMessage} [paint] the same full, styled screen sent to a client; absent in older recordings
  * @property {{ row: number, col: number }} cursor 0-based position before this step
+ * @property {{ row: number, col: number, length: number }[]} [hidden] the non-display input fields; absent when there are none, and in older recordings
  * @property {string} [action] omitted for a password marker
  * @property {string[]} [args]
  * @property {true} [password] a whole run of password keystrokes, collapsed so none are recorded
@@ -191,8 +192,14 @@ export function parseClientMessage(raw) {
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new AppError("E4001", "expected a JSON object");
   }
+  return parseMessage(/** @type {Record<string, unknown>} */ (parsed));
+}
 
-  const message = /** @type {Record<string, unknown>} */ (parsed);
+/**
+ * @param {Record<string, unknown>} message
+ * @returns {ClientMessage}
+ */
+function parseMessage(message) {
   const type = message["type"];
 
   if (type === "action") {
@@ -235,31 +242,34 @@ export function parseClientMessage(raw) {
         "E4003",
         `paste of ${text.length} characters is too large`,
       );
-    const rawSegments = message["segments"];
-    if (!Array.isArray(rawSegments))
-      throw new AppError("E4002", "paste.segments must be an array");
-    /** @type {PasteSegment[]} */
-    const segments = [];
-    let typed = 0;
-    for (const segment of rawSegments) {
-      const { row, col, text: part } = segment ?? {};
+    return { type: "paste", text };
+  }
+
+  if (type === "macro") {
+    const rawSteps = message["steps"];
+    if (!Array.isArray(rawSteps))
+      throw new AppError("E4002", "macro.steps must be an array");
+    const steps = rawSteps.map((rawStep) => {
+      const step =
+        typeof rawStep === "object" &&
+        rawStep !== null &&
+        !Array.isArray(rawStep)
+          ? parseMessage(/** @type {Record<string, unknown>} */ (rawStep))
+          : null;
       if (
-        !Number.isInteger(row) ||
-        !Number.isInteger(col) ||
-        row < 0 ||
-        col < 0 ||
-        typeof part !== "string"
+        step?.type !== "action" &&
+        step?.type !== "text" &&
+        step?.type !== "paste"
       )
         throw new AppError(
           "E4002",
-          "paste.segments must be { row, col, text } with whole, non-negative row and col",
+          "macro.steps must be actions, text and pastes",
         );
-      typed += part.length;
-      segments.push({ row, col, text: part });
-    }
-    if (typed > 16384)
-      throw new AppError("E4003", `paste of ${typed} characters is too large`);
-    return { type: "paste", text, segments };
+      return step;
+    });
+    if (message["repeat"] === true)
+      return { type: "macro", steps, repeat: true };
+    return { type: "macro", steps };
   }
 
   if (type === "connect") {

@@ -47,11 +47,8 @@ function fixture() {
   const keymap = new Keymap(() => {});
   const macros = new Macros({
     dispatch: (message) => calls.sent.push(message),
-    paste: (text) => calls.sent.push({ type: "paste", text, segments: [] }),
-    waitForUnlock: () => Promise.resolve(),
     persist: () => {},
     keymap,
-    redraw: () => {},
   });
   const recorder = new Recorder({
     dispatch: (message) => calls.sent.push(message),
@@ -638,7 +635,7 @@ test("with no macros or steps yet, Macros opens straight into capturing the firs
   assert.equal(macros.macros.length, 2);
 });
 
-test("S or a macro's number closes the panels and plays it", async () => {
+test("S or a macro's number closes the panels and plays it", () => {
   const { panels, macros, calls } = fixture();
   macros.macros.push(
     { name: "One", steps: [{ text: "a", action: "Enter", args: [] }] },
@@ -655,31 +652,23 @@ test("S or a macro's number closes the panels and plays it", async () => {
 
   command(panels, "2");
   assert.equal(panels.isOpen(), false);
-  await Promise.resolve();
-  assert.deepEqual(calls.sent, [{ type: "paste", text: "b", segments: [] }]);
+  assert.deepEqual(calls.sent, [
+    { type: "macro", steps: [{ type: "text", value: "b" }] },
+  ]);
 
   panels.open("macros");
   onLine(panels, "1. One", "s");
   press(panels, "Enter");
   assert.equal(panels.isOpen(), false);
-  await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(calls.sent.slice(1), [
-    { type: "paste", text: "a", segments: [] },
-    { type: "action", action: "Enter", args: [] },
+    {
+      type: "macro",
+      steps: [
+        { type: "text", value: "a" },
+        { type: "action", action: "Enter", args: [] },
+      ],
+    },
   ]);
-});
-
-test("a macro is not run while another is still playing", () => {
-  const { panels, macros } = fixture();
-  macros.macros.push({
-    name: "One",
-    steps: [{ text: "a", action: "", args: [] }],
-  });
-  macros.playing = { macro: macros.macros[0], active: true };
-  panels.open("macros");
-  command(panels, "1");
-  assert.equal(panels.isOpen(), true);
-  assert.match(screenOf(panels)[21], /E5042/);
 });
 
 test("macros and recordings have separate list actions", () => {

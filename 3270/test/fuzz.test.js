@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { describe, test } from "node:test";
-import { CASES, check, rawCase, rng } from "./fuzz.js";
+import { CASES, check, rawCase } from "./fuzz.js";
+import { rng } from "./rng.js";
 import { assertSameLines, noB3270 } from "./harness.js";
 
 // Fuzz cases that once found a difference from b3270, replayed on every run.

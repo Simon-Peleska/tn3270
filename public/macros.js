@@ -6,6 +6,9 @@
 import { macroCommand } from "./keymap.js";
 
 /**
+ * A step types its text as keys, or runs its action; a paste is the action
+ * PasteString, so it still lands as a paste does.
+ *
  * @typedef {{ text: string, action: string, args: string[] }} MacroStep
  * @typedef {{ name: string, steps: MacroStep[] }} Macro
  */
@@ -22,15 +25,9 @@ export function textSteps(text) {
 /**
  * @typedef {object} MacrosDeps
  * @property {(message: import('../server/protocol.js').ClientMessage) => void} dispatch
- * @property {(text: string) => void} paste
- * @property {() => Promise<void>} waitForUnlock
+ *   bypasses app.js's recording tap, so playback is never recorded into itself
  * @property {(macros: Macro[]) => void} persist
  * @property {import('./keymap.js').Keymap} keymap
- * @property {() => void} redraw
- *
- * `dispatch` and `paste` bypass app.js's recording tap, so playback is never
- * recorded into itself, and `waitForUnlock` paces playback by the host, not a
- * timer.
  */
 
 export class Macros {
@@ -41,8 +38,6 @@ export class Macros {
     this.macros = [];
     /** @type {{ steps: MacroStep[], pendingText: string } | null} */
     this.recording = null;
-    /** @type {{ macro: Macro, active: boolean } | null} */
-    this.playing = null;
     /** @type {MacroStep[] | null} recorded and stopped, waiting for a name */
     this.pending = null;
   }
@@ -53,7 +48,7 @@ export class Macros {
       ...macro,
       steps: macro.steps.flatMap((step) => [
         ...textSteps(step.text),
-        ...(step.action === "String" || step.action === "PasteString"
+        ...(step.action === "String"
           ? textSteps(step.args[0] ?? "")
           : step.action
             ? [{ text: "", action: step.action, args: step.args }]
@@ -79,23 +74,23 @@ export class Macros {
    */
   record(message) {
     if (this.recording === null) return;
-    if (message.type === "text") this.recording.pendingText += message.value;
-    else if (message.type === "paste")
-      this.recording.pendingText += message.text;
-    else if (message.type === "action") {
-      if (this.recording.pendingText !== "")
-        this.recording.steps.push({
-          text: this.recording.pendingText,
-          action: "",
-          args: [],
-        });
-      this.recording.steps.push({
-        text: "",
-        action: message.action,
-        args: message.args ?? [],
-      });
-      this.recording.pendingText = "";
+    if (message.type === "text") {
+      this.recording.pendingText += message.value;
+      return;
     }
+    if (message.type !== "action" && message.type !== "paste") return;
+    if (this.recording.pendingText !== "")
+      this.recording.steps.push({
+        text: this.recording.pendingText,
+        action: "",
+        args: [],
+      });
+    this.recording.pendingText = "";
+    this.recording.steps.push(
+      message.type === "paste"
+        ? { text: "", action: "PasteString", args: [message.text] }
+        : { text: "", action: message.action, args: message.args ?? [] },
+    );
   }
 
   /**
@@ -157,14 +152,15 @@ export class Macros {
 
   /**
    * @param {import('./recorder.js').Recording} recording
+   * @param {boolean} [repeat] from a held-down key
    * @returns {boolean}
    */
-  playRecording(recording) {
+  playRecording(recording, repeat = false) {
     const macro = {
       name: recording.name,
       steps: recording.steps.flatMap((step) => {
         if (step.password || step.final || step.action === undefined) return [];
-        if (step.action === "String" || step.action === "PasteString") {
+        if (step.action === "String") {
           const text = step.args?.[0] ?? "";
           return text === "" ? [] : [{ text, action: "", args: [] }];
         }
@@ -172,7 +168,7 @@ export class Macros {
       }),
     };
     if (macro.steps.length === 0) return false;
-    void this.play(macro);
+    this.play(macro, repeat);
     return true;
   }
 
@@ -183,36 +179,33 @@ export class Macros {
   }
 
   /**
+   * The server types the whole macro in order, each step against the screen
+   * the ones before it left; this page's screen would lag behind them. Typed
+   * text stays typing and a paste stays a paste: typing onto a protected cell
+   * locks the keyboard, where a paste skips to the next field.
+   *
    * @param {Macro} macro
-   * @returns {Promise<void>}
+   * @param {boolean} [repeat] from a held-down key: dropped while input waits
+   * @returns {void}
    */
-  async play(macro) {
-    console.info("macro playing", { name: macro.name });
-    const state = { macro, active: true };
-    this.playing = state;
-    let text = "";
+  play(macro, repeat = false) {
+    /** @type {import('../server/protocol.js').MacroMessage['steps']} */
+    const steps = [];
     for (const step of macro.steps) {
-      if (!state.active) break;
-      text += step.text;
-      if (step.action !== "") {
-        if (text !== "") this.deps.paste(text);
-        text = "";
-        this.deps.dispatch({
-          type: "action",
-          action: step.action,
-          args: step.args,
-        });
-        await this.deps.waitForUnlock();
-      }
+      const last = steps.at(-1);
+      if (step.text !== "" && last?.type === "text") last.value += step.text;
+      else if (step.text !== "") steps.push({ type: "text", value: step.text });
+      if (step.action === "PasteString")
+        steps.push({ type: "paste", text: step.args[0] ?? "" });
+      else if (step.action !== "")
+        steps.push({ type: "action", action: step.action, args: step.args });
     }
-    if (state.active && text !== "") this.deps.paste(text);
-    if (this.playing === state) this.playing = null;
-    this.deps.redraw();
-  }
-
-  /** @returns {void} */
-  stopPlayback() {
-    if (this.playing !== null) this.playing.active = false;
+    console.info("macro playing", { name: macro.name, steps: steps.length });
+    this.deps.dispatch(
+      repeat
+        ? { type: "macro", steps, repeat: true }
+        : { type: "macro", steps },
+    );
   }
 
   /**

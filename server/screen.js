@@ -162,6 +162,26 @@ export class ScreenModel {
   }
 
   /**
+   * The non-display input cells, a run per field and row, for a recording to
+   * replay as password fields.
+   *
+   * @returns {{ row: number, col: number, length: number }[]}
+   */
+  hiddenRuns() {
+    /** @type {{ row: number, col: number, length: number }[]} */
+    const runs = [];
+    this.cells.forEach((cell, i) => {
+      if (!cell.editable || !this.fieldsHidden[i]) return;
+      const row = Math.floor(i / this.cols);
+      const col = i % this.cols;
+      const last = runs.at(-1);
+      if (last?.row === row && last.col + last.length === col) last.length += 1;
+      else runs.push({ row, col, length: 1 });
+    });
+    return runs;
+  }
+
+  /**
    * @param {import('./indications.js').ScreenModeIndication} mode
    * @returns {void}
    */

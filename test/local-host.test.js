@@ -178,16 +178,9 @@ test("Erase input blanks every field and goes to the first", () => {
   assert.deepEqual(aids[0]?.values, { name: "", town: "" });
 });
 
-test("a paste lands in the fields it was split against", () => {
+test("a paste is split against the form's fields, a line per row", () => {
   const { host, aids } = form();
-  host.receive({
-    type: "paste",
-    text: "Al\nKöln",
-    segments: [
-      { row: 0, col: 5, text: "Al" },
-      { row: 2, col: 5, text: "Köln" },
-    ],
-  });
+  host.receive({ type: "paste", text: "Al\n\nKöln" });
   host.receive({ type: "action", action: "Enter", args: [] });
   assert.deepEqual(aids[0]?.values, { name: "Al", town: "Köln" });
 });

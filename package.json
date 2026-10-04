@@ -9,6 +9,7 @@
     "start": "node server/main.js",
     "fakehost": "node test/fakehost.js test/traces/fields.trc 4001",
     "start:fake": "node test/fakehost.js --tls test/traces/fields.trc 4001 & FAKE=$!; trap 'kill $FAKE' EXIT; TN3270_CONFIG=config.fake.jsonc node server/main.js",
+    "start:recording": "node test/recordinghost.js",
     "test": "node --test \"test/*.test.js\" \"3270/test/*.test.js\"",
     "test:browser": "node --test test/browser-smoke.mjs",
     "fuzz": "mkdir -p 3270/test/fuzz-corpus 3270/test/fuzz-findings && jazzer 3270/test/fuzz.js 3270/test/fuzz-corpus --includes 3270/src/ --disable_bug_detectors '.*' --sync -- -use_value_profile=1 -max_len=2048 -len_control=0 -dict=3270/test/fuzz.dict -artifact_prefix=3270/test/fuzz-findings/",
