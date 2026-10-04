@@ -6,7 +6,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:net";
-import { WebSocket } from "ws";
+import { WebSocket } from "../vendor/ws.mjs";
 import { FakeHost } from "./fakehost.js";
 import { testConfig, waitUntil } from "./helpers.js";
 

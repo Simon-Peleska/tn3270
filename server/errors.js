@@ -7,6 +7,7 @@ export const ERRORS = Object.freeze({
   E1004: "Config value is out of range",
   E1005: "Config value is not a usable b3270 resource name",
   E1006: "Code page is in the wrong config section",
+  E1008: "Vendored ws does not match package-lock.json",
 
   E2001: "b3270 could not be spawned",
   E2002: "b3270 exited unexpectedly",

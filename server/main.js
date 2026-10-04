@@ -2,18 +2,25 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import { WebSocketServer } from "ws";
+import { WebSocketServer } from "../vendor/ws.mjs";
 import { loadConfig } from "./config.js";
 import { setLogFile, setLogLevel, logger } from "./log.js";
 import { SessionRegistry } from "./registry.js";
 import { parseClientMessage } from "./protocol.js";
 import { AppError, describeError } from "./errors.js";
 import { proxyRestRequest } from "./restproxy.js";
+import { checkVendoredWs } from "./vendorcheck.js";
 
 const config = loadConfig(process.env["TN3270_CONFIG"] ?? "config.jsonc");
 setLogLevel(config.logLevel);
 if (config.logFile !== "") setLogFile(config.logFile, config.logMaxBytes);
 const log = logger("http");
+
+try {
+  checkVendoredWs();
+} catch (err) {
+  log.error(err);
+}
 
 const registry = new SessionRegistry(config);
 
