@@ -294,20 +294,27 @@ test("holding Ctrl+. repeats the last recording", async (t) => {
     modifiers: 2,
     windowsVirtualKeyCode: 190,
   };
-  const first = browser.frame("Network.webSocketFrameSent", "paste");
+  const first = browser.frame("Network.webSocketFrameSent", "macro");
   await browser.command("Input.dispatchKeyEvent", {
     type: "keyDown",
     ...controlPeriod,
   });
-  assert.equal((await first).text, "b");
+  assert.deepEqual(await first, {
+    type: "macro",
+    steps: [{ type: "text", value: "b" }],
+  });
 
-  const second = browser.frame("Network.webSocketFrameSent", "paste");
+  const second = browser.frame("Network.webSocketFrameSent", "macro");
   await browser.command("Input.dispatchKeyEvent", {
     type: "keyDown",
     autoRepeat: true,
     ...controlPeriod,
   });
-  assert.equal((await second).text, "b");
+  assert.deepEqual(await second, {
+    type: "macro",
+    steps: [{ type: "text", value: "b" }],
+    repeat: true,
+  });
   await browser.command("Input.dispatchKeyEvent", {
     type: "keyUp",
     ...controlPeriod,
