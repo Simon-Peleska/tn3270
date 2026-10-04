@@ -5,6 +5,7 @@ import { editableSnapshot, changedRuns } from "./history.js";
 import { ScreenModel } from "./screen.js";
 import { OiaModel } from "./oia.js";
 import { fullPaint, paintDelta } from "./paint.js";
+import { pasteSegments } from "../public/paste.js";
 import { AppError, describeError } from "./errors.js";
 import { isHostAllowed } from "./protocol.js";
 import { logger } from "./log.js";
@@ -442,6 +443,7 @@ export class Session {
           this.screen.applyFields(editable, hidden, formatted);
         }
         this.scheduleFlush();
+        this.runQueuedInput();
         return;
       }
 
@@ -631,6 +633,8 @@ export class Session {
       paint: fullPaint(this.screen),
       cursor: { row: this.screen.cursor.row, col: this.screen.cursor.col },
     };
+    const hidden = this.screen.hiddenRuns();
+    if (hidden.length > 0) recorded.hidden = hidden;
     this.recording.steps.push(recorded);
     this.sendToAll({ type: "recorderStep", step: recorded });
   }
@@ -893,7 +897,8 @@ export class Session {
       !this.touched &&
       (message.type === "action" ||
         message.type === "text" ||
-        message.type === "paste")
+        message.type === "paste" ||
+        message.type === "macro")
     ) {
       this.touched = true;
       this.broadcastStatus();
@@ -903,6 +908,7 @@ export class Session {
       case "action":
       case "text":
       case "paste":
+      case "macro":
         this.queueInput(viewer, message);
         return;
       case "connect":
@@ -1018,11 +1024,12 @@ export class Session {
    * Input goes to b3270 one message at a time, each once b3270 has finished the
    * last. b3270 already holds an action back while the host has the keyboard,
    * but several held at once come out of that wait in the wrong order, and
-   * Backspace and the typing nudge read a screen the last input must have
-   * settled. Reset, Attn and SysReq are how a user gets out of a wait, so they
-   * skip the line, and Reset throws away what was typed ahead, as a 3270 does.
-   * A held-down PF key only repeats into an empty line, so letting go of it
-   * stops the paging at once.
+   * Backspace, the typing nudge and a paste read a screen the last input must
+   * have settled. Reset, Attn and SysReq are how a user gets out of a wait, so
+   * they skip the line, and Reset throws away what was typed ahead, as a 3270
+   * does — a macro's own Reset waits its turn like its other steps. A held-down
+   * PF key or replay only repeats into an empty line, so letting go of it stops
+   * at once.
    *
    * @param {Viewer} viewer
    * @param {import('./protocol.js').ClientMessage} message
@@ -1050,12 +1057,12 @@ export class Session {
       return;
     }
     if (
-      message.type === "action" &&
+      (message.type === "action" || message.type === "macro") &&
       message.repeat === true &&
       (this.inputTag !== null || this.inputQueue.length > 0)
     ) {
       this.log.debug("held key repeats faster than the host answers", {
-        action: message.action,
+        action: message.type === "action" ? message.action : "macro",
       });
       return;
     }
@@ -1079,11 +1086,27 @@ export class Session {
     this.runQueuedInput();
   }
 
-  /** @returns {void} */
+  /**
+   * The field map trails the screen by a ReadBuffer, and a paste, Backspace or
+   * the typing nudge read it, so queued input also waits for that to land:
+   * a macro's next step must see the screen the Enter before it brought.
+   *
+   * @returns {void}
+   */
   runQueuedInput() {
-    while (this.inputTag === null) {
+    while (
+      this.inputTag === null &&
+      !this.fieldsStale &&
+      this.fieldReadTag === null
+    ) {
       const next = this.inputQueue.shift();
       if (next === undefined) return;
+      // Unpacked only now, so a Reset typed during it still drops what is left.
+      if (next.type === "macro") {
+        this.log.info("macro plays", { steps: next.steps.length });
+        this.inputQueue.unshift(...next.steps);
+        continue;
+      }
       this.inputTag = this.runInput(next);
     }
   }
@@ -1160,8 +1183,17 @@ export class Session {
         if (this.screen.cursorHidden()) this.recordPassword();
         else this.record("PasteString", [message.text]);
 
+        // Split here, against the screen every move queued before it has left.
+        const { cells, fieldsFormatted, cols, cursor } = this.screen;
+        const segments = pasteSegments(
+          cells,
+          fieldsFormatted,
+          cols,
+          cursor,
+          message.text,
+        );
         // Batched, so nothing else can be typed between the segments.
-        const actions = message.segments.flatMap(({ row, col, text }) => [
+        const actions = segments.flatMap(({ row, col, text }) => [
           { action: "MoveCursor1", args: [String(row + 1), String(col + 1)] },
           {
             action: "PasteString",

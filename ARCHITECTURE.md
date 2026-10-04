@@ -451,6 +451,7 @@ public/
   grid.js       the cell buffer: applyPaint, put, rectangular text, the field under a cell
   hints.js      Ctrl-B's field hint letters
   paste.js      a paste split into one segment per stretch of editable cells
+                (run by the server, and by local-host.js for panels)
   canvas.js     Pane: two grids and a rectangle; Screen: the page's one canvas
   colors.js     3270 colour name → ANSI slot, gr → flags
   oia.js        the status line, composed from the last status and cursor
@@ -463,7 +464,7 @@ public/
   macros.js  recorder.js   what the panels change
   sessions.js   the Ctrl-B prefix, the URL fragment, and how panes split the page
   reconnect.js  fitfont.js  store.js
-test/           fakehost.js, helpers.js, traces/, *.test.js
+test/           fakehost.js, recordinghost.js, helpers.js, traces/, *.test.js
 ```
 
 ## Dependencies

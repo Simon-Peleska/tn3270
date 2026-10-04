@@ -8,25 +8,15 @@ function fixture() {
     /** @type {import('../server/protocol.js').ClientMessage[]} */ dispatched:
       [],
     /** @type {import('../public/macros.js').Macro[][]} */ saved: [],
-    /** @type {number} */ unlockWaits: 0,
   };
-  /** @type {(() => void)[]} */
-  const pendingUnlocks = [];
   // The real keymap, since that is where a macro's key is kept.
   const keymap = new Keymap(() => {});
   const macros = new Macros({
     dispatch: (message) => calls.dispatched.push(message),
-    paste: (text) =>
-      calls.dispatched.push({ type: "paste", text, segments: [] }),
-    waitForUnlock: () => {
-      calls.unlockWaits += 1;
-      return new Promise((resolve) => pendingUnlocks.push(resolve));
-    },
     persist: (values) => calls.saved.push(structuredClone(values)),
     keymap,
-    redraw: () => {},
   });
-  return { macros, calls, pendingUnlocks, keymap };
+  return { macros, calls, keymap };
 }
 
 test("recording keeps text and actions as separate steps", () => {
@@ -34,14 +24,15 @@ test("recording keeps text and actions as separate steps", () => {
   macros.record({ type: "text", value: "not recording" });
   macros.startRecording();
   macros.record({ type: "text", value: "log" });
-  macros.record({ type: "paste", text: "on", segments: [] });
+  macros.record({ type: "paste", text: "on" });
   macros.record({ type: "action", action: "Enter", args: [] });
   macros.record({ type: "refresh" });
   macros.record({ type: "text", value: "tso" });
   macros.stopRecording();
   assert.equal(macros.recording, null);
   assert.deepEqual(macros.pending, [
-    ...[..."logon"].map((text) => ({ text, action: "", args: [] })),
+    ...[..."log"].map((text) => ({ text, action: "", args: [] })),
+    { text: "", action: "PasteString", args: ["on"] },
     { text: "", action: "Enter", args: [] },
     ...[..."tso"].map((text) => ({ text, action: "", args: [] })),
   ]);
@@ -84,102 +75,87 @@ test("a stopped recording waits for a name, and a taken name gets a number", () 
   assert.equal(macros.macros.length, 2);
 });
 
-test("playing a macro sends each step and waits for the keyboard to unlock between actions", async () => {
-  const { macros, calls, pendingUnlocks } = fixture();
-  const macro = {
+test("playing a macro sends it whole, for the server to type in order", () => {
+  const { macros, calls } = fixture();
+  macros.play({
     name: "Two steps",
     steps: [
       { text: "hello", action: "Enter", args: [] },
       { text: "world", action: "Tab", args: [] },
     ],
-  };
-  const played = macros.play(macro);
-  assert.equal(macros.playing?.macro, macro);
+  });
   assert.deepEqual(calls.dispatched, [
-    { type: "paste", text: "hello", segments: [] },
-    { type: "action", action: "Enter", args: [] },
+    {
+      type: "macro",
+      steps: [
+        { type: "text", value: "hello" },
+        { type: "action", action: "Enter", args: [] },
+        { type: "text", value: "world" },
+        { type: "action", action: "Tab", args: [] },
+      ],
+    },
   ]);
-  assert.equal(calls.unlockWaits, 1);
-
-  pendingUnlocks[0]?.();
-  await Promise.resolve();
-  assert.equal(calls.dispatched.length, 4);
-
-  pendingUnlocks[1]?.();
-  await played;
-  assert.equal(macros.playing, null);
 });
 
-test("repeating a recording turns its input into a macro and skips password and screen steps", async () => {
-  const { macros, calls, pendingUnlocks } = fixture();
-  const started = macros.playRecording({
-    name: "Recorded login",
-    recordedAt: "2026-09-26T00:00:00.000Z",
-    steps: [
-      {
-        screen: [],
-        cursor: { row: 0, col: 0 },
-        action: "String",
-        args: ["USER"],
-      },
-      { screen: [], cursor: { row: 0, col: 0 }, action: "Enter", args: [] },
-      { screen: [], cursor: { row: 0, col: 0 }, password: true },
-      { screen: [], cursor: { row: 0, col: 0 }, action: "Tab", args: [] },
-      { screen: [], cursor: { row: 0, col: 0 }, final: true },
-    ],
-  });
+test("repeating a recording turns its input into a macro and skips password and screen steps", () => {
+  const { macros, calls } = fixture();
+  const started = macros.playRecording(
+    {
+      name: "Recorded login",
+      recordedAt: "2026-09-26T00:00:00.000Z",
+      steps: [
+        {
+          screen: [],
+          cursor: { row: 0, col: 0 },
+          action: "String",
+          args: ["USER"],
+        },
+        { screen: [], cursor: { row: 0, col: 0 }, action: "Enter", args: [] },
+        { screen: [], cursor: { row: 0, col: 0 }, password: true },
+        { screen: [], cursor: { row: 0, col: 0 }, action: "Tab", args: [] },
+        { screen: [], cursor: { row: 0, col: 0 }, final: true },
+      ],
+    },
+    true,
+  );
 
   assert.equal(started, true);
   assert.deepEqual(calls.dispatched, [
-    { type: "paste", text: "USER", segments: [] },
-    { type: "action", action: "Enter", args: [] },
+    {
+      type: "macro",
+      steps: [
+        { type: "text", value: "USER" },
+        { type: "action", action: "Enter", args: [] },
+        { type: "action", action: "Tab", args: [] },
+      ],
+      repeat: true,
+    },
   ]);
-  pendingUnlocks[0]?.();
-  await Promise.resolve();
-  assert.deepEqual(calls.dispatched.at(-1), {
-    type: "action",
-    action: "Tab",
-    args: [],
-  });
-  pendingUnlocks[1]?.();
-  await Promise.resolve();
-  assert.equal(macros.playing, null);
 });
 
-test("playback batches neighbouring character steps before the next action", async () => {
-  const { macros, calls, pendingUnlocks } = fixture();
-  const played = macros.play({
+test("playback types neighbouring characters together, and a paste stays a paste", () => {
+  const { macros, calls } = fixture();
+  macros.play({
     name: "Typed",
     steps: [
       { text: "a", action: "", args: [] },
       { text: "b", action: "", args: [] },
+      { text: "", action: "PasteString", args: ["x\ny"] },
       { text: "", action: "Enter", args: [] },
+      { text: "c", action: "", args: [] },
     ],
   });
   assert.deepEqual(calls.dispatched, [
-    { type: "paste", text: "ab", segments: [] },
-    { type: "action", action: "Enter", args: [] },
+    {
+      type: "macro",
+      steps: [
+        { type: "text", value: "ab" },
+        { type: "paste", text: "x\ny" },
+        { type: "action", action: "Enter", args: [] },
+        { type: "text", value: "c" },
+      ],
+    },
   ]);
-  pendingUnlocks[0]?.();
-  await played;
-});
-
-test("stopping playback ends it before the remaining steps go out", async () => {
-  const { macros, calls, pendingUnlocks } = fixture();
-  const played = macros.play({
-    name: "Stoppable",
-    steps: [
-      { text: "", action: "Enter", args: [] },
-      { text: "", action: "PF", args: ["3"] },
-    ],
-  });
-  macros.stopPlayback();
-  pendingUnlocks[0]?.();
-  await played;
-  assert.deepEqual(calls.dispatched, [
-    { type: "action", action: "Enter", args: [] },
-  ]);
-  assert.equal(macros.playing, null);
 });
 
 test("a renamed macro keeps its key, and a deleted one frees it", () => {

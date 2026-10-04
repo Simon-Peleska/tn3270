@@ -224,3 +224,13 @@ the reverse-video status row, and none across a five-row selection either way.
 - A per-viewer cursor overlay so people can see where the others are looking.
 - Reconnect currently redraws from scratch. That is correct but wasteful on a
   slow link; a sequence number per delta would let a viewer resume.
+- A fake TSO/ISPF host, written rather than recorded. `test/recordinghost.js`
+  only replays screens in the order a recording pressed its AID keys, and
+  ignores what was typed. A scripted host would read the fields an AID sends
+  back and answer like ISPF: the master menu's `Option ===>` jumping to 3.4,
+  a data set list for whatever `Dsname Level` says, with line-command fields
+  in front of each name; a member list, browse and edit; PF3 going back a
+  level, `=x` and `END` leaving; non-display fields for the logon password.
+  Screens would be built from the recorded ISPF paints, which already carry
+  the real field layout and colours. Good for demos and for testing macros and
+  pastes against a host that answers like the real one.

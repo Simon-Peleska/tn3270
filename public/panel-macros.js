@@ -76,13 +76,8 @@ export const macrosLayout = {
 
 /** @param {import('./panels.js').Panels} panel @param {import('./macros.js').Macro} macro */
 function run(panel, macro) {
-  const { macros } = panel.deps;
-  if (macros.playing !== null) {
-    panel.message = panel.problem("E5042", "A macro is already playing");
-    return;
-  }
   panel.close();
-  void macros.play(macro);
+  panel.deps.macros.play(macro);
 }
 
 export const macroEditLayout = {

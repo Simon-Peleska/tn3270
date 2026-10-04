@@ -5,7 +5,6 @@ import { SessionRegistry } from "../server/registry.js";
 import { AppError } from "../server/errors.js";
 import { keyboardLocked } from "../public/oia.js";
 import { computeHints } from "../public/hints.js";
-import { pasteMessage } from "../public/paste.js";
 import {
   testConfig,
   collectingViewer,
@@ -1103,10 +1102,7 @@ test("pasted text is typed literally, backslashes and all", async (t) => {
   session.attach(controller);
   const before = session.screen.cursor.col;
 
-  session.handleClientMessage(
-    controller,
-    pasteMessage(controller.grid, "a\\b"),
-  );
+  session.handleClientMessage(controller, { type: "paste", text: "a\\b" });
   await settle(session);
 
   assert.equal(session.screen.cursor.col, before + 3);
@@ -1126,11 +1122,10 @@ test("pasting more than a field holds is truncated at its edge, not spilled into
 
   // The field runs from the cursor to the end of the row; past it is protected.
   const fieldWidth = screen.cols - start.col;
-  const paste = pasteMessage(controller.grid, "x".repeat(fieldWidth + 3));
-  assert.deepEqual(paste.segments, [
-    { row: start.row, col: start.col, text: "x".repeat(fieldWidth) },
-  ]);
-  session.handleClientMessage(controller, paste);
+  session.handleClientMessage(controller, {
+    type: "paste",
+    text: "x".repeat(fieldWidth + 3),
+  });
   await settle(session);
   assert.equal(
     session.oia.keyboardLocked,
@@ -1154,10 +1149,7 @@ test("a paste crossing the gaps between short fields lands whole, with nothing e
 
     const controller = collectingViewer("controller");
     session.attach(controller);
-    session.handleClientMessage(
-      controller,
-      pasteMessage(controller.grid, text),
-    );
+    session.handleClientMessage(controller, { type: "paste", text });
     await settle(session);
 
     assert.equal(
@@ -1166,6 +1158,69 @@ test("a paste crossing the gaps between short fields lands whole, with nothing e
       `pasting ${JSON.stringify(text)}`,
     );
   }
+});
+
+test("a paste is split against the screen the moves queued before it left", async (t) => {
+  const fixture = await startTracedSession("test/traces/three-fields.trc");
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  await settle(session);
+  await waitUntil(() => session.screen.fieldsFormatted, "the field map");
+
+  const controller = collectingViewer("controller");
+  session.attach(controller);
+  session.handleClientMessage(controller, { type: "action", action: "Tab" });
+  session.handleClientMessage(controller, { type: "paste", text: "xyz" });
+  await settle(session);
+
+  assert.equal(session.screen.rowText(0).slice(0, 12), "     xyz    ");
+});
+
+test("a macro's steps are typed in order, its own Reset in its place", async (t) => {
+  const fixture = await startTracedSession("test/traces/three-fields.trc");
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  await settle(session);
+  await waitUntil(() => session.screen.fieldsFormatted, "the field map");
+
+  const controller = collectingViewer("controller");
+  session.attach(controller);
+  session.handleClientMessage(controller, {
+    type: "macro",
+    steps: [
+      { type: "paste", text: "abc" },
+      { type: "action", action: "Reset", args: [] },
+      { type: "action", action: "Tab", args: [] },
+      { type: "paste", text: "def" },
+    ],
+  });
+  await settle(session);
+
+  assert.equal(session.screen.rowText(0).slice(0, 12), " abc def    ");
+});
+
+test("a held-down replay only repeats into an empty input line", async (t) => {
+  const fixture = await startTracedSession("test/traces/three-fields.trc");
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  await settle(session);
+  await waitUntil(() => session.screen.fieldsFormatted, "the field map");
+
+  const controller = collectingViewer("controller");
+  session.attach(controller);
+  /** @type {import('../server/protocol.js').MacroMessage} */
+  const replay = {
+    type: "macro",
+    steps: [
+      { type: "paste", text: "x" },
+      { type: "action", action: "Tab", args: [] },
+    ],
+  };
+  session.handleClientMessage(controller, replay);
+  session.handleClientMessage(controller, { ...replay, repeat: true });
+  await settle(session);
+
+  assert.equal(session.screen.rowText(0).slice(0, 12), " x          ");
 });
 
 test("undo takes the typing back out a step at a time, and redo puts it back", async (t) => {
@@ -1184,10 +1239,7 @@ test("undo takes the typing back out a step at a time, and redo puts it back", a
 
   session.handleClientMessage(controller, { type: "text", value: "abc" });
   await waitUntil(() => row() === " abc        ", "the typing to land");
-  session.handleClientMessage(
-    controller,
-    pasteMessage(controller.grid, "456789"),
-  );
+  session.handleClientMessage(controller, { type: "paste", text: "456789" });
   await waitUntil(() => row() === " abc 456 789", "the paste to land");
 
   // One thing the user did is one step, however many actions it took.
@@ -1616,6 +1668,10 @@ test("Stop acknowledges a recorded cursor move without waiting for the host", as
 
   const controller = collectingViewer("controller");
   session.attach(controller);
+  await waitUntil(
+    () => !session.fieldsStale && session.fieldReadTag === null,
+    "the field map",
+  );
   session.handleClientMessage(controller, {
     type: "recorder",
     action: "start",
@@ -1642,6 +1698,10 @@ test("Stop acknowledges immediately even when typing is queued behind a busy hos
 
   const controller = collectingViewer("controller");
   session.attach(controller);
+  await waitUntil(
+    () => !session.fieldsStale && session.fieldReadTag === null,
+    "the field map",
+  );
   session.handleClientMessage(controller, {
     type: "recorder",
     action: "start",
@@ -1697,6 +1757,22 @@ test("an observer cannot start or stop a recording", async (t) => {
   const last = observer.messages.at(-1);
   assert.equal(last?.type, "error");
   assert.equal(last?.type === "error" ? last.code : "", "E3006");
+});
+
+test("a recorded step says where the non-display input fields are", async (t) => {
+  // password-field.trc: an ordinary field at columns 2-4, a non-display one at 6-8.
+  const fixture = await startTracedSession("test/traces/password-field.trc");
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  await settle(session);
+  await waitUntil(() => session.screen.fieldsFormatted, "the field map");
+
+  session.recording = { steps: [] };
+  session.record("Enter");
+
+  assert.deepEqual(session.recording.steps[0]?.hidden, [
+    { row: 0, col: 5, length: 3 },
+  ]);
 });
 
 test("a run of keystrokes into a password field collapses to a single marker", async (t) => {

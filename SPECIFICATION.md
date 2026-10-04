@@ -273,12 +273,19 @@ a key of its own, set on the Keys panel, where it is listed after the fixed
 commands as `Macro <name>`, and it follows the keymap's one rule: a key bound
 to a macro is taken from whatever had it. Renaming a macro keeps its key;
 deleting it frees the key. On the screen that key plays the macro, and does
-nothing while a macro is already playing or a panel is open. `RESET` on the
+nothing while a panel is open. A macro goes to the server whole, which types
+its steps in order as one entry in the input queue, each against the screen the
+ones before it left and the field map the server has read for it. Typed text
+stays typing and a paste stays a paste, so a macro does exactly what typing it
+by hand did: typing onto a protected cell locks the keyboard, a paste skips to
+the next field. A `Reset` typed while it waits drops what is left of it,
+and a `Reset` inside it runs in its turn. `RESET` on the
 Keys panel takes every macro's key away with the rest. Macros and keys are
 saved in this browser only; there is no file to import or export them.
 
 `Ctrl+.` replays the input from the most recently saved session recording as a
-macro; holding it repeats completed runs. It does not show the recorded screens,
+macro; holding it repeats completed runs, as a held PF key only repeats into an
+empty input queue. It does not show the recorded screens,
 and password input is skipped.
 
 Opening a panel is a command like any other, so it is in the keymap of §5 and
@@ -399,10 +406,12 @@ clipboard itself, which the browser asks the user's permission for. A paste of
 more than 16384 characters is refused with `E4003` — b3270 types it one
 character at a time, so a stray copy of a log file would block the session.
 
-The page splits a paste into `segments` itself, against the screen it shows: one
-stretch of editable cells each, since `PasteString` drops a character that lands
-on a protected one. The server only moves the cursor to each and types it;
-`text` is kept for the recorder. The field hints behind `Ctrl-B` and the field
+The page sends a paste as plain text; the server splits it into one stretch of
+editable cells each, since `PasteString` drops a character that lands on a
+protected one, and moves the cursor to each and types it. It splits when the
+paste reaches the front of the input queue, against the screen everything
+typed before it left — the page's own screen lags input still on its way. The
+field hints behind `Ctrl-B` and the field
 `Ctrl-C` copies are worked out in the page too, from the cells the paints carry.
 A password field is never painted with what was typed into it, so `Ctrl-C` there
 copies nothing.
@@ -455,7 +464,8 @@ reconnecting to it is worth trying.
 
 ```jsonc
 {"type":"text","value":"abc"}
-{"type":"paste","text":"one\ntwo","segments":[{"row":3,"col":10,"text":"one"},{"row":4,"col":10,"text":"two"}]}
+{"type":"paste","text":"one\ntwo"}
+{"type":"macro","steps":[{"type":"text","value":"1.3"},{"type":"paste","text":".4"},{"type":"action","action":"Enter"}]}
 {"type":"action","action":"PF","args":["3"]}
 {"type":"connect","host":"mainframe:23"}
 {"type":"disconnect"}
@@ -614,7 +624,6 @@ browser, `E6xxx` server transport, `E7xxx` the REST proxy.
 | `E5039` | Session could not be terminated                        |
 | `E5040` | No saved recording is available to repeat              |
 | `E5041` | No macro has the number given on the command line      |
-| `E5042` | A macro was run while another is still playing         |
 | `E6001` | Static file not found                                  |
 | `E6002` | WebSocket upgrade path is not a session                |
 | `E6003` | WebSocket closed unexpectedly                          |
@@ -650,3 +659,17 @@ input fields and a non-display one, so typing and pasting are visible. The
 replay is stopped along with the server, and serves any number of sessions at
 once. `npm run fakehost` starts it on its own, for pointing something else at
 it.
+
+A session saved from the Recorder panel can be played back as a host too:
+
+```bash
+npm run start:recording -- recording.json [--codepage cp273]
+```
+
+It shows the first recorded screen and answers each AID key the recording
+pressed (Enter, Clear, PF, PA), in order, with the screen that came after it.
+Any other AID key gets the current screen again, and past the end the last
+screen stays. Fields, colours and highlighting come from the recorded paints,
+and a step's `hidden` runs come back as non-display fields;
+older recordings without paints come back as plain, unformatted text. The
+server runs on the recording's model, and every new connection starts over.

@@ -207,14 +207,7 @@ test("well-formed client messages are parsed", () => {
       return true;
     },
   );
-  const paste = {
-    type: "paste",
-    text: "a\nb",
-    segments: [
-      { row: 0, col: 2, text: "a" },
-      { row: 1, col: 2, text: "b" },
-    ],
-  };
+  const paste = { type: "paste", text: "a\nb" };
   assert.deepEqual(parseClientMessage(JSON.stringify(paste)), paste);
   assert.deepEqual(parseClientMessage('{"type":"disconnect"}'), {
     type: "disconnect",
@@ -293,25 +286,31 @@ test("a paste far larger than a screen is refused", () => {
   );
 });
 
-test("a paste whose segments are not places on the screen is refused", () => {
-  for (const segments of [
+test("a macro carries only actions, text and pastes, each checked like one sent alone", () => {
+  const macro = {
+    type: "macro",
+    steps: [
+      { type: "text", value: "1.3" },
+      { type: "paste", text: "1.3.4" },
+      { type: "action", action: "Enter", args: [] },
+    ],
+  };
+  assert.deepEqual(parseClientMessage(JSON.stringify(macro)), macro);
+  for (const steps of [
     undefined,
-    [{ row: -1, col: 0, text: "a" }],
-    [{ row: 0, col: 1.5, text: "a" }],
-    [{ row: 0, col: 0, text: 7 }],
+    [{ type: "connect", host: "elsewhere:23" }],
+    [{ type: "action", action: "Script", args: [] }],
+    [{ type: "macro", steps: [] }],
     [null],
   ])
     assert.throws(
-      () =>
-        parseClientMessage(
-          JSON.stringify({ type: "paste", text: "a", segments }),
-        ),
+      () => parseClientMessage(JSON.stringify({ type: "macro", steps })),
       (err) => {
         assert.ok(err instanceof AppError);
         assert.equal(err.code, "E4002");
         return true;
       },
-      JSON.stringify(segments),
+      JSON.stringify(steps),
     );
 });
 
