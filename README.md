@@ -18,9 +18,15 @@ Nix, the flake brings all three:
 
 ```bash
 nix develop          # or: direnv allow
-npm install
 npm start            # http://127.0.0.1:8017
 ```
+
+There is no install step: the one runtime dependency, `ws`, is vendored in
+`vendor/ws`. `npm install` only fetches the dev tooling (eslint, prettier,
+tsc types) and re-copies `ws` from `node_modules` into `vendor/ws`. To update
+`ws`, run `npm update ws && npm run vendor` and commit `vendor/ws`. If the
+vendored copy and `package-lock.json` disagree, `npm test` fails and the server
+logs E1008 at startup.
 
 No mainframe? `npm run start:fake` starts a replayed host alongside the server
 and points a session at it, which is also what the tests use. `npm run start:recording -- recording.json`

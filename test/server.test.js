@@ -5,7 +5,7 @@ import { once } from "node:events";
 import { createServer } from "node:net";
 import { writeFile, rm } from "node:fs/promises";
 import { readFileSync, readdirSync } from "node:fs";
-import { WebSocket } from "ws";
+import { WebSocket } from "../vendor/ws.mjs";
 import { FakeHost } from "./fakehost.js";
 import { testConfig, waitUntil } from "./helpers.js";
 import { Grid } from "../public/grid.js";

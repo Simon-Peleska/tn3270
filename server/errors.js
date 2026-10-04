@@ -8,6 +8,7 @@ export const ERRORS = Object.freeze({
   E1005: "Config setting is not an emulator setting",
   E1006: "Code page is in the wrong config section",
   E1007: "Config section was renamed",
+  E1008: "Vendored ws does not match package-lock.json",
 
   // E2001-E2003 and E2006 were the b3270 child process's, which is gone. Retired, not free.
   E2004: "Emulator reported a protocol error",

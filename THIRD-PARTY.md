@@ -16,7 +16,8 @@ for the recorded host traces taken from x3270's test suite.
 
 ## ws
 
-The WebSocket server. <https://github.com/websockets/ws>
+The WebSocket server, vendored unchanged in `vendor/ws`.
+<https://github.com/websockets/ws>
 
 ```
 Copyright (c) 2011 Einar Otto Stangvik <einaros@gmail.com>
