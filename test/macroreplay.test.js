@@ -3,29 +3,14 @@ import assert from "node:assert/strict";
 import { Session } from "../server/session.js";
 import { Macros } from "../public/macros.js";
 import { RecordingHost } from "./recordinghost.js";
-import { collectingViewer, testConfig } from "./helpers.js";
+import { availableParallelism } from "node:os";
+import { collectingViewer, testConfig, waitUntil } from "./helpers.js";
 import { rng } from "../3270/test/rng.js";
 
 /**
  * @typedef {{ row: number, col: number, length: number, text?: string }} Field
  * @typedef {import('../server/protocol.js').RecorderStep} RecorderStep
  */
-
-/**
- * helpers.js's wait, polling every millisecond: a fuzz run waits on the
- * session dozens of times, and 10 ms a wait was most of its time.
- *
- * @param {() => boolean} predicate
- * @param {string} message
- */
-async function waitUntil(predicate, message) {
-  const deadline = Date.now() + 5000;
-  while (!predicate()) {
-    if (Date.now() >= deadline)
-      throw new Error(`timed out waiting for ${message}`);
-    await new Promise((resolve) => setTimeout(resolve, 1));
-  }
-}
 
 /**
  * A 24x80 screen with a title on row 0 and the given input fields, each
@@ -113,11 +98,12 @@ function idle(session) {
 
 /** @param {Session} session */
 function snapshot(session) {
-  const { rows, cursor } = session.screen;
+  const { cursor } = session.screen;
   return {
-    text: Array.from({ length: rows }, (_, row) =>
-      session.screen.rowText(row).trimEnd(),
-    ).join("\n"),
+    text: session
+      .screenLines()
+      .map((line) => line.trimEnd())
+      .join("\n"),
     cursor: `${cursor.row}:${cursor.col}`,
   };
 }
@@ -369,16 +355,21 @@ async function recordAndReplay(host, inputs) {
   const typed = snapshot(live.session);
   live.session.close();
 
-  const replay = await startSession(host);
-  await playRecording(replay.session, replay.viewer, recording);
-  const replayed = snapshot(replay.session);
-  replay.session.close();
-
-  const played = await startSession(host);
-  macrosFor(played.session, played.viewer).play(macro);
-  await waitUntil(() => idle(played.session), "the macro to finish");
-  const macroPlayed = snapshot(played.session);
-  played.session.close();
+  const [replayed, macroPlayed] = await Promise.all([
+    (async () => {
+      const replay = await startSession(host);
+      await playRecording(replay.session, replay.viewer, recording);
+      replay.session.close();
+      return snapshot(replay.session);
+    })(),
+    (async () => {
+      const played = await startSession(host);
+      macrosFor(played.session, played.viewer).play(macro);
+      await waitUntil(() => idle(played.session), "the macro to finish");
+      played.session.close();
+      return snapshot(played.session);
+    })(),
+  ]);
 
   return {
     expected: { recording: typed, macro: typed },
@@ -412,11 +403,26 @@ test("a recording or macro played back ends where typing it by hand did", async 
   const host = await startHost(fuzzHostSteps());
   t.after(() => host.close());
 
-  for (let seed = firstSeed; seed < firstSeed + runs; seed++) {
-    const inputs = fuzzInputs(rng(seed), 20);
-    const { expected, actual } = await recordAndReplay(host, inputs);
-    if (JSON.stringify(expected) === JSON.stringify(actual)) continue;
+  // Each seed gets its own sessions and connections, so a batch runs at once.
+  const seeds = Array.from({ length: runs }, (_, i) => firstSeed + i);
+  const batch = availableParallelism();
+  const failed = [];
+  for (let at = 0; at < seeds.length; at += batch) {
+    const outcomes = await Promise.all(
+      seeds.slice(at, at + batch).map(async (seed) => {
+        const inputs = fuzzInputs(rng(seed), 20);
+        const { expected, actual } = await recordAndReplay(host, inputs);
+        return {
+          seed,
+          inputs,
+          same: JSON.stringify(expected) === JSON.stringify(actual),
+        };
+      }),
+    );
+    failed.push(...outcomes.filter((outcome) => !outcome.same));
+  }
 
+  for (const { seed, inputs } of failed) {
     const smallest = await shrink(host, inputs);
     const again = await recordAndReplay(host, smallest);
     assert.deepEqual(

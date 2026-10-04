@@ -652,15 +652,17 @@ const recorder = new Recorder({
 const capture = new ComboCapture();
 const lone = new LoneModifier();
 
-const revision = await fetch("./api/version")
+// The settings title reads it when opened, so the page needn't wait for it.
+let revision = "unknown";
+fetch("./api/version")
   .then((response) => {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return response.json();
   })
-  .then((body) =>
-    typeof body.revision === "string" ? body.revision : "unknown",
-  )
-  .catch(() => "unknown");
+  .then((body) => {
+    if (typeof body.revision === "string") revision = body.revision;
+  })
+  .catch(() => {});
 
 const panels = new Panels({
   settings,

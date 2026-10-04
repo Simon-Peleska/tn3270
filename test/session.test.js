@@ -49,7 +49,7 @@ test("a stalled host cannot grow the input queue without limit", async (t) => {
 
 test("a viewer receives the emulator's active code page and later changes", async (t) => {
   const config = testConfig({
-    emulator: { model: 4, settings: { codePage: "german" } },
+    emulator: { settings: { codePage: "german" } },
   });
   const session = new Session(config);
   t.after(() => session.close());
