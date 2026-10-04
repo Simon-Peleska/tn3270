@@ -44,5 +44,7 @@ export function printableCharacter(codePage, byte) {
   const chart = CODE_PAGE_CHARTS[codePage];
   if (chart === undefined || byte < 0x40 || byte > 0xff) return null;
   const glyph = chart[byte - 0x40];
-  return glyph !== undefined && (glyph !== " " || byte === 0x40) ? glyph : null;
+  if (byte === 0x40) return " ";
+  // Blank, or a space of its own, like the required space at 0x41.
+  return glyph !== undefined && !/\s/u.test(glyph) ? glyph : null;
 }

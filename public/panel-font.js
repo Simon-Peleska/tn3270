@@ -24,7 +24,7 @@ export function drawCodePageChart(view, codePage, columnColor = "turquoise") {
     view.say(4 + row, 34, (row + 4).toString(16).toUpperCase(), "turquoise");
     for (let col = 0; col < 16; col += 1) {
       const glyph = chart[row * 16 + col];
-      if (glyph !== " ") view.say(4 + row, 36 + col * 2, glyph, "white");
+      if (!/\s/u.test(glyph)) view.say(4 + row, 36 + col * 2, glyph, "white");
     }
   }
 }
