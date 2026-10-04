@@ -56,18 +56,17 @@ async function startServer(options = {}) {
   const configFile = `test/.tmp-config-rest-${port}.jsonc`;
   await writeFile(
     configFile,
-    JSON.stringify({
-      server: { host: "127.0.0.1", port },
-      b3270: {
-        path: "b3270",
-        model: options.model ?? 4,
-        tls: false,
-        ...(options.defaultHost ? { defaultHost: options.defaultHost } : {}),
-      },
-      sessions: { idleTimeoutMs: 0 },
-      logLevel: "warn",
-      logFile: "",
-    }),
+    JSON.stringify(
+      testConfig({
+        server: { host: "127.0.0.1", port },
+        b3270: {
+          ...(options.model ? { model: options.model } : {}),
+          ...(options.defaultHost ? { defaultHost: options.defaultHost } : {}),
+        },
+        logLevel: "warn",
+        logFile: "",
+      }),
+    ),
   );
 
   const child = spawn("node", ["server/main.js"], {

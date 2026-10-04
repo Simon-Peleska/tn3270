@@ -49,7 +49,7 @@ test("a stalled host cannot grow the input queue without limit", async (t) => {
 
 test("a viewer receives b3270's active code page and later changes", async (t) => {
   const config = testConfig({
-    b3270: { path: "b3270", model: 4, settings: { codePage: "german" } },
+    b3270: { settings: { codePage: "german" } },
   });
   const session = new Session(config);
   t.after(() => session.close());
@@ -1290,7 +1290,7 @@ test("an AID key ends the history: what was typed before it cannot be undone", a
 test("a b3270 resource set in the config reaches the emulator", async (t) => {
   const session = new Session(
     testConfig({
-      b3270: { path: "b3270", model: 2, settings: { oversize: "90x30" } },
+      b3270: { model: 2, settings: { oversize: "90x30" } },
     }),
   );
   t.after(() => session.close());

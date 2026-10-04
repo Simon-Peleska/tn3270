@@ -4,17 +4,20 @@ import { FakeHost } from "./fakehost.js";
 import { Grid } from "../public/grid.js";
 
 /**
- * @param {Record<string, unknown>} [overrides]
+ * The fake hosts speak plain TELNET, so tls stays off whatever b3270 settings
+ * a test overrides.
+ *
+ * @param {{ b3270?: Record<string, unknown>, [key: string]: unknown }} [overrides]
  * @returns {import('../server/config.js').Config}
  */
 export function testConfig(overrides = {}) {
   return validateConfig({
     server: { host: "127.0.0.1", port: 8017 },
-    // The traces were recorded against a model 4 (43x80).
-    b3270: { path: "b3270", model: 4, tls: false },
     sessions: { idleTimeoutMs: 0 },
     logLevel: "error",
     ...overrides,
+    // The traces were recorded against a model 4 (43x80).
+    b3270: { path: "b3270", model: 4, tls: false, ...overrides.b3270 },
   });
 }
 

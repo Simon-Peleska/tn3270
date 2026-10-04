@@ -36,12 +36,7 @@ async function startBrowser(t) {
     JSON.stringify(
       testConfig({
         server: { host: "127.0.0.1", port: serverPort },
-        b3270: {
-          path: "b3270",
-          model: 4,
-          tls: false,
-          defaultHost: `127.0.0.1:${host.port}`,
-        },
+        b3270: { defaultHost: `127.0.0.1:${host.port}` },
         logFile: "",
       }),
     ),

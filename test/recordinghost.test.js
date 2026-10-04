@@ -44,12 +44,7 @@ async function startRecordedSession(steps) {
   );
   const session = new Session(
     testConfig({
-      b3270: {
-        path: "b3270",
-        model: host.script.model,
-        tls: false,
-        settings: { codePage: "cp273" },
-      },
+      b3270: { model: host.script.model, settings: { codePage: "cp273" } },
     }),
   );
   await session.ready;
