@@ -229,3 +229,12 @@ the reverse-video status row, and none across a five-row selection either way.
   Screens would be built from the recorded ISPF paints, which already carry
   the real field layout and colours. Good for demos and for testing macros and
   pastes against a host that answers like the real one.
+- Show 3270 control characters as distinct glyphs. b3270 already turns them
+  into printable stand-ins, but they look like real text: DUP arrives as `*`
+  and Field Mark as `;` (both flagged `order,private-use` in `gr`), SUB as
+  `■`, EO as `●`, and every other control code in 0x01–0x3F as a plain space.
+  NUL, SO, SI and field attributes only show (as `.`, `<`, `>`, `0`–`V`) with
+  the `VisibleControl` toggle on. The idea is to swap these for some Unicode
+  marker (a symbol or a small tagged glyph) so a DUP can't be mistaken for an
+  asterisk the host sent. Use the `order`/`private-use` flags to spot them;
+  no b3270 change needed for DUP and FM.
