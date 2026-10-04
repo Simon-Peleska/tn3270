@@ -5,6 +5,7 @@ test/.tmp-config-*.jsonc
 log/
 test/.tmp-log-*.log
 test/.tmp-log-*.log.1
+test/.tmp-userdata-*.sqlite*
 b3270
 b3270.exe
 config.jsonc

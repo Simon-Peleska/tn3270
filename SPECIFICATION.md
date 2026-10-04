@@ -281,7 +281,8 @@ by hand did: typing onto a protected cell locks the keyboard, a paste skips to
 the next field. A `Reset` typed while it waits drops what is left of it,
 and a `Reset` inside it runs in its turn. `RESET` on the
 Keys panel takes every macro's key away with the rest. Macros and keys are
-saved in this browser only; there is no file to import or export them.
+saved on the server with the other settings (section 6, HTTP); there is no file
+to import or export them.
 
 `Ctrl+.` replays the input from the most recently saved session recording as a
 macro; holding it repeats completed runs, as a held PF key only repeats into an
@@ -487,9 +488,16 @@ reconnecting to it is worth trying.
 | `GET`    | `/api/sessions`             | Lists sessions → `{sessions:[{id, viewers, connection, host}], defaultHost}`                  |
 | `DELETE` | `/api/sessions/<id>`        | Ends the session with its owner's `x-session-pass` → `204`; otherwise `403 E3014`             |
 | `GET`    | `/api/sessions/<id>/3270/…` | Forwarded to that session's emulator; see REST below                                          |
+| `GET`    | `/api/userdata`             | This user's saved data → `{settings, macros, keymap, recordings}`, `null` for any never saved |
+| `PUT`    | `/api/userdata/<key>`       | Replaces one of those four with the JSON body → `204`; `404 E8004`, `400 E8006`, `413 E8005`  |
 | `GET`    | anything else               | Static files from `public/`                                                                   |
 
 Errors are JSON: `{"code":"E6001","message":"…"}` with a matching status.
+
+User data belongs to the `X-Remote-User` name when `security.trustProxyHeaders`
+is on and the proxy sends one, and to the client's address otherwise, so
+everyone behind one address shares it. The first time the server has nothing
+for a key, the page sends what an older version saved in the browser.
 
 ### REST
 
@@ -527,23 +535,24 @@ needs a narrower one puts authentication in front of it (section 8).
 `config.jsonc`, overridable with the `TN3270_CONFIG` environment variable. JSONC:
 `//` and `/* */` comments and trailing commas are accepted.
 
-| Setting                         | Default              | Meaning                                                                                                                                                                               |
-| ------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `server.host`                   | `127.0.0.1`          | Listen address                                                                                                                                                                        |
-| `server.port`                   | `8017`               | Listen port                                                                                                                                                                           |
-| `b3270.path`                    | `b3270`              | Executable, resolved from `PATH`                                                                                                                                                      |
-| `b3270.model`                   | `2`                  | 3270 model a session starts on, 2–5; changeable from the settings panel                                                                                                               |
-| `b3270.defaultHost`             | `null`               | Connect new sessions here; `null` starts disconnected                                                                                                                                 |
-| `b3270.extraArgs`               | `[]`                 | Appended verbatim, e.g. `["-cafile","/path/ca.pem"]`                                                                                                                                  |
-| `b3270.settings`                | `{"nopSeconds": 60}` | b3270 resources, each passed as `-xrm`. `nopSeconds` sends a TELNET NOP after that many quiet seconds, so a firewall or NAT never drops the host connection as idle; `0` turns it off |
-| `sessions.maxSessions`          | `16`                 | Refuses more with `E3002`                                                                                                                                                             |
-| `sessions.maxViewersPerSession` | `8`                  | Refuses more with `E3003`                                                                                                                                                             |
-| `sessions.idleTimeoutMs`        | `300000`             | Viewer-less session lifetime; `0` disables reaping                                                                                                                                    |
-| `security.allowedHosts`         | `[]`                 | Empty = any host. An entry with a port matches exactly; without one, any port on that host                                                                                            |
-| `security.trustProxyHeaders`    | `false`              | Take the client's address from `X-Forwarded-For` and their name from `X-Remote-User`. Only with a reverse proxy in front that sets both                                               |
-| `logLevel`                      | `info`               | `debug` logs every line exchanged with b3270                                                                                                                                          |
-| `logFile`                       | `log/tn3270.log`     | Kept as well as stderr, and rolled over to `<logFile>.1`; `""` is stderr only                                                                                                         |
-| `logMaxBytes`                   | `10485760`           | Size at which the log rolls over, so the pair is never more than twice this                                                                                                           |
+| Setting                         | Default                                | Meaning                                                                                                                                                                               |
+| ------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `server.host`                   | `127.0.0.1`                            | Listen address                                                                                                                                                                        |
+| `server.port`                   | `8017`                                 | Listen port                                                                                                                                                                           |
+| `b3270.path`                    | `b3270`                                | Executable, resolved from `PATH`                                                                                                                                                      |
+| `b3270.model`                   | `2`                                    | 3270 model a session starts on, 2–5; changeable from the settings panel                                                                                                               |
+| `b3270.defaultHost`             | `null`                                 | Connect new sessions here; `null` starts disconnected                                                                                                                                 |
+| `b3270.extraArgs`               | `[]`                                   | Appended verbatim, e.g. `["-cafile","/path/ca.pem"]`                                                                                                                                  |
+| `b3270.settings`                | `{"nopSeconds": 60}`                   | b3270 resources, each passed as `-xrm`. `nopSeconds` sends a TELNET NOP after that many quiet seconds, so a firewall or NAT never drops the host connection as idle; `0` turns it off |
+| `sessions.maxSessions`          | `16`                                   | Refuses more with `E3002`                                                                                                                                                             |
+| `sessions.maxViewersPerSession` | `8`                                    | Refuses more with `E3003`                                                                                                                                                             |
+| `sessions.idleTimeoutMs`        | `300000`                               | Viewer-less session lifetime; `0` disables reaping                                                                                                                                    |
+| `security.allowedHosts`         | `[]`                                   | Empty = any host. An entry with a port matches exactly; without one, any port on that host                                                                                            |
+| `security.trustProxyHeaders`    | `false`                                | Take the client's address from `X-Forwarded-For` and their name from `X-Remote-User`. Only with a reverse proxy in front that sets both                                               |
+| `logLevel`                      | `info`                                 | `debug` logs every line exchanged with b3270                                                                                                                                          |
+| `logFile`                       | `../tn3270-data/log/tn3270-{port}.log` | Kept as well as stderr, and rolled over to `<logFile>.1`; `""` is stderr only. `{port}` becomes `server.port`, so two instances never roll over one file                              |
+| `logMaxBytes`                   | `10485760`                             | Size at which the log rolls over, so the pair is never more than twice this                                                                                                           |
+| `userDataFile`                  | `../tn3270-data/userdata.sqlite`       | SQLite file holding every user's settings, keymap, macros and recordings. Servers on one machine may share it, as blue and green do during a deploy; not on a network filesystem      |
 
 ## 8. Error codes
 
@@ -588,14 +597,14 @@ browser, `E6xxx` server transport, `E7xxx` the REST proxy.
 | `E4005` | Typed text is too large for one input                  |
 | `E5001` | Terminal renderer failed to initialise                 |
 | `E5002` | WebSocket connection to the server failed              |
-| `E5003` | Settings could not be read from the browser database   |
-| `E5004` | Settings could not be saved to the browser database    |
+| `E5003` | Settings could not be read from the server             |
+| `E5004` | Settings could not be saved on the server              |
 | `E5005` | Clipboard could not be read for a Shift+Insert paste   |
 | `E5006` | Another terminal session could not be opened           |
-| `E5008` | Macros could not be read from the browser database     |
-| `E5009` | Macros could not be saved to the browser database      |
-| `E5011` | The keymap could not be saved to the browser database  |
-| `E5013` | The keymap could not be read from the browser database |
+| `E5008` | Macros could not be read from the server               |
+| `E5009` | Macros could not be saved on the server                |
+| `E5011` | The keymap could not be saved on the server            |
+| `E5013` | The keymap could not be read from the server           |
 | `E5014` | A dropped session could not be restarted               |
 | `E5015` | A panel command is not known here                      |
 | `E5016` | A line command is not available on this line           |
@@ -633,6 +642,12 @@ browser, `E6xxx` server transport, `E7xxx` the REST proxy.
 | `E6010` | Viewer is too slow to receive the screen               |
 | `E7002` | REST is not available for this session                 |
 | `E7003` | REST request to b3270 failed                           |
+| `E8001` | User data database could not be opened                 |
+| `E8002` | User data could not be read                            |
+| `E8003` | User data could not be saved                           |
+| `E8004` | User data key is not one the server keeps              |
+| `E8005` | User data is too large to save                         |
+| `E8006` | User data to save is not valid JSON                    |
 | `E0000` | An error with no code of its own; see the log          |
 
 Errors are shown as a dismissible bar at the top of the page. The page is never

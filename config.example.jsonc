@@ -59,6 +59,11 @@
   "logLevel": "info",
 
   // Logged to stderr as well. Rolls over to "<logFile>.1" past logMaxBytes; "" is stderr only.
-  "logFile": "log/tn3270.log",
+  // "{port}" is replaced by server.port, so blue and green never share one file.
+  "logFile": "../tn3270-data/log/tn3270-{port}.log",
   "logMaxBytes": 10485760,
+
+  // Settings, keymap, macros and recordings, per X-Remote-User or else per address.
+  // Every server pointed at the same file shares them; keep it on a local disk, not NFS.
+  "userDataFile": "../tn3270-data/userdata.sqlite",
 }

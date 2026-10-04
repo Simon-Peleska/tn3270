@@ -1,14 +1,20 @@
 /**
- * Settings in IndexedDB, one record per fixed key. IndexedDB, not localStorage:
- * it survives the "clear site data on close" settings people use here.
+ * Settings on the server, one value per fixed key, kept per user name or else
+ * per address. What an older version left in this browser's IndexedDB is
+ * moved up the first time the server has nothing for a key, and left in place
+ * so rolling back to that version still finds it.
  */
 
-const DB_NAME = "tn3270";
-const STORE_NAME = "settings";
-const KEY = "ui";
-const MACROS_KEY = "macros";
-const KEYMAP_KEY = "keymap";
-const RECORDINGS_KEY = "recordings";
+const LEGACY_DB_NAME = "tn3270";
+const LEGACY_STORE_NAME = "settings";
+const LEGACY_KEYS = /** @type {const} */ ({
+  settings: "ui",
+  macros: "macros",
+  keymap: "keymap",
+  recordings: "recordings",
+});
+
+/** @typedef {keyof typeof LEGACY_KEYS} Key */
 
 /**
  * @typedef {object} StoredSettings
@@ -24,56 +30,100 @@ const RECORDINGS_KEY = "recordings";
  * @property {boolean} fieldBackground whether a typeable field is tinted
  */
 
-/** @type {Promise<IDBDatabase> | null} */
-let opening = null;
+/** @param {Response} response @returns {Promise<Error>} */
+async function responseError(response) {
+  const body = await response.json().catch(() => null);
+  return typeof body?.code === "string"
+    ? new Error(`[${body.code}] ${body.message}`)
+    : new Error(`HTTP ${response.status}`);
+}
 
-/** @returns {Promise<IDBDatabase>} */
-function open() {
-  if (opening !== null) return opening;
-  opening = new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
+/** @type {Promise<Record<string, unknown>> | null} */
+let fetching = null;
+
+/** @returns {Promise<Record<string, unknown>>} every key, null where never saved */
+function fetchAll() {
+  if (fetching !== null) return fetching;
+  fetching = fetch("./api/userdata")
+    .then(async (response) => {
+      if (!response.ok) throw await responseError(response);
+      return response.json();
+    })
+    .catch((error) => {
+      fetching = null;
+      throw error;
+    });
+  return fetching;
+}
+
+/** @type {Map<Key, Promise<void>>} */
+const writing = new Map();
+
+/**
+ * Chained per key: two saves in flight at once could otherwise land in the
+ * opposite order.
+ *
+ * @param {Key} key @param {unknown} value @returns {Promise<void>}
+ */
+function write(key, value) {
+  const put = async () => {
+    const response = await fetch(`./api/userdata/${key}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(value),
+    });
+    if (!response.ok) throw await responseError(response);
+  };
+  const next = (writing.get(key) ?? Promise.resolve())
+    .catch(() => {})
+    .then(put);
+  writing.set(key, next);
+  return next;
+}
+
+/** @param {Key} key @returns {Promise<unknown>} undefined when there is none */
+function readLegacy(key) {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(LEGACY_DB_NAME, 1);
     request.onupgradeneeded = () =>
-      request.result.createObjectStore(STORE_NAME);
-    request.onsuccess = () => resolve(request.result);
+      request.result.createObjectStore(LEGACY_STORE_NAME);
     request.onerror = () =>
       reject(request.error ?? new Error("indexedDB.open failed"));
-  }).catch((error) => {
-    opening = null;
-    throw error;
+    request.onsuccess = () => {
+      const get = request.result
+        .transaction(LEGACY_STORE_NAME, "readonly")
+        .objectStore(LEGACY_STORE_NAME)
+        .get(LEGACY_KEYS[key]);
+      get.onsuccess = () => resolve(get.result);
+      get.onerror = () => reject(get.error ?? new Error("read failed"));
+    };
   });
-  return opening;
 }
 
-/** @param {string} key @returns {Promise<unknown>} */
+/** @param {Key} key @returns {Promise<unknown>} */
 async function read(key) {
-  const db = await open();
-  return new Promise((resolve, reject) => {
-    const request = db
-      .transaction(STORE_NAME, "readonly")
-      .objectStore(STORE_NAME)
-      .get(key);
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error("read failed"));
-  });
-}
+  const value = (await fetchAll())[key];
+  if (value !== null && value !== undefined) return value;
 
-/** @param {string} key @param {unknown} value @returns {Promise<void>} */
-async function write(key, value) {
-  const db = await open();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, "readwrite");
-    transaction.objectStore(STORE_NAME).put(value, key);
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () =>
-      reject(transaction.error ?? new Error("write failed"));
-  });
+  /** @type {unknown} */
+  let legacy;
+  try {
+    legacy = await readLegacy(key);
+  } catch (cause) {
+    console.warn("browser database could not be read for", key, cause);
+    return undefined;
+  }
+  if (legacy === undefined) return undefined;
+  console.info("moving from this browser to the server:", key);
+  await write(key, legacy);
+  return legacy;
 }
 
 /**
  * @returns {Promise<Partial<StoredSettings>>} empty on a first visit
  */
 export async function loadSettings() {
-  const value = await read(KEY);
+  const value = await read("settings");
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value
     : {};
@@ -84,14 +134,14 @@ export async function loadSettings() {
  * @returns {Promise<void>}
  */
 export async function saveSettings(settings) {
-  await write(KEY, settings);
+  await write("settings", settings);
 }
 
 /**
  * @returns {Promise<import('./macros.js').Macro[]>} empty on a first visit
  */
 export async function loadMacros() {
-  const value = await read(MACROS_KEY);
+  const value = await read("macros");
   return Array.isArray(value) ? value : [];
 }
 
@@ -100,14 +150,14 @@ export async function loadMacros() {
  * @returns {Promise<void>}
  */
 export async function saveMacros(macros) {
-  await write(MACROS_KEY, macros);
+  await write("macros", macros);
 }
 
 /**
  * @returns {Promise<import('./recorder.js').Recording[]>} empty on a first visit
  */
 export async function loadRecordings() {
-  const value = await read(RECORDINGS_KEY);
+  const value = await read("recordings");
   return Array.isArray(value) ? value : [];
 }
 
@@ -116,14 +166,14 @@ export async function loadRecordings() {
  * @returns {Promise<void>}
  */
 export async function saveRecordings(recordings) {
-  await write(RECORDINGS_KEY, recordings);
+  await write("recordings", recordings);
 }
 
 /**
  * @returns {Promise<import('./keymap.js').Bindings>} empty on a first visit
  */
 export async function loadKeymap() {
-  const value = await read(KEYMAP_KEY);
+  const value = await read("keymap");
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? /** @type {import('./keymap.js').Bindings} */ (value)
     : {};
@@ -134,5 +184,5 @@ export async function loadKeymap() {
  * @returns {Promise<void>}
  */
 export async function saveKeymap(bindings) {
-  await write(KEYMAP_KEY, bindings);
+  await write("keymap", bindings);
 }

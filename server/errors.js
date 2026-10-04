@@ -1,5 +1,6 @@
 // A code is an identity: append only, never renumber, never reuse. E1xxx config,
-// E2xxx b3270, E3xxx session, E4xxx client, E5xxx browser, E6xxx transport, E7xxx REST.
+// E2xxx b3270, E3xxx session, E4xxx client, E5xxx browser, E6xxx transport, E7xxx REST,
+// E8xxx user data.
 export const ERRORS = Object.freeze({
   E1001: "Config file could not be read",
   E1002: "Config file is not valid JSONC",
@@ -40,17 +41,17 @@ export const ERRORS = Object.freeze({
 
   E5001: "Terminal renderer failed to initialise",
   E5002: "WebSocket connection to the server failed",
-  E5003: "Settings could not be read from the browser database",
-  E5004: "Settings could not be saved to the browser database",
+  E5003: "Settings could not be read from the server",
+  E5004: "Settings could not be saved on the server",
   E5005: "Clipboard could not be read for a Shift+Insert paste",
   E5006: "Another terminal session could not be opened",
   // E5007 is spent.
-  E5008: "Macros could not be read from the browser database",
-  E5009: "Macros could not be saved to the browser database",
+  E5008: "Macros could not be read from the server",
+  E5009: "Macros could not be saved on the server",
   // E5010 is spent.
-  E5011: "The keymap could not be saved to the browser database",
+  E5011: "The keymap could not be saved on the server",
   // E5012 is spent.
-  E5013: "The keymap could not be read from the browser database",
+  E5013: "The keymap could not be read from the server",
   E5014: "A dropped session could not be restarted",
   E5015: "A panel's command line held a command that panel does not know",
   E5016: "A line command was typed on a line that does not take it",
@@ -65,8 +66,8 @@ export const ERRORS = Object.freeze({
   E5025: "A macro step cannot be typed as free text",
   E5026: "Recording step number is invalid",
   E5027: "Recording has no steps",
-  E5028: "Recordings could not be saved to the browser database",
-  E5029: "Recordings could not be read from the browser database",
+  E5028: "Recordings could not be saved on the server",
+  E5029: "Recordings could not be read from the server",
   E5030: "Recording could not be imported",
   E5031: "Recording file could not be read",
   E5032: "Open sessions could not be loaded",
@@ -94,6 +95,13 @@ export const ERRORS = Object.freeze({
   E7002: "REST is not available for this session",
   E7003: "REST request to b3270 failed",
   // E7004 gated REST on a per-session switch, which is gone. Retired, not free.
+
+  E8001: "User data database could not be opened",
+  E8002: "User data could not be read",
+  E8003: "User data could not be saved",
+  E8004: "User data key is not one the server keeps",
+  E8005: "User data is too large to save",
+  E8006: "User data to save is not valid JSON",
 });
 
 /** @typedef {keyof typeof ERRORS} ErrorCode */

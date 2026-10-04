@@ -10,6 +10,7 @@ import { parseClientMessage } from "./protocol.js";
 import { AppError, describeError } from "./errors.js";
 import { proxyRestRequest } from "./restproxy.js";
 import { checkVendoredWs } from "./vendorcheck.js";
+import { USER_DATA_KEYS, openUserData, ownerOf } from "./userdata.js";
 
 const config = loadConfig(process.env["TN3270_CONFIG"] ?? "config.jsonc");
 setLogLevel(config.logLevel);
@@ -23,6 +24,10 @@ try {
 }
 
 const registry = new SessionRegistry(config);
+const userData = openUserData(config.userDataFile);
+
+// Recordings carry a full styled screen per step, so they are the big one.
+const MAX_USER_DATA_BYTES = 32 * 1024 * 1024;
 
 const ROOT = resolve(".");
 
@@ -92,6 +97,9 @@ const ERROR_STATUS = Object.freeze({
   E3001: 404,
   E3014: 403,
   E6001: 404,
+  E8004: 404,
+  E8005: 413,
+  E8006: 400,
 });
 
 /**
@@ -146,6 +154,23 @@ async function sendFile(res, dir, relative) {
 }
 
 /**
+ * @param {import('node:http').IncomingMessage} req
+ * @param {number} maxBytes
+ * @returns {Promise<string>}
+ */
+async function readBody(req, maxBytes) {
+  /** @type {Buffer[]} */
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > maxBytes) throw new AppError("E8005", `over ${maxBytes} bytes`);
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+/**
  * First value only, cut short: headers are sender-controlled and get logged.
  *
  * @param {import('node:http').IncomingMessage} req
@@ -197,6 +222,29 @@ async function handleRequest(req, res) {
 
   if (path === "/api/version" && req.method === "GET") {
     sendJson(res, 200, { revision: REVISION });
+    return;
+  }
+
+  if (path === "/api/userdata" && req.method === "GET") {
+    sendJson(res, 200, userData.load(ownerOf(client)));
+    return;
+  }
+
+  const userDataMatch = /^\/api\/userdata\/([a-z]+)$/.exec(path);
+  if (userDataMatch !== null && req.method === "PUT") {
+    const key = USER_DATA_KEYS.find((name) => name === userDataMatch[1]);
+    if (key === undefined) throw new AppError("E8004", userDataMatch[1]);
+    const json = await readBody(req, MAX_USER_DATA_BYTES);
+    try {
+      JSON.parse(json);
+    } catch (cause) {
+      throw new AppError("E8006", key, cause);
+    }
+    const owner = ownerOf(client);
+    userData.save(owner, key, json);
+    log.info("user data saved", { owner, key, bytes: json.length });
+    res.writeHead(204);
+    res.end();
     return;
   }
 
@@ -393,6 +441,9 @@ for (const signal of /** @type {const} */ (["SIGINT", "SIGTERM"])) {
     // Open WebSockets keep `server.close()` from ever calling back.
     for (const client of wss.clients) client.terminate();
     server.closeAllConnections();
-    server.close(() => process.exit(0));
+    server.close(() => {
+      userData.close();
+      process.exit(0);
+    });
   });
 }

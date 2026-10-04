@@ -349,6 +349,8 @@ a redirect would throw away the session the user is looking at.
 | `E4xxx` | websocket |
 | `E5xxx` | frontend  |
 | `E6xxx` | http      |
+| `E7xxx` | REST      |
+| `E8xxx` | user data |
 
 Codes are an identity, not a label: once assigned to a site, a code never
 changes. See `server/errors.js`.
@@ -376,6 +378,35 @@ could otherwise set for itself, which is why believing them is a decision the
 operator makes and not the default. `user` is empty until something
 authenticates: an NTLM handshake terminated at that proxy is what would fill it
 in, and `Viewer.user` is where it would land.
+
+## User data
+
+Settings, the keymap, macros and recordings live on the server, in the SQLite
+file `userDataFile` names, one row per owner and key holding the JSON the page
+sent. The owner is `user:<X-Remote-User>` when a proxy names one and
+`ip:<address>` otherwise, so without one everybody behind a NAT shares a set.
+`GET /api/userdata` returns all four keys in one round trip, which matters
+because the page cannot fit its first screen until it knows the font;
+`PUT /api/userdata/<key>` replaces one.
+
+The file is shared on purpose. A blue/green deploy runs both servers against
+it at once, which is why it is SQLite and not a JSON file: WAL lets one
+process write while the other reads, `busy_timeout` makes a writer wait out the
+other's lock instead of failing, and every write is one upsert, so neither
+side ever sees half of the other's. Two tabs saving one key: the last one wins,
+as it did in IndexedDB. WAL needs both processes on one machine — a network
+filesystem cannot share its memory-mapped index. Log files are the opposite
+case: rollover renames the file, which two writers cannot share, so the
+default `logFile` carries `{port}` and each instance gets its own.
+
+`node:sqlite` is built into Node 22, so this is no dependency, at the cost of
+an `ExperimentalWarning` on startup. It is synchronous; a write is one small
+statement and the event loop does not notice. The page chains the saves of
+one key, since two requests in flight could otherwise arrive in either order.
+
+Before this, the page kept the same four keys in IndexedDB. `public/store.js`
+still reads them once for a key the server has nothing for and sends them up,
+and leaves them where they are, so rolling back finds them too.
 
 ## Testing strategy
 
@@ -409,7 +440,7 @@ without anything standing between the source and what runs.
   discovers the modules one import layer at a time, a round trip each; with it
   they all start at once. The fonts go in the same wave because the fit cannot
   start until one has loaded, and which font is wanted is a stored setting the
-  server never sees. The list is in the file rather than generated, so the page
+  static page cannot know. The list is in the file rather than generated, so the page
   is what it says it is; `test/server.test.js` walks the real import graph and
   fails if one is missing.
 - **Fonts are immutable** for a year. They are vendored and never edited, they
@@ -444,6 +475,7 @@ server/
   registry.js   session creation, lookup, and limits
   protocol.js   wire typedefs and the action allow-list
   restproxy.js  forwards /3270/ to the session's own b3270 httpd
+  userdata.js   settings, keymap, macros, recordings in a shared SQLite file
 
 public/
   index.html    the canvas, the inlined CSS, the preloads, and nothing else
@@ -472,6 +504,8 @@ test/           fakehost.js, recordinghost.js, helpers.js, traces/, *.test.js
 One runtime dependency:
 
 - **`ws`** — WebSocket server. Node has no built-in one.
+
+SQLite is Node's own `node:sqlite`, not a package.
 
 The frontend is plain ESM served straight out of `public/`, imported by URL,
 with no bundler and no build step. `typescript` comes from the flake devShell,

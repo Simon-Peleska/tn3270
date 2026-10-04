@@ -10,6 +10,7 @@ import { AppError } from "./errors.js";
  * @property {'debug' | 'info' | 'warn' | 'error'} logLevel
  * @property {string} logFile Empty is stderr only.
  * @property {number} logMaxBytes Size at which the log rolls to `<logFile>.1`.
+ * @property {string} userDataFile SQLite file the settings are kept in, shared by every server pointed at it.
  */
 
 /**
@@ -109,8 +110,10 @@ const DEFAULTS = {
   },
   security: { allowedHosts: [], trustProxyHeaders: false },
   logLevel: "info",
-  logFile: "log/tn3270.log",
+  // Beside the checkout rather than in it, so blue and green share one.
+  logFile: "../tn3270-data/log/tn3270-{port}.log",
   logMaxBytes: 10 * 1024 * 1024,
+  userDataFile: "../tn3270-data/userdata.sqlite",
 };
 
 /**
@@ -289,6 +292,14 @@ export function validateConfig(raw) {
     );
   }
 
+  const port = num(
+    serverSection,
+    "server",
+    "port",
+    DEFAULTS.server.port,
+    1,
+    65535,
+  );
   const model = num(b3270Section, "b3270", "model", DEFAULTS.b3270.model, 2, 5);
   if (!Number.isInteger(model))
     throw new AppError("E1004", '"b3270.model" must be a whole number');
@@ -318,14 +329,7 @@ export function validateConfig(raw) {
   return {
     server: {
       host: str(serverSection, "server", "host", DEFAULTS.server.host),
-      port: num(
-        serverSection,
-        "server",
-        "port",
-        DEFAULTS.server.port,
-        1,
-        65535,
-      ),
+      port,
     },
     b3270: {
       path: str(b3270Section, "b3270", "path", DEFAULTS.b3270.path),
@@ -384,7 +388,11 @@ export function validateConfig(raw) {
       ),
     },
     logLevel,
-    logFile: str(root, "", "logFile", DEFAULTS.logFile),
+    // Rolling over renames the file, which two processes cannot share safely.
+    logFile: str(root, "", "logFile", DEFAULTS.logFile).replaceAll(
+      "{port}",
+      String(port),
+    ),
     logMaxBytes: num(
       root,
       "",
@@ -393,6 +401,7 @@ export function validateConfig(raw) {
       4096,
       1024 * 1024 * 1024,
     ),
+    userDataFile: str(root, "", "userDataFile", DEFAULTS.userDataFile),
   };
 }
 

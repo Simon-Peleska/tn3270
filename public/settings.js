@@ -87,7 +87,7 @@ export class Settings {
   /** @param {(changed: Partial<import('./store.js').StoredSettings>) => void} persist */
   constructor(persist) {
     this.persist = persist;
-    /** @type {import('./store.js').StoredSettings} What is saved in this browser.
+    /** @type {import('./store.js').StoredSettings} What is saved for this user.
      * The model is asked for again by every tab, which starts its own sessions. */
     this.values = { ...DEFAULT_SETTINGS };
     /** @type {number} The model the server has confirmed. */
