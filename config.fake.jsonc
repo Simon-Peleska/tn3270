@@ -11,6 +11,7 @@
     "path": "b3270",
     "model": 4,
     "defaultHost": "127.0.0.1:4001",
+    "tls": false,
     "settings": {
       "codePage": "german",
     },

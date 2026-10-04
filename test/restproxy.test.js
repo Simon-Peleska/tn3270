@@ -61,6 +61,7 @@ async function startServer(options = {}) {
       b3270: {
         path: "b3270",
         model: options.model ?? 4,
+        tls: false,
         ...(options.defaultHost ? { defaultHost: options.defaultHost } : {}),
       },
       sessions: { idleTimeoutMs: 0 },
