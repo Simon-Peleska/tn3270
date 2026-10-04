@@ -316,6 +316,16 @@ test("the character picker rejects an unavailable code page and permits hex 40 s
   assert.deepEqual(calls.characters, [" "]);
 });
 
+test("the character picker refuses hex 41, the required space", () => {
+  const { panels, calls, setCodePage } = fixture();
+  setCodePage("cp273");
+  panels.openChars();
+  assert.equal(panels.chooseCharacterByte(0x41), false);
+  assert.equal(panels.chooseCharacterAt(4, 38), false);
+  assert.match(screenOf(panels).join("\n"), /\[E5035\]/);
+  assert.deepEqual(calls.characters, []);
+});
+
 test("open sessions lists creator and start time, and J or E joins the selected session", async () => {
   const { panels, calls } = fixture();
   panels.open("menu");
