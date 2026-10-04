@@ -63,9 +63,7 @@ async function currentRevision() {
     }
 
     const packed = await readFile(join(dir, "packed-refs"), "utf8");
-    const line = packed
-      .split(/\r?\n/)
-      .find((line) => line.endsWith(` ${ref}`));
+    const line = packed.split(/\r?\n/).find((line) => line.endsWith(` ${ref}`));
 
     return line?.split(" ")[0] ?? "unknown";
   } catch {
