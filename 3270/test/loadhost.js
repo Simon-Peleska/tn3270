@@ -38,8 +38,18 @@ const server = createServer((socket) => {
   let pending = "";
   socket.on("data", (chunk) => {
     pending += chunk.toString("latin1");
-    const records = pending.split("\xff\xef");
-    pending = records.pop() ?? "";
+    // TELNET doubles 0xff in data, as in sequence number 255, so IAC pairs are
+    // read left to right: an EOR right after a doubled 0xff still ends the record.
+    const records = [];
+    let start = 0;
+    for (const iac of pending.matchAll(/\xff([\xff\xef])/g)) {
+      if (iac[1] !== "\xef") continue;
+      records.push(
+        pending.slice(start, iac.index).replaceAll("\xff\xff", "\xff"),
+      );
+      start = iac.index + 2;
+    }
+    pending = pending.slice(start);
     for (const record of records) {
       // A 3270-DATA header (type, request and response flags zero, then a sequence number);
       // the first record still carries the client's TELNET replies in front of it.

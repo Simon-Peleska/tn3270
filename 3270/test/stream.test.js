@@ -32,6 +32,22 @@ test(
     ]),
 );
 
+test(
+  "several actions in one run stream like b3270",
+  {
+    skip: noB3270,
+    timeout: 20_000,
+    todo: "b3270 sends fewer, differently cut screen updates within a run than node3270",
+  },
+  () =>
+    compare("three-fields.trc", [
+      ["run", ["String", "abc"], ["Tab"], ["String", "xy"]],
+      ["run", ["Home"], ["String", "def"], ["BackTab"], ["Tab"], ["EraseEOF"]],
+      ["run", ["Home"], ["String", "HELLO"], ["Enter"]],
+      ["run", ["Tab"], ["String", "q"], ["PF", 3]],
+    ]),
+);
+
 describe("traces", { concurrency: 16 }, () => {
   for (const trace of readdirSync(TRACES).filter((name) =>
     name.endsWith(".trc"),

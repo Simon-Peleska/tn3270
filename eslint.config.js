@@ -11,6 +11,7 @@ export default [
       "test/**/*.mjs",
       "3270/**/*.js",
       "3270/**/*.mjs",
+      "scripts/*.mjs",
       "vendor/*.js",
     ],
     languageOptions: {

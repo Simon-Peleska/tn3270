@@ -15,8 +15,9 @@ Out of scope for this build: file transfer (IND$FILE), printer sessions
 
 A **session** is one emulator and one host connection: one screen, one host
 connection, one keyboard. The emulator is node3270 (`3270/`), a port of x3270's
-`b3270 -json` that runs in the server's own process; the sessions are spread
-over a pool of worker threads, so they share the machine's cores.
+`b3270 -json` that runs in the server's own process. Each session lives whole
+on one of a pool of worker threads, so they share the machine's cores; the main
+thread only serves HTTP and passes websocket frames to and from them.
 
 One page holds up to **4** sessions at once and shows one, two, three or four of
 them side by side (§5, `Ctrl-B`). Every session it holds keeps its WebSocket open
@@ -36,7 +37,7 @@ at it; `Ctrl-B` and a digit does the same from the keyboard.
 | A digit with no session behind it is pressed | A session is created for that slot and appended to the fragment (`E5006` if the server refuses)                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | Browser reloads or the network drops         | The session is untouched. The page shows the disconnect and retries with exponential backoff and jitter, asking `/api/sessions` before each attempt. It keeps waiting while the server does not answer. Once the server answers, it reattaches if the session still exists, or creates a new one if the server has reaped it (`E5014` if that fails). The reconnected page reloads itself, so a server that came back with newer page code is picked up; the fragment still names the same sessions, so it reattaches to them |
 | Last viewer detaches                         | The session is kept alive for `sessions.idleTimeoutMs`, then closed. A viewer attaching inside that window cancels the reaping                                                                                                                                                                                                                                                                                                                                                                                                |
-| The emulator's thread dies                   | The session closes and every viewer is told (`E2007`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| A session thread dies                        | Its sessions close and every viewer is told (`E3016`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 Sharing the URL is how a session is shared: there is no invite step, and sharing
 a page that holds four sessions shares all four. But nobody gets in on the URL
@@ -427,7 +428,8 @@ action outside it is refused with `E4002` and never reaches the emulator.
 
 One WebSocket at `/ws/<session-id>`.
 
-**Server → browser.** Text frames only, each an object with a `type`:
+**Server → browser.** Text frames only, each an object with a `type`, or an
+array of them when one moment produced several (a paint and the status with it):
 
 ```jsonc
 {"type":"hello","sessionId":"…","rows":43,"cols":80,"model":4,"oversize":"","models":[{"model":2,"rows":24,"columns":80}],"role":"controller","owner":true,"pass":"…","viewers":1,"idleTimeoutMs":300000}
@@ -519,7 +521,7 @@ and in the page. The blocks are subsystems, and a code belongs to the subsystem
 that decides it is an error rather than to the file that throws it: `E1xxx`
 config, `E2xxx` the emulator, `E3xxx` session, `E4xxx` client messages, `E5xxx`
 browser, `E6xxx` server transport. Retired codes — `E2001`–`E2003` and `E2006`
-of the old b3270 child process, `E7xxx` of the old REST proxy — are not reused.
+of the old b3270 child process, `E2007` of the old emulator thread pool, `E7xxx` of the old REST proxy — are not reused.
 
 | Code    | Meaning                                                |
 | ------- | ------------------------------------------------------ |
@@ -532,7 +534,6 @@ of the old b3270 child process, `E7xxx` of the old REST proxy — are not reused
 | `E1007` | Config section was renamed (`b3270` is now `emulator`) |
 | `E2004` | Emulator reported a protocol error                     |
 | `E2005` | Emulator action failed                                 |
-| `E2007` | Emulator worker thread died                            |
 | `E3001` | Session not found                                      |
 | `E3002` | Session limit reached                                  |
 | `E3003` | Session has too many viewers                           |
@@ -547,6 +548,7 @@ of the old b3270 child process, `E7xxx` of the old REST proxy — are not reused
 | `E3013` | Session input queue is full                            |
 | `E3014` | Only the session's owner may terminate it              |
 | `E3015` | Session terminated by its owner                        |
+| `E3016` | Session worker thread died                             |
 | `E4001` | WebSocket message was not valid JSON                   |
 | `E4002` | WebSocket message had an unknown type                  |
 | `E4003` | Pasted text is too large to type into a screen         |

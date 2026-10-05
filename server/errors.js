@@ -13,7 +13,7 @@ export const ERRORS = Object.freeze({
   // E2001-E2003 and E2006 were the b3270 child process's, which is gone. Retired, not free.
   E2004: "Emulator reported a protocol error",
   E2005: "Emulator action failed",
-  E2007: "Emulator worker thread died",
+  // E2007 was the emulator thread pool's, which sessions no longer use. Retired, not free.
 
   E3001: "Session not found",
   E3002: "Session limit reached",
@@ -30,6 +30,7 @@ export const ERRORS = Object.freeze({
   E3013: "Session input queue is full",
   E3014: "Only the session's owner may terminate it",
   E3015: "Session terminated by its owner",
+  E3016: "Session worker thread died",
 
   E4001: "WebSocket message was not valid JSON",
   E4002: "WebSocket message had an unknown type",

@@ -1,12 +1,10 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize, resolve } from "node:path";
-import { randomUUID } from "node:crypto";
 import { WebSocketServer } from "../vendor/ws.mjs";
 import { loadConfig } from "./config.js";
 import { setLogFile, setLogLevel, logger } from "./log.js";
 import { SessionRegistry } from "./registry.js";
-import { parseClientMessage } from "./protocol.js";
 import { AppError, describeError } from "./errors.js";
 import { checkVendoredWs } from "./vendorcheck.js";
 
@@ -200,20 +198,13 @@ async function handleRequest(req, res) {
   }
 
   if (path === "/api/sessions" && req.method === "POST") {
-    const session = registry.create(client);
-    await session.ready;
-    sendJson(res, 201, {
-      id: session.id,
-      rows: session.screen.rows,
-      cols: session.screen.cols,
-      model: session.model,
-    });
+    sendJson(res, 201, await registry.create(client));
     return;
   }
 
   const terminateMatch = /^\/api\/sessions\/([0-9a-fA-F-]{36})$/.exec(path);
   if (terminateMatch !== null && req.method === "DELETE") {
-    registry.terminate(
+    await registry.terminate(
       String(terminateMatch[1]),
       header(req, "x-session-pass"),
     );
@@ -224,7 +215,7 @@ async function handleRequest(req, res) {
 
   if (path === "/api/sessions" && req.method === "GET") {
     sendJson(res, 200, {
-      sessions: registry.list(),
+      sessions: await registry.list(),
       defaultHost: config.emulator.defaultHost,
     });
     return;
@@ -272,10 +263,9 @@ server.on("upgrade", (req, socket, head) => {
     return;
   }
 
-  /** @type {import('./session.js').Session} */
-  let session;
+  const id = String(match[1]);
   try {
-    session = registry.get(String(match[1]));
+    registry.threadOf(id);
   } catch (err) {
     const { code, summary } = describeError(err);
     log.error(err, { path: url.pathname, ...client });
@@ -288,76 +278,67 @@ server.on("upgrade", (req, socket, head) => {
 
   const pass = url.searchParams.get("pass") ?? undefined;
   wss.handleUpgrade(req, socket, head, (ws) =>
-    attachViewer(session, ws, client, pass),
+    attachViewer(id, ws, client, pass),
   );
 });
 
 /**
- * @param {import('./session.js').Session} session
+ * The session itself runs on a worker thread: this only passes frames to it and its
+ * messages, serialized there, back out.
+ *
+ * @param {string} id
  * @param {import('ws').WebSocket} ws
  * @param {{ ip: string, user: string }} client
  * @param {string | undefined} pass from an earlier hello: the owner's, or a guest's let in before
  * @returns {void}
  */
-function attachViewer(session, ws, client, pass) {
-  /** @type {import('./session.js').Viewer} */
-  const viewer = {
-    id: randomUUID().slice(0, 8),
-    role: "observer",
-    ip: client.ip,
-    user: client.user,
-    pass,
-    sendMessage(message) {
-      if (ws.readyState !== ws.OPEN) return;
-      if (ws.bufferedAmount > MAX_VIEWER_BUFFERED_BYTES) {
-        viewerLog.error(new AppError("E6010", viewer.id), {
-          bufferedBytes: ws.bufferedAmount,
-        });
-        ws.close(1013, "E6010");
-        return;
-      }
-      ws.send(JSON.stringify(message));
-    },
-    close(code = 1008, reason = "refused") {
-      ws.close(code, reason);
-    },
-  };
-
-  const viewerLog = log.with({
-    session: session.id,
-    viewer: viewer.id,
-    ...client,
-  });
-
+function attachViewer(id, ws, client, pass) {
+  /** @type {ReturnType<SessionRegistry["attach"]>} */
+  let viewer;
   try {
-    session.attach(viewer);
+    viewer = registry.attach(id, client, pass, {
+      send(text) {
+        if (ws.readyState !== ws.OPEN) return;
+        if (ws.bufferedAmount > MAX_VIEWER_BUFFERED_BYTES) {
+          viewerLog.error(new AppError("E6010", viewer.viewerId), {
+            bufferedBytes: ws.bufferedAmount,
+          });
+          ws.close(1013, "E6010");
+          return;
+        }
+        ws.send(text);
+      },
+      close(code, reason) {
+        ws.close(code, reason);
+      },
+    });
   } catch (err) {
     const { code, summary } = describeError(err);
-    viewerLog.error(err);
-    viewer.sendMessage({ type: "error", code, message: summary });
+    log.error(err, { session: id, ...client });
+    ws.send(JSON.stringify({ type: "error", code, message: summary }));
     ws.close(1013, code);
     return;
   }
 
+  const viewerLog = log.with({
+    session: id,
+    viewer: viewer.viewerId,
+    ...client,
+  });
+
   ws.on("message", (data, isBinary) => {
     if (isBinary) return;
-    try {
-      session.handleClientMessage(viewer, parseClientMessage(String(data)));
-    } catch (err) {
-      const { code, summary } = describeError(err);
-      viewerLog.warn("bad client message", { code, summary });
-      viewer.sendMessage({ type: "error", code, message: summary });
-    }
+    viewer.message(String(data));
   });
 
   ws.on("close", (code, reason) => {
     viewerLog.info("viewer socket closed", { code, reason: String(reason) });
-    session.detach(viewer);
+    viewer.detach();
   });
 
   ws.on("error", (cause) => {
-    viewerLog.error(new AppError("E6003", viewer.id, cause));
-    session.detach(viewer);
+    viewerLog.error(new AppError("E6003", viewer.viewerId, cause));
+    viewer.detach();
   });
 }
 

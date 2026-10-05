@@ -17,9 +17,20 @@ function row(picture) {
   );
 }
 
+/**
+ * @param {{ ch: string, editable: boolean }[]} cells
+ * @param {boolean} formatted
+ * @param {number} cols
+ * @param {{ row: number, col: number }} cursor
+ */
+function snapshotOf(cells, formatted, cols, cursor) {
+  const inputCells = cells.flatMap((cell, i) => (cell.editable ? [i] : []));
+  return editableSnapshot(cells, inputCells, formatted, cols, cursor);
+}
+
 test("a snapshot is one run per field, placed by row and column", () => {
   const cells = row(" abc ___ ___");
-  const snapshot = editableSnapshot(cells, true, 12, { row: 0, col: 4 });
+  const snapshot = snapshotOf(cells, true, 12, { row: 0, col: 4 });
   assert.deepEqual(snapshot?.runs, [
     { row: 0, col: 1, text: "abc" },
     { row: 0, col: 5, text: "   " },
@@ -29,10 +40,10 @@ test("a snapshot is one run per field, placed by row and column", () => {
 });
 
 test("the key follows the text and the layout follows the geometry, so typing is a new state in the same screen", () => {
-  const before = editableSnapshot(row(" abc ___"), true, 8, { row: 0, col: 4 });
-  const typed = editableSnapshot(row(" abc _x_"), true, 8, { row: 0, col: 6 });
-  const moved = editableSnapshot(row(" abc ___"), true, 8, { row: 0, col: 1 });
-  const relaid = editableSnapshot(row(" ab ____"), true, 8, { row: 0, col: 4 });
+  const before = snapshotOf(row(" abc ___"), true, 8, { row: 0, col: 4 });
+  const typed = snapshotOf(row(" abc _x_"), true, 8, { row: 0, col: 6 });
+  const moved = snapshotOf(row(" abc ___"), true, 8, { row: 0, col: 1 });
+  const relaid = snapshotOf(row(" ab ____"), true, 8, { row: 0, col: 4 });
 
   assert.notEqual(typed?.key, before?.key, "typing changes the key");
   assert.equal(typed?.layout, before?.layout, "typing leaves the layout alone");
@@ -43,7 +54,7 @@ test("the key follows the text and the layout follows the geometry, so typing is
 test("a field wrapping the end of the screen is one run, taken from where it starts", () => {
   // The last field starts on row 1 and carries on over the end into row 0.
   const cells = [...row("yzP___PP"), ...row("PPPPwx__")];
-  const snapshot = editableSnapshot(cells, true, 8, { row: 0, col: 0 });
+  const snapshot = snapshotOf(cells, true, 8, { row: 0, col: 0 });
   assert.deepEqual(snapshot?.runs, [
     { row: 0, col: 3, text: "   " },
     { row: 1, col: 4, text: "wx  yz" },
@@ -51,14 +62,11 @@ test("a field wrapping the end of the screen is one run, taken from where it sta
 });
 
 test("an unformatted screen has no fields to track", () => {
-  assert.equal(
-    editableSnapshot(row("abc"), false, 3, { row: 0, col: 0 }),
-    null,
-  );
+  assert.equal(snapshotOf(row("abc"), false, 3, { row: 0, col: 0 }), null);
 });
 
 test("only the runs that differ are put back, and a run whose field is gone is left alone", () => {
-  const snapshot = editableSnapshot(row(" abc def ghi"), true, 12, {
+  const snapshot = snapshotOf(row(" abc def ghi"), true, 12, {
     row: 0,
     col: 1,
   });

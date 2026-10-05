@@ -45,7 +45,8 @@ export function normalize(kind, body) {
 /**
  * A b3270 or our Session behind the same small interface: run() resolves with the run-result,
  * and lines holds the normalized indications so far.
- * @typedef {{lines: string[], run: (action: string, args?: (string | number)[]) => Promise<any>, waitFor: (line: string) => Promise<void>, stop: () => void}} Emulator
+ * @typedef {{lines: string[], run: (action: string | (string | number)[][], args?: (string | number)[]) => Promise<any>, waitFor: (line: string) => Promise<void>, stop: () => void}} Emulator
+ * @typedef {[string, ...(string | number)[]] | ["run", ...[string, ...(string | number)[]][]]} Step
  */
 
 /** @returns {Emulator} */
@@ -71,9 +72,9 @@ export function startB3270() {
       }
     });
     return {
-      send: (tag, action, args) =>
+      send: (tag, actions) =>
         child.stdin.write(
-          `${JSON.stringify({ run: { actions: [{ action, args }], "r-tag": tag } })}\n`,
+          `${JSON.stringify({ run: { actions, "r-tag": tag } })}\n`,
         ),
       stop: () => {
         child.stdin.end();
@@ -97,22 +98,7 @@ export function startOurs() {
       if (kind === "run-result") results.get(body["r-tag"])?.(body);
     });
     return {
-      send: (tag, action, args) => void session.run([{ action, args }], tag),
-      stop: () => session.close(),
-    };
-  });
-}
-
-/** startOurs() with the session on a SessionPool thread. @param {import("../src/index.js").SessionPool} pool @returns {Emulator} */
-export function startPooled(pool) {
-  const session = pool.session({ model: "3279-4-E" });
-  return track((push, results) => {
-    session.indications(({ kind, body }) => {
-      push(kind, body);
-      if (kind === "run-result") results.get(body["r-tag"])?.(body);
-    });
-    return {
-      send: (tag, action, args) => void session.run([{ action, args }], tag),
+      send: (tag, actions) => void session.run(actions, tag),
       stop: () => session.close(),
     };
   });
@@ -120,7 +106,7 @@ export function startPooled(pool) {
 
 /**
  * @param {(push: (kind: string, body: any) => void, results: Map<string, (r: any) => void>,
- *   died: (error: Error) => void) => {send: (tag: string, action: string, args: (string | number)[]) => void, stop: () => void}} start
+ *   died: (error: Error) => void) => {send: (tag: string, actions: {action: string, args: (string | number)[]}[]) => void, stop: () => void}} start
  * @returns {Emulator}
  */
 function track(start) {
@@ -165,10 +151,19 @@ function track(start) {
   let tags = 0;
   return {
     lines,
+    /** One run of one action, or of several when `action` is a list of [name, ...args]. @param {string | (string | number)[][]} action @param {(string | number)[]} [args] */
     run(action, args = []) {
       const tag = String(tags++);
       const done = wait((resolve) => results.set(tag, resolve));
-      send(tag, action, args);
+      send(
+        tag,
+        typeof action === "string"
+          ? [{ action, args }]
+          : action.map(([name, ...rest]) => ({
+              action: String(name),
+              args: rest,
+            })),
+      );
       return done;
     },
     waitFor(line) {
@@ -240,8 +235,9 @@ export function telnetUnits(payloads) {
  * Connects to a host replaying the trace one telnet unit at a time, so both emulators
  * see the same reads, then runs the actions and disconnects.
  * Besides actions, steps can be ["host", hex] to send the emulator bytes, ["hostClose"] to hang up,
- * ["+Action", ...args] to start an action without waiting for it, and ["await"] to wait for those.
- * @param {Emulator} emulator @param {string} trace @param {[string, ...(string | number)[]][]} actions
+ * ["+Action", ...args] to start an action without waiting for it, ["await"] to wait for those, and
+ * ["run", [Action, ...args], [Action, ...args], ...] to run several actions as one run.
+ * @param {Emulator} emulator @param {string} trace @param {Step[]} actions
  * @param {[string, ...(string | number)[]][]} [setup] actions before connecting
  * @param {string | ((port: number) => Promise<string>)} [target] what to Open, with PORT
  *   for the host's port, or a function of that port
@@ -292,7 +288,10 @@ export async function scenario(
         continue;
       }
       let finished = false;
-      const done = emulator.run(name, args);
+      const done =
+        name === "run"
+          ? emulator.run(/** @type {(string | number)[][]} */ (args))
+          : emulator.run(name, /** @type {(string | number)[]} */ (args));
       const finish = () => {
         finished = true;
         host.wake();
@@ -330,7 +329,7 @@ export async function scenario(
 }
 
 /**
- * @param {string} trace @param {[string, ...(string | number)[]][]} actions
+ * @param {string} trace @param {Step[]} actions
  * @param {[string, ...(string | number)[]][]} [setup]
  * @param {string | ((port: number) => Promise<string>)} [target]
  */

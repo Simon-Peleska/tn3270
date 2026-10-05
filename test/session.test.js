@@ -1264,7 +1264,9 @@ test("undo takes the typing back out a step at a time, and redo puts it back", a
 });
 
 test("typing the instant the field map arrives is still a step to undo", async (t) => {
-  const fixture = await startTracedSession("test/traces/three-fields.trc");
+  const fixture = await startTracedSession("test/traces/three-fields.trc", {
+    records: 0,
+  });
   t.after(() => fixture.close());
   const { session } = fixture;
   const controller = collectingViewer("controller");
@@ -1282,6 +1284,7 @@ test("typing the instant the field map arrives is still a step to undo", async (
     typed = true;
     session.handleClientMessage(controller, { type: "text", value: "abc" });
   };
+  await fixture.host.sendRecords(1);
   await waitUntil(() => row() === " abc        ", "the typing to land");
   await waitUntil(() => session.undoStack.length === 1, "a step of history");
 });
@@ -1417,12 +1420,13 @@ test("fitting the screen under a live connection drops it and reopens the same h
   assert.equal(session.lastHost, expectedHost);
 });
 
-test("the registry refuses to exceed maxSessions", () => {
+test("the registry refuses to exceed maxSessions", async (t) => {
   const registry = new SessionRegistry(
     testConfig({ sessions: { maxSessions: 1, idleTimeoutMs: 0 } }),
   );
-  registry.create();
-  assert.throws(
+  t.after(() => registry.stop());
+  await registry.create();
+  await assert.rejects(
     () => registry.create(),
     (err) => {
       assert.ok(err instanceof AppError);
@@ -1430,13 +1434,13 @@ test("the registry refuses to exceed maxSessions", () => {
       return true;
     },
   );
-  registry.closeAll();
 });
 
-test("an unknown session id is a stable error, not a crash", () => {
+test("an unknown session id is a stable error, not a crash", async (t) => {
   const registry = new SessionRegistry(testConfig());
-  assert.throws(
-    () => registry.get("nope"),
+  t.after(() => registry.stop());
+  await assert.rejects(
+    () => registry.terminate("nope", ""),
     (err) => {
       assert.ok(err instanceof AppError);
       assert.equal(err.code, "E3001");
@@ -1445,13 +1449,50 @@ test("an unknown session id is a stable error, not a crash", () => {
   );
 });
 
-test("a closed session removes itself from the registry", async () => {
+test("a session's errors keep their code across the thread", async (t) => {
   const registry = new SessionRegistry(testConfig());
-  const session = registry.create();
-  await session.ready;
-  assert.equal(registry.list().length, 1);
-  session.close();
-  assert.equal(registry.list().length, 0);
+  t.after(() => registry.stop());
+  const { id } = await registry.create();
+  await assert.rejects(
+    () => registry.terminate(id, "not the owner's pass"),
+    (err) => {
+      assert.ok(err instanceof AppError);
+      assert.equal(err.code, "E3014");
+      return true;
+    },
+  );
+});
+
+test("a closed session removes itself from the registry", async (t) => {
+  const registry = new SessionRegistry(testConfig());
+  t.after(() => registry.stop());
+  await registry.create();
+  assert.equal((await registry.list()).length, 1);
+  registry.closeAll();
+  await waitUntil(() => registry.sessions.size === 0, "the session to close");
+  assert.equal((await registry.list()).length, 0);
+});
+
+test("a dying session thread tells its viewers and forgets its sessions", async (t) => {
+  const registry = new SessionRegistry(testConfig());
+  t.after(() => registry.stop());
+  const { id } = await registry.create();
+  /** @type {string[]} */
+  const sent = [];
+  /** @type {Array<[number, string]>} */
+  const closed = [];
+  registry.attach(id, { ip: "127.0.0.1", user: "" }, undefined, {
+    send: (text) => sent.push(text),
+    close: (code, reason) => closed.push([code, reason]),
+  });
+  await waitUntil(() => sent.length > 0, "the session to greet the viewer");
+
+  await registry.threadOf(id).worker.terminate();
+
+  await waitUntil(() => closed.length > 0, "the viewer to be closed");
+  assert.deepEqual(closed, [[1011, "E3016"]]);
+  assert.equal([JSON.parse(sent.at(-1) ?? "")].flat().at(-1).code, "E3016");
+  assert.equal(registry.sessions.size, 0);
 });
 
 test("the field map is read on every session, and rides the paint as a flag", async (t) => {
@@ -1675,10 +1716,7 @@ test("Stop acknowledges a recorded cursor move without waiting for the host", as
 
   const controller = collectingViewer("controller");
   session.attach(controller);
-  await waitUntil(
-    () => !session.fieldsStale && session.fieldReadTag === null,
-    "the field map",
-  );
+  await waitUntil(() => !session.fieldsStale, "the field map");
   session.handleClientMessage(controller, {
     type: "recorder",
     action: "start",
@@ -1705,10 +1743,7 @@ test("Stop acknowledges immediately even when typing is queued behind a busy hos
 
   const controller = collectingViewer("controller");
   session.attach(controller);
-  await waitUntil(
-    () => !session.fieldsStale && session.fieldReadTag === null,
-    "the field map",
-  );
+  await waitUntil(() => !session.fieldsStale, "the field map");
   session.handleClientMessage(controller, {
     type: "recorder",
     action: "start",

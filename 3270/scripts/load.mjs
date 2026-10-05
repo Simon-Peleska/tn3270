@@ -1,7 +1,7 @@
 // Load test: many simulated users on one node3270 process, all working at the same time.
-//   node --expose-gc scripts/load.mjs [--sessions 1000] [--seconds 20] [--think 0] [--hosts 4] [--workers 0]
+//   node --expose-gc scripts/load.mjs [--sessions 1000] [--seconds 20] [--think 0] [--hosts 4]
 // --think is each user's mean pause in ms between operations; 0 runs every user flat out,
-// which finds the saturation point. --workers N spreads the sessions over N threads; 0 keeps them here. Prints a line per second, then the totals; exits 1 on any error.
+// which finds the saturation point. The whole server is measured by the top-level scripts/load.mjs. Prints a line per second, then the totals; exits 1 on any error.
 import { parseArgs } from "node:util";
 import { load } from "../test/load.js";
 
@@ -11,7 +11,6 @@ const { values } = parseArgs({
     seconds: { type: "string", default: "20" },
     think: { type: "string", default: "0" },
     hosts: { type: "string", default: "4" },
-    workers: { type: "string", default: "0" },
   },
 });
 
@@ -21,7 +20,6 @@ const stats = await load({
   seconds: Number(values.seconds),
   thinkMs: Number(values.think),
   hosts: Number(values.hosts),
-  workers: Number(values.workers),
   onTick: (tick) =>
     console.log(
       `  ${String(tick.second).padStart(3)} s  ${String(tick.operations).padStart(6)} ops/s  ` +

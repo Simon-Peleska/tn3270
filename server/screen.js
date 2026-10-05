@@ -1,4 +1,5 @@
 import { AppError } from "./errors.js";
+import { fieldMap } from "./fields.js";
 
 /**
  * @typedef {object} Cell
@@ -6,7 +7,7 @@ import { AppError } from "./errors.js";
  * @property {string | null} fg Host colour name, or null for the screen default.
  * @property {string | null} bg
  * @property {string | null} gr Comma-separated graphic rendition, or null.
- * @property {boolean} editable From a ReadBuffer, not from screen indications.
+ * @property {boolean} editable From the emulator's field attributes, not from screen indications.
  */
 
 /**
@@ -45,8 +46,14 @@ export class ScreenModel {
     this.fieldsFormatted = false;
     /** @type {boolean[]} Row-major. Non-display fields: a password is typed here. */
     this.fieldsHidden = [];
+    /** @type {number[]} Where the editable cells are, ascending. */
+    this.inputCells = [];
+    /** @type {Uint8Array | null} The emulator's field attributes the above came from. */
+    this.fieldAttributes = null;
     /** @type {Set<number>} */
     this.dirtyRows = new Set();
+    /** @type {number} Goes up with every change to a cell. */
+    this.version = 0;
     /** @type {boolean} A cursor move touches no row, so it is tracked apart. */
     this.cursorMoved = false;
 
@@ -66,11 +73,14 @@ export class ScreenModel {
     this.moveCursor(0, 0, this.cursor.enabled);
     this.fieldsFormatted = false;
     this.fieldsHidden = [];
+    this.inputCells = [];
+    this.fieldAttributes = null;
     this.markAllDirty();
   }
 
   /** @returns {void} */
   markAllDirty() {
+    this.version++;
     for (let row = 0; row < this.rows; row++) this.dirtyRows.add(row);
   }
 
@@ -127,8 +137,26 @@ export class ScreenModel {
     }
     this.fieldsFormatted = false;
     this.fieldsHidden = [];
+    this.inputCells = [];
+    this.fieldAttributes = null;
     this.moveCursor(0, 0, this.cursor.enabled);
     this.markAllDirty();
+  }
+
+  /**
+   * The fields as the emulator holds them, one attribute per cell (0 for none).
+   * They seldom change between two screen updates, and mapping them is a walk
+   * over every cell, so an unchanged copy is skipped.
+   *
+   * @param {Uint8Array} fa row-major
+   * @returns {void}
+   */
+  applyFieldAttributes(fa) {
+    const last = this.fieldAttributes;
+    if (last !== null && Buffer.compare(last, fa) === 0) return;
+    this.fieldAttributes = fa.slice();
+    const { editable, hidden, formatted } = fieldMap(fa);
+    this.applyFields(editable, hidden, formatted);
   }
 
   /**
@@ -146,12 +174,16 @@ export class ScreenModel {
     if (formatted !== this.fieldsFormatted) this.markAllDirty();
     this.fieldsFormatted = formatted;
     this.fieldsHidden = hidden;
+    this.inputCells = [];
     for (let i = 0; i < this.cells.length; i++) {
       const cell = this.cells[i];
       const next = editable[i] ?? false;
-      if (cell === undefined || cell.editable === next) continue;
+      if (cell === undefined) continue;
+      if (next) this.inputCells.push(i);
+      if (cell.editable === next) continue;
       cell.editable = next;
       this.dirtyRows.add(Math.floor(i / this.cols));
+      this.version++;
     }
   }
 
@@ -226,7 +258,10 @@ export class ScreenModel {
           if (change.gr !== undefined)
             cell.gr = change.gr === "" ? null : change.gr;
         }
-        if (span > 0) this.dirtyRows.add(y);
+        if (span > 0) {
+          this.dirtyRows.add(y);
+          this.version++;
+        }
       }
     }
 

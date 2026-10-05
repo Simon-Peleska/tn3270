@@ -926,7 +926,9 @@ function connectSocket(slot) {
 
   ws.addEventListener("message", (event) => {
     try {
-      handleServerMessage(slot, JSON.parse(String(event.data)));
+      const frame = JSON.parse(String(event.data));
+      for (const message of Array.isArray(frame) ? frame : [frame])
+        handleServerMessage(slot, message);
     } catch (cause) {
       showError(
         "E5037",

@@ -17,6 +17,7 @@ import {
   DBCS_RIGHT,
   DBCS_RIGHT_WRAP,
   FA_INTENSITY,
+  FA_MODIFY,
   FA_PROTECT,
   dbcsState,
   erase,
@@ -148,6 +149,8 @@ export function createUi(size, out) {
     lastCols: 0,
     savedEa: newCells(size),
     savedEmpty: false,
+    savedFormatted: false,
+    savedScrolled: false,
     saved: createRendered(size),
     fresh: createRendered(size),
     sentBaddr: 0,
@@ -295,10 +298,15 @@ function saveEmpty(ui, s) {
   ui.savedRows = s.rows;
   ui.savedCols = s.cols;
   ui.savedEmpty = true;
-  ui.saved.cc.fill(0x20);
-  ui.saved.fg.fill(s.mode3279 ? BLUE : NEUTRAL_WHITE);
-  ui.saved.bg.fill(NEUTRAL_BLACK);
-  ui.saved.gr.fill(0);
+  blank(s, ui.saved);
+}
+
+/** @param {State} s @param {Rendered} r */
+function blank(s, r) {
+  r.cc.fill(0x20);
+  r.fg.fill(s.mode3279 ? BLUE : NEUTRAL_WHITE);
+  r.bg.fill(NEUTRAL_BLACK);
+  r.gr.fill(0);
 }
 
 /** @param {State} s @param {number} rows @param {number} cols */
@@ -363,23 +371,36 @@ const VISIBLE_FA = "0123456789ABCDEFGHIJKLMNOPQRSTUV";
 /** visible_fa(): protect, numeric, intensity and modify as one digit. @param {number} fa */
 const visibleFaIndex = (fa) => ((fa & 0x3c) >> 1) | (fa & 0x01);
 
-/** render_screen() @param {State} s @param {Rendered} r */
-function render(s, r) {
-  r.cc.fill(0x20);
-  r.fg.fill(s.mode3279 ? BLUE : NEUTRAL_WHITE);
-  r.bg.fill(NEUTRAL_BLACK);
-  r.gr.fill(0);
-
-  const faAddr = findFieldAttribute(s, 0);
-  let fa = faAt(s, faAddr);
-  const at = (/** @type {Uint8Array} */ arr) => (faAddr < 0 ? 0 : arr[faAddr]);
-  let faFg = at(s.fg) ? at(s.fg) & 0x0f : colorFromFa(s, fa);
-  let faBg = at(s.bg) ? at(s.bg) & 0x0f : NEUTRAL_BLACK;
-  let faHigh = at(s.gr) & GR_INTENSIFY ? true : isHigh(fa);
-  let faGr = at(s.gr);
-  let faCs = at(s.cs);
+/** render_screen(), for the rows flagged in `dirty` (all when null); the others keep what `r` holds. @param {State} s @param {Rendered} r @param {Uint8Array | null} dirty */
+function render(s, r, dirty) {
+  if (!dirty) blank(s, r);
+  let fa = 0,
+    faFg = 0,
+    faBg = 0,
+    faHigh = false,
+    faGr = 0,
+    faCs = 0;
+  let fieldKnown = false;
 
   for (let i = 0; i < s.rows * s.cols; i++) {
+    const row = (i / s.cols) | 0;
+    if (dirty && !dirty[row]) {
+      i += s.cols - 1;
+      fieldKnown = false;
+      continue;
+    }
+    if (!fieldKnown) {
+      const faAddr = findFieldAttribute(s, i);
+      fa = faAt(s, faAddr);
+      const at = (/** @type {Uint8Array} */ arr) =>
+        faAddr < 0 ? 0 : arr[faAddr];
+      faFg = at(s.fg) ? at(s.fg) & 0x0f : colorFromFa(s, fa);
+      faBg = at(s.bg) ? at(s.bg) & 0x0f : NEUTRAL_BLACK;
+      faHigh = at(s.gr) & GR_INTENSIFY ? true : isHigh(fa);
+      faGr = at(s.gr);
+      faCs = at(s.cs);
+      fieldKnown = true;
+    }
     let uc;
     let cs;
     let dbcs = false,
@@ -457,7 +478,7 @@ function render(s, r) {
     if (!s.fa[i] && gr & GR_REVERSE) [fgColor, bgColor] = [bgColor, fgColor];
     const high = gr & GR_INTENSIFY ? true : faHigh;
 
-    const si = ((i / s.cols) | 0) * s.maxCols + (i % s.cols);
+    const si = row * s.maxCols + (i % s.cols);
     const visibleFa = s.options.visibleControl && s.fa[i] !== 0;
     r.cc[si] = visibleFa ? VISIBLE_FA.charCodeAt(visibleFaIndex(s.fa[i])) : uc;
     r.fg[si] = s.mode3279 ? fgColor : NEUTRAL_WHITE;
@@ -597,21 +618,49 @@ function emitCursor(ui, s) {
   if (cursor) ui.out("screen", { cursor });
 }
 
-/** @param {State} s @param {Ui} ui */
-function eaSame(s, ui) {
+/**
+ * Compares the cells with the last render: which rows differ, and whether a change may show
+ * beyond its own row. Null when the screen size differs.
+ * @param {State} s @param {Ui} ui
+ */
+function compareSaved(s, ui) {
+  if (ui.savedRows !== s.rows || ui.savedCols !== s.cols) return null;
+  const rows = new Uint8Array(s.rows);
   const n = s.rows * s.cols;
+  const savedFa = ui.savedEa.fa;
   for (const name of CELL_ARRAYS) {
-    const a = s[name];
-    const b = ui.savedEa[name];
-    const bytes = n * a.BYTES_PER_ELEMENT;
-    if (
-      !Buffer.from(a.buffer, a.byteOffset, bytes).equals(
-        Buffer.from(b.buffer, b.byteOffset, bytes),
-      )
-    )
-      return false;
+    const now = s[name];
+    const was = ui.savedEa[name];
+    const nowBytes = Buffer.from(now.buffer, now.byteOffset, now.byteLength);
+    const wasBytes = Buffer.from(was.buffer, was.byteOffset, was.byteLength);
+    const bytes = n * now.BYTES_PER_ELEMENT;
+    if (nowBytes.compare(wasBytes, 0, bytes, 0, bytes) === 0) continue;
+    const fieldLooks =
+      name === "fa" ||
+      name === "fg" ||
+      name === "bg" ||
+      name === "gr" ||
+      name === "cs";
+    const rowBytes = s.cols * now.BYTES_PER_ELEMENT;
+    for (let row = 0; row < s.rows; row++) {
+      const start = row * rowBytes;
+      const end = start + rowBytes;
+      if (nowBytes.compare(wasBytes, start, end, start, end) === 0) continue;
+      rows[row] = 1;
+      if (!fieldLooks) continue;
+      for (let i = row * s.cols; i < (row + 1) * s.cols; i++) {
+        if (now[i] === was[i] || (!s.fa[i] && !savedFa[i])) continue;
+        // A field attribute's looks carry over to every cell up to the next one; its MDT bit doesn't.
+        const onlyMdt =
+          name === "fa" &&
+          now[i] &&
+          was[i] &&
+          !((now[i] ^ was[i]) & ~FA_MODIFY);
+        if (!onlyMdt) return { rows, spreads: true };
+      }
+    }
   }
-  return true;
+  return { rows, spreads: false };
 }
 
 /** @param {State} s */
@@ -638,12 +687,14 @@ export function screenDisp(s, always = false) {
     saveEmpty(ui, s);
   }
 
-  if (
-    !always &&
-    ui.savedRows === s.rows &&
-    ui.savedCols === s.cols &&
-    eaSame(s, ui)
-  ) {
+  // s.changed is set by every cell write and only cleared by Session.flush() after this has drawn.
+  if (!always && !s.changed && !ui.savedEmpty && !ui.savedScrolled) {
+    emitCursor(ui, s);
+    return;
+  }
+
+  const diff = compareSaved(s, ui);
+  if (!always && diff && !diff.rows.includes(1)) {
     emitCursor(ui, s);
     return;
   }
@@ -665,13 +716,26 @@ export function screenDisp(s, always = false) {
 
   const o = ui.saved;
   const n = ui.fresh;
-  render(s, n);
+  const dirty =
+    !always &&
+    diff &&
+    !diff.spreads &&
+    !ui.savedEmpty &&
+    !ui.savedScrolled &&
+    ui.savedFormatted === s.formatted
+      ? diff.rows
+      : null;
+  if (dirty)
+    for (const name of /** @type {const} */ (["cc", "fg", "bg", "gr"]))
+      n[name].set(o[name]);
+  render(s, n, dirty);
   /** @type {Record<string, any>} */
   const body = {};
   const cursor = cursorChange(ui, s);
   if (cursor) body.cursor = cursor;
   body.rows = [];
   for (let row = 0; row < s.maxRows; row++) {
+    if (dirty && !dirty[row]) continue;
     const base = row * s.maxCols;
     let same = true;
     for (let c = base; c < base + s.maxCols && same; c++)
@@ -688,6 +752,8 @@ export function screenDisp(s, always = false) {
   for (const name of CELL_ARRAYS)
     ui.savedEa[name].set(s[name].subarray(0, size));
   ui.savedEmpty = false;
+  ui.savedFormatted = s.formatted;
+  ui.savedScrolled = false;
   ui.saved = n;
   ui.fresh = o;
   ui.savedRows = s.rows;
@@ -716,6 +782,8 @@ export function screenScroll(s, fg, bg) {
   r.fg.fill(fg & 0x0f, last);
   r.bg.fill(bg & 0x0f, last);
   r.gr.fill(0, last);
+  // The new last row is filled here rather than by render(), so it may not be what render() would draw.
+  ui.savedScrolled = true;
   ui.out("scroll", { fg: COLOR_NAMES[fg & 0x0f], bg: COLOR_NAMES[bg & 0x0f] });
 }
 

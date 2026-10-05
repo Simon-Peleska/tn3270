@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { SessionPool } from "../3270/src/index.js";
-import { fieldMap } from "./readbuffer.js";
+import { Session as Emulator } from "../3270/src/index.js";
 import { editableSnapshot, changedRuns } from "./history.js";
 import { ScreenModel } from "./screen.js";
 import { OiaModel } from "./oia.js";
@@ -47,9 +46,6 @@ const AID_ACTIONS = new Set([
   "SysReq",
   "CursorSelect",
 ]);
-
-/** Every session's emulator, spread over worker threads. @type {SessionPool | null} */
-let pool = null;
 
 /** How a user gets out of a wait for the host, so they never wait in line. */
 const INTERRUPT_ACTIONS = new Set(["Reset", "Attn", "SysReq"]);
@@ -111,13 +107,15 @@ export class Session {
     this.onClosed = null;
     /** @type {boolean} The host redrew since the field map was read. */
     this.fieldsStale = false;
-    /** @type {string | null} The r-tag of the field-map read in flight. */
-    this.fieldReadTag = null;
+    /** @type {boolean} The keyboard's state changed since viewers were told. */
+    this.statusStale = false;
     /** @type {{ steps: import('./protocol.js').RecorderStep[] } | null} */
     this.recording = null;
 
     /** @type {import('./history.js').Snapshot | null} What the fields hold now. */
     this.snapshot = null;
+    /** @type {number} The screen's version when `snapshot` was last compared. */
+    this.snapshotVersion = -1;
     /** @type {import('./history.js').Snapshot[]} States to undo back through. */
     this.undoStack = [];
     /** @type {import('./history.js').Snapshot[]} States undone, to redo forward. */
@@ -145,31 +143,20 @@ export class Session {
       ...config.emulator.settings,
     };
     this.log.info("starting emulator", { options: JSON.stringify(options) });
-    pool ??= new SessionPool({ workers: config.emulator.workers });
-    this.emulator = pool.session(options, {
-      /** @param {string} m */
-      warn: (m) => this.log.warn(m),
-      /** @param {string} m */
-      info: (m) => this.log.info(m),
-      // Debug lines would all cross from the thread just to be dropped.
-      debug: logsDebug() ? (m) => this.log.debug(m) : undefined,
-    });
+    this.emulator = new Emulator(options, this.log);
     this.emulator.on("quit", () => this.close());
-    this.emulator.on("died", (cause) => {
-      this.reportError(new AppError("E2007", "", cause));
-      this.close();
-    });
     /** @type {number} */
     this.nextTag = 1;
-    this.emulator.indications((indication) =>
-      this.handleIndication(indication),
-    );
-
     // Nothing may wait forever on an emulator that never speaks.
     this.readyTimer = setTimeout(() => this.markReady(), 5000);
     this.readyTimer.unref();
 
     this.startIdleTimer();
+
+    // Last, as the emulator's initialize block arrives right away.
+    this.emulator.indications((indication) => {
+      if (!this.closed) this.handleIndication(indication);
+    });
   }
 
   /**
@@ -335,8 +322,7 @@ export class Session {
         /** @type {import('./indications.js').ScreenIndication} */ (body);
       this.screen.applyScreen(update);
       // An indication carrying only a cursor move — an arrow key, Tab, a click —
-      // cannot have moved a field boundary, and re-reading the buffer for one is
-      // the most expensive thing on the keystroke path.
+      // cannot have moved a field boundary.
       if ((update.rows ?? []).length > 0) this.fieldsStale = true;
       this.scheduleFlush();
       return;
@@ -378,12 +364,13 @@ export class Session {
       );
       // None of these reach a browser any other way: the lock is what macro
       // playback waits on, and insert mode shows only as a cursor shape.
+      // Sent with the next paint, so the two go out as one frame.
       if (
         this.oia.insert !== insert ||
         this.oia.lock !== lock ||
         this.oia.typeahead !== typeahead
       )
-        this.broadcastStatus();
+        this.statusStale = true;
       this.scheduleFlush();
       return;
     }
@@ -450,21 +437,6 @@ export class Session {
         this.runQueuedInput();
       }
 
-      if (tag !== undefined && tag === this.fieldReadTag) {
-        this.fieldReadTag = null;
-        if (result.success) {
-          const { editable, hidden, formatted } = fieldMap(
-            result.text ?? [],
-            this.screen.rows,
-            this.screen.cols,
-          );
-          this.screen.applyFields(editable, hidden, formatted);
-        }
-        this.scheduleFlush();
-        this.runQueuedInput();
-        return;
-      }
-
       if (!result.success) {
         const text = (result.text ?? []).join(" ");
         this.log.warn("action failed", { tag: result["r-tag"] ?? "", text });
@@ -495,16 +467,18 @@ export class Session {
   flush() {
     if (this.closed) return;
 
-    // Screen indications carry no field boundaries, so the field map is a
-    // separate ReadBuffer, one in flight at a time.
-    if (this.fieldsStale && this.fieldReadTag === null) {
+    // Screen indications carry no field boundaries, so the field map comes
+    // from the emulator's own buffer.
+    if (this.fieldsStale) {
       this.fieldsStale = false;
-      this.fieldReadTag = this.runActions([
-        { action: "ReadBuffer", args: ["Ascii"] },
-      ]);
+      const { fa, rows, cols } = this.emulator.s;
+      this.screen.applyFieldAttributes(fa.subarray(0, rows * cols));
+      this.runQueuedInput();
     }
 
     this.recordHistory();
+
+    if (this.statusStale) this.broadcastStatus();
 
     const dirtyRows = this.screen.takeDirtyRows();
     // A cursor move touches no row, and it is the whole of what a Left or a Tab
@@ -539,9 +513,13 @@ export class Session {
    */
   recordHistory() {
     if (this.historyTag !== null) return;
+    if (this.snapshot !== null && this.screen.version === this.snapshotVersion)
+      return;
+    this.snapshotVersion = this.screen.version;
 
     const snapshot = editableSnapshot(
       this.screen.cells,
+      this.screen.inputCells,
       this.screen.fieldsFormatted,
       this.screen.cols,
       this.screen.cursor,
@@ -799,9 +777,6 @@ export class Session {
 
     this.repaint(viewer);
     this.broadcastStatus();
-    // No field map was read while there were no viewers.
-    this.fieldsStale = true;
-    this.scheduleFlush();
   }
 
   /**
@@ -1110,18 +1085,14 @@ export class Session {
   }
 
   /**
-   * The field map trails the screen by a ReadBuffer, and a paste, Backspace or
-   * the typing nudge read it, so queued input also waits for that to land:
+   * The field map trails the screen until the next flush, and a paste, Backspace
+   * or the typing nudge read it, so queued input also waits for that:
    * a macro's next step must see the screen the Enter before it brought.
    *
    * @returns {void}
    */
   runQueuedInput() {
-    while (
-      this.inputTag === null &&
-      !this.fieldsStale &&
-      this.fieldReadTag === null
-    ) {
+    while (this.inputTag === null && !this.fieldsStale) {
       const next = this.inputQueue.shift();
       if (next === undefined) return;
       // Unpacked only now, so a Reset typed during it still drops what is left.
@@ -1300,6 +1271,7 @@ export class Session {
 
   /** @returns {void} */
   broadcastStatus() {
+    this.statusStale = false;
     const everyone = [...this.viewers];
     const requests = [
       ...[...this.waiting].map((guest) => ({

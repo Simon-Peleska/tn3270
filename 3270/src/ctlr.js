@@ -252,7 +252,9 @@ export function addNvt(s, b, ucs4, cs) {
 /** ctlr_add_fa() @param {State} s @param {number} b @param {number} fa @param {number} cs */
 export function addFa(s, b, fa, cs) {
   add(s, b, EBC_NULL, cs);
-  s.fa[b] = FA_PRINTABLE | (fa & FA_MASK);
+  const value = FA_PRINTABLE | (fa & FA_MASK);
+  if (s.fa[b] !== value) s.changed = true;
+  s.fa[b] = value;
 }
 
 /** @param {State} s @param {number} b @param {number} cs */
@@ -285,6 +287,7 @@ export function addBg(s, b, color) {
 
 /** @param {State} s @param {number} b @param {number} ic */
 export function addIc(s, b, ic) {
+  if (s.ic[b] !== ic) s.changed = true;
   s.ic[b] = ic;
 }
 
@@ -300,13 +303,17 @@ function addWithDefaults(s, b, c, cs) {
 /** @param {State} s @param {number} b */
 export function mdtSet(s, b) {
   const faddr = findFieldAttribute(s, b);
-  if (faddr >= 0) s.fa[faddr] |= FA_MODIFY;
+  if (faddr < 0 || s.fa[faddr] & FA_MODIFY) return;
+  s.fa[faddr] |= FA_MODIFY;
+  s.changed = true;
 }
 
 /** @param {State} s @param {number} b */
 export function mdtClear(s, b) {
   const faddr = findFieldAttribute(s, b);
-  if (faddr >= 0) s.fa[faddr] &= ~FA_MODIFY;
+  if (faddr < 0 || !(s.fa[faddr] & FA_MODIFY)) return;
+  s.fa[faddr] &= ~FA_MODIFY;
+  s.changed = true;
 }
 
 /** @param {State} s */

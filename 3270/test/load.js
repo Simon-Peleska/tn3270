@@ -1,7 +1,7 @@
 import { fork } from "node:child_process";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { setTimeout as sleep } from "node:timers/promises";
-import { Session, SessionPool } from "../src/index.js";
+import { Session } from "../src/index.js";
 
 // Many sessions in one process, each a simulated user driving node3270 the way the web server does:
 // run() for actions, every indication serialized to JSON as if sent to a browser. The hosts are
@@ -82,8 +82,7 @@ async function startHosts(count) {
 /**
  * Connects `sessions` users at once, lets them all work for `seconds`, then disconnects them.
  * thinkMs is each user's mean pause between operations (exponential); 0 runs them flat out.
- * workers > 0 runs the sessions on a SessionPool of that many threads, as the server does.
- * @param {{sessions: number, seconds: number, thinkMs?: number, hosts?: number, workers?: number,
+ * @param {{sessions: number, seconds: number, thinkMs?: number, hosts?: number,
  *   onTick?: (tick: {second: number, operations: number, loopDelayMs: number, rssMiB: number, heapMiB: number}) => void}} options
  */
 export async function load({
@@ -91,7 +90,6 @@ export async function load({
   seconds,
   thinkMs = 0,
   hosts = 4,
-  workers = 0,
   onTick,
 }) {
   const hostList = await startHosts(hosts);
@@ -108,13 +106,12 @@ export async function load({
   global.gc?.();
   const heapBefore = process.memoryUsage().heapUsed;
 
-  const pool = workers ? new SessionPool({ workers }) : null;
-  /** @type {(Session | import("../src/index.js").PooledSession)[]} */
+  /** @type {Session[]} */
   const all = [];
   for (let i = 0; i < sessions; i++) {
     // As the web server runs it: its UI has no use for the scrollback.
     const options = { model: "3279-4-E", saveLines: 0 };
-    const session = pool ? pool.session(options) : new Session(options);
+    const session = new Session(options);
     session.indications((indication) => {
       indications++;
       indicationBytes += JSON.stringify({
@@ -195,7 +192,6 @@ export async function load({
   const cpu = process.cpuUsage(cpuBefore);
 
   for (const session of all) session.close();
-  pool?.close();
   for (const { child } of hostList) child.kill();
 
   return {

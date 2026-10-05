@@ -812,6 +812,8 @@ export class Session extends EventEmitter {
    * @returns {Promise<{success: boolean, text: string[]}>}
    */
   async run(actions, tag) {
+    // Never starts inside its caller: a run started from an indication would otherwise run in the middle of the one emitting it.
+    await null;
     const s = this.s;
     const started = performance.now();
     /** @type {RunText} */
@@ -876,7 +878,8 @@ export class Session extends EventEmitter {
         s.runText = null;
         this.flush();
         // run_action_entry()'s return value is ignored: an action fails by popping up an error.
-        await done;
+        const async = done instanceof Promise;
+        if (async) await done;
         success = !out.err.includes(true);
         if (success && !waiting && ckbwait(s))
           await this.untilKeyboardWaitEnds();

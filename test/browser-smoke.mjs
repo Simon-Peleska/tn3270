@@ -5,19 +5,9 @@ import { once } from "node:events";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createServer } from "node:net";
 import { WebSocket } from "../vendor/ws.mjs";
 import { FakeHost } from "./fakehost.js";
-import { testConfig, waitUntil } from "./helpers.js";
-
-async function freePort() {
-  const probe = createServer();
-  probe.listen(0, "127.0.0.1");
-  await once(probe, "listening");
-  const port = probe.address().port;
-  await new Promise((resolve) => probe.close(resolve));
-  return port;
-}
+import { freePort, testConfig, waitUntil } from "./helpers.js";
 
 async function stopProcess(child) {
   if (child.exitCode !== null || child.signalCode !== null) return;
@@ -133,13 +123,16 @@ async function startBrowser(t) {
       const received = (raw) => {
         const event = JSON.parse(String(raw));
         if (event.method !== method) return;
-        let payload;
+        let frame;
         try {
-          payload = JSON.parse(event.params.response.payloadData);
+          frame = JSON.parse(event.params.response.payloadData);
         } catch {
           return;
         }
-        if (payload.type !== type || !accept(payload)) return;
+        const payload = (Array.isArray(frame) ? frame : [frame]).find(
+          (message) => message.type === type && accept(message),
+        );
+        if (payload === undefined) return;
         clearTimeout(timer);
         socket.off("message", received);
         resolve(payload);

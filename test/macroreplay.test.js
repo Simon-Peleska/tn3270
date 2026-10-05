@@ -87,7 +87,6 @@ function idle(session) {
     session.inputQueue.length === 0 &&
     session.inputTag === null &&
     session.historyTag === null &&
-    session.fieldReadTag === null &&
     !session.fieldsStale &&
     session.screen.fieldsFormatted &&
     !["twait", "syswait", "not-connected", "connecting"].includes(
