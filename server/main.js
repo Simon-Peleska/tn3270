@@ -278,7 +278,7 @@ server.on("upgrade", (req, socket, head) => {
 
   const pass = url.searchParams.get("pass") ?? undefined;
   wss.handleUpgrade(req, socket, head, (ws) =>
-    attachViewer(id, ws, client, pass),
+    attachViewer(id, ws, socket, client, pass),
   );
 });
 
@@ -288,13 +288,17 @@ server.on("upgrade", (req, socket, head) => {
  *
  * @param {string} id
  * @param {import('ws').WebSocket} ws
+ * @param {import('node:stream').Duplex} socket the connection under `ws`
  * @param {{ ip: string, user: string }} client
  * @param {string | undefined} pass from an earlier hello: the owner's, or a guest's let in before
  * @returns {void}
  */
-function attachViewer(id, ws, client, pass) {
+function attachViewer(id, ws, socket, client, pass) {
   /** @type {ReturnType<SessionRegistry["attach"]>} */
   let viewer;
+  // Under load the workers' frames for one viewer pile up within a turn, and a
+  // system call per frame is most of what this thread does.
+  let corked = false;
   try {
     viewer = registry.attach(id, client, pass, {
       send(text) {
@@ -305,6 +309,14 @@ function attachViewer(id, ws, client, pass) {
           });
           ws.close(1013, "E6010");
           return;
+        }
+        if (!corked) {
+          corked = true;
+          socket.cork();
+          setImmediate(() => {
+            corked = false;
+            socket.uncork();
+          });
         }
         ws.send(text);
       },

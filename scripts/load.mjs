@@ -127,6 +127,9 @@ async function main() {
   const at = (/** @type {number} */ p) =>
     latencies[Math.floor((latencies.length - 1) * p)] ?? 0;
   const errors = results.flatMap((r) => r.errors);
+  const perSession = Float64Array.from(
+    results.flatMap((r) => r.perSession),
+  ).sort();
 
   console.log(
     `${sessions} sessions connected in ${connectSeconds.toFixed(1)} s; ` +
@@ -138,6 +141,10 @@ async function main() {
   );
   console.log(
     `latency p50 ${at(0.5).toFixed(1)} ms  p95 ${at(0.95).toFixed(1)} ms  p99 ${at(0.99).toFixed(1)} ms  max ${at(1).toFixed(1)} ms`,
+  );
+
+  console.log(
+    `operations per session: min ${perSession[0]}  median ${perSession[perSession.length >> 1]}  max ${perSession.at(-1)}`,
   );
 
   for (const child of children) child.kill();
@@ -211,8 +218,9 @@ async function client() {
     process.once("message", resolve),
   );
   const deadline = performance.now() + go * 1000;
-  await Promise.all(
+  const perSession = await Promise.all(
     users.map(async ({ socket, until }) => {
+      let done = 0;
       while (performance.now() < deadline) {
         const sent = performance.now();
         const answered = until(
@@ -223,10 +231,12 @@ async function client() {
         await answered;
         latencies.push(performance.now() - sent);
         operations++;
+        done++;
       }
+      return done;
     }),
   );
-  process.send?.({ type: "done", operations, latencies, errors });
+  process.send?.({ type: "done", operations, perSession, latencies, errors });
 }
 
 /** User+system seconds of a process, or of one of its threads. @param {number | undefined} pid @param {number} [tid] */

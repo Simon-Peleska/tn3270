@@ -1436,6 +1436,18 @@ test("the registry refuses to exceed maxSessions", async (t) => {
   );
 });
 
+test("sessions opened all at once are spread evenly over the threads", async (t) => {
+  const registry = new SessionRegistry(
+    testConfig({ emulator: { workers: 3 } }),
+  );
+  t.after(() => registry.stop());
+  await Promise.all(Array.from({ length: 9 }, () => registry.create()));
+  assert.deepEqual(
+    registry.threads.map((thread) => thread.sessions.size),
+    [3, 3, 3],
+  );
+});
+
 test("an unknown session id is a stable error, not a crash", async (t) => {
   const registry = new SessionRegistry(testConfig());
   t.after(() => registry.stop());

@@ -11,6 +11,7 @@ import { logger, writeLogLine } from "./log.js";
  * @typedef {object} Thread
  * @property {Worker} worker
  * @property {Set<string>} sessions
+ * @property {number} creating sessions asked for and not yet there, which count as there
  * @property {Map<string, ViewerSocket>} viewers
  * @property {Map<number, { resolve: (value: any) => void, reject: (err: Error) => void }>} requests
  * @property {boolean} dead
@@ -55,9 +56,11 @@ export class SessionRegistry {
   /** @returns {Thread} the thread with the fewest sessions, starting one while there are fewer than `size`. */
   pickThread() {
     if (this.threads.length < this.size) return this.startThread();
+    const load = (/** @type {Thread} */ thread) =>
+      thread.sessions.size + thread.creating;
     let best = /** @type {Thread} */ (this.threads[0]);
     for (const thread of this.threads)
-      if (thread.sessions.size < best.sessions.size) best = thread;
+      if (load(thread) < load(best)) best = thread;
     return best;
   }
 
@@ -70,6 +73,7 @@ export class SessionRegistry {
     const thread = {
       worker,
       sessions: new Set(),
+      creating: 0,
       viewers: new Map(),
       requests: new Map(),
       dead: false,
@@ -150,6 +154,7 @@ export class SessionRegistry {
       throw new AppError("E3002", `${open} sessions are already open`);
     const thread = this.pickThread();
     this.creating++;
+    thread.creating++;
     try {
       const described = await this.ask(thread, ["create", client]);
       thread.sessions.add(described.id);
@@ -162,6 +167,7 @@ export class SessionRegistry {
       return described;
     } finally {
       this.creating--;
+      thread.creating--;
     }
   }
 
