@@ -207,8 +207,10 @@ async function client() {
       );
       /** @type {((text: string) => void) | null} */
       let waiter = null;
+      const seen = { last: "" };
       socket.on("message", (data) => {
         const text = String(data);
+        seen.last = text;
         if (text.includes('"type":"error"')) errors.push(text);
         waiter?.(text);
       });
@@ -233,7 +235,7 @@ async function client() {
         }),
       );
       await unlocked;
-      return { socket, until };
+      return { socket, until, seen };
     }),
   );
   process.send?.({ type: "ready" });
@@ -244,7 +246,7 @@ async function client() {
   );
   const deadline = performance.now() + go * 1000;
   const perSession = await Promise.all(
-    users.map(async ({ socket, until }) => {
+    users.map(async ({ socket, until, seen }) => {
       let done = 0;
       if (job.thinkMs) {
         const pause = (/** @type {number} */ ms) =>
@@ -274,7 +276,19 @@ async function client() {
                 : { type: "action", action: "PF", args: ["3"] },
             ),
           );
-          await answered;
+          /** @type {NodeJS.Timeout | undefined} */
+          let late;
+          const stuck = await Promise.race([
+            answered.then(() => false),
+            new Promise((resolve) => (late = setTimeout(resolve, 5000, true))),
+          ]);
+          clearTimeout(late);
+          if (stuck) {
+            errors.push(
+              `no unlock 5 s after the AID; last message: ${seen.last}`,
+            );
+            break;
+          }
           latencies.push(performance.now() - sent);
           operations++;
           done++;
