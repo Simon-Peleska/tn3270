@@ -30,7 +30,7 @@ export const ERRORS = Object.freeze({
   E3013: "Session input queue is full",
   E3014: "Only the session's owner may terminate it",
   E3015: "Session terminated by its owner",
-  E3016: "Session worker thread died",
+  // E3016 was the session worker threads', which are gone. Retired, not free.
 
   E4001: "WebSocket message was not valid JSON",
   E4002: "WebSocket message had an unknown type",

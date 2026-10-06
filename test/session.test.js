@@ -4,6 +4,7 @@ import { Session } from "../server/session.js";
 import { SessionRegistry } from "../server/registry.js";
 import { AppError } from "../server/errors.js";
 import { keyboardLocked } from "../public/oia.js";
+import { fullPaint } from "../server/paint.js";
 import { computeHints } from "../public/hints.js";
 import {
   testConfig,
@@ -1033,7 +1034,7 @@ test("BackNewline on a screen with no fields falls back to the start of the row 
   });
   await settle(session);
 
-  const none = new Array(screen.cells.length).fill(false);
+  const none = new Uint8Array(screen.cells.length);
   screen.applyFields(none, none, false);
   session.handleClientMessage(controller, {
     type: "action",
@@ -1424,7 +1425,7 @@ test("the registry refuses to exceed maxSessions", async (t) => {
   const registry = new SessionRegistry(
     testConfig({ sessions: { maxSessions: 1, idleTimeoutMs: 0 } }),
   );
-  t.after(() => registry.stop());
+  t.after(() => registry.closeAll());
   await registry.create();
   await assert.rejects(
     () => registry.create(),
@@ -1436,22 +1437,10 @@ test("the registry refuses to exceed maxSessions", async (t) => {
   );
 });
 
-test("sessions opened all at once are spread evenly over the threads", async (t) => {
-  const registry = new SessionRegistry(
-    testConfig({ emulator: { workers: 3 } }),
-  );
-  t.after(() => registry.stop());
-  await Promise.all(Array.from({ length: 9 }, () => registry.create()));
-  assert.deepEqual(
-    registry.threads.map((thread) => thread.sessions.size),
-    [3, 3, 3],
-  );
-});
-
 test("an unknown session id is a stable error, not a crash", async (t) => {
   const registry = new SessionRegistry(testConfig());
-  t.after(() => registry.stop());
-  await assert.rejects(
+  t.after(() => registry.closeAll());
+  assert.throws(
     () => registry.terminate("nope", ""),
     (err) => {
       assert.ok(err instanceof AppError);
@@ -1461,11 +1450,11 @@ test("an unknown session id is a stable error, not a crash", async (t) => {
   );
 });
 
-test("a session's errors keep their code across the thread", async (t) => {
+test("only the owner may terminate a session through the registry", async (t) => {
   const registry = new SessionRegistry(testConfig());
-  t.after(() => registry.stop());
+  t.after(() => registry.closeAll());
   const { id } = await registry.create();
-  await assert.rejects(
+  assert.throws(
     () => registry.terminate(id, "not the owner's pass"),
     (err) => {
       assert.ok(err instanceof AppError);
@@ -1477,34 +1466,12 @@ test("a session's errors keep their code across the thread", async (t) => {
 
 test("a closed session removes itself from the registry", async (t) => {
   const registry = new SessionRegistry(testConfig());
-  t.after(() => registry.stop());
+  t.after(() => registry.closeAll());
   await registry.create();
-  assert.equal((await registry.list()).length, 1);
+  assert.equal(registry.list().length, 1);
   registry.closeAll();
   await waitUntil(() => registry.sessions.size === 0, "the session to close");
-  assert.equal((await registry.list()).length, 0);
-});
-
-test("a dying session thread tells its viewers and forgets its sessions", async (t) => {
-  const registry = new SessionRegistry(testConfig());
-  t.after(() => registry.stop());
-  const { id } = await registry.create();
-  /** @type {string[]} */
-  const sent = [];
-  /** @type {Array<[number, string]>} */
-  const closed = [];
-  registry.attach(id, { ip: "127.0.0.1", user: "" }, undefined, {
-    send: (text) => sent.push(text),
-    close: (code, reason) => closed.push([code, reason]),
-  });
-  await waitUntil(() => sent.length > 0, "the session to greet the viewer");
-
-  await registry.threadOf(id).worker.terminate();
-
-  await waitUntil(() => closed.length > 0, "the viewer to be closed");
-  assert.deepEqual(closed, [[1011, "E3016"]]);
-  assert.equal([JSON.parse(sent.at(-1) ?? "")].flat().at(-1).code, "E3016");
-  assert.equal(registry.sessions.size, 0);
+  assert.equal(registry.list().length, 0);
 });
 
 test("the field map is read on every session, and rides the paint as a flag", async (t) => {
@@ -1517,7 +1484,7 @@ test("the field map is read on every session, and rides the paint as a flag", as
 
   // Nobody asks for this: Backspace needs it on every session, tint or no tint.
   await waitUntil(
-    () => session.screen.cells.some((cell) => cell.editable),
+    () => session.screen.inputCells.length > 0,
     "the field map to be read",
   );
   await settle(session);
@@ -1603,47 +1570,33 @@ test("recording captures the screen and each step, and stops cleanly", async (t)
 });
 
 test("recording keeps a full colour paint beside the plain-text screen", async (t) => {
-  const session = new Session(testConfig());
-  t.after(() => session.close());
-  await session.ready;
+  const fixture = await startTracedSession("test/traces/reverse.trc");
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  await settle(session);
 
-  session.screen.color = true;
   session.screen.defaultFg = "green";
   session.screen.defaultBg = "black";
-  const cell = session.screen.cellAt(0, 0);
-  cell.ch = "X";
-  cell.fg = "red";
-  cell.bg = "deepBlue";
-  cell.gr = "reverse,underscore";
-  cell.editable = true;
   session.recording = { steps: [] };
   session.record("Enter");
 
   const step = session.recording.steps[0];
-  assert.equal(step?.screen[0]?.[0], "X");
-  assert.equal(step?.paint?.type, "paint");
+  assert.equal(step?.screen[0], session.screen.rowText(0));
+  assert.deepEqual(step?.paint, fullPaint(session.screen));
   assert.equal(step?.paint?.full, true);
-  assert.equal(step?.paint?.color, true);
   assert.equal(step?.paint?.defaultFg, "green");
   assert.equal(step?.paint?.defaultBg, "black");
-  assert.deepEqual(step?.paint?.size, {
-    rows: session.screen.rows,
-    cols: session.screen.cols,
-  });
-  assert.deepEqual(step?.paint?.rows[0]?.runs[0], {
-    col: 0,
-    text: "X",
-    fg: "red",
-    bg: "deepBlue",
-    gr: "reverse,underscore",
-    editable: true,
-  });
+  assert.ok(
+    step?.paint?.rows.some((row) => row.runs.some((run) => run.fg === "red")),
+    "this trace paints in red, so the recording must too",
+  );
 });
 
 test("stopping a recording saves the final screen after the last input", async (t) => {
-  const session = new Session(testConfig());
-  t.after(() => session.close());
-  await session.ready;
+  const fixture = await startTracedSession("test/traces/reverse.trc");
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  await settle(session);
 
   const controller = collectingViewer("controller");
   session.attach(controller);
@@ -1651,9 +1604,6 @@ test("stopping a recording saves the final screen after the last input", async (
     type: "recorder",
     action: "start",
   });
-  const cell = session.screen.cellAt(0, 0);
-  cell.ch = "Z";
-  cell.fg = "red";
   session.handleClientMessage(controller, { type: "recorder", action: "stop" });
 
   const recorded = controller.messages.filter(
@@ -1664,8 +1614,8 @@ test("stopping a recording saves the final screen after the last input", async (
   assert.equal(recorded[0]?.type, "recorderStep");
   if (recorded[0]?.type !== "recorderStep") return;
   assert.equal(recorded[0].step.final, true);
-  assert.equal(recorded[0].step.screen[0]?.[0], "Z");
-  assert.equal(recorded[0].step.paint?.rows[0]?.runs[0]?.fg, "red");
+  assert.equal(recorded[0].step.screen[0], session.screen.rowText(0));
+  assert.deepEqual(recorded[0].step.paint, fullPaint(session.screen));
   assert.equal(recorded[1]?.type, "recorderStopped");
 });
 

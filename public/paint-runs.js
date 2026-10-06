@@ -1,5 +1,5 @@
 /**
- * @param {readonly { ch: string | null, fg: string | null, bg: string | null, gr: string | null, editable: boolean }[]} cells
+ * @param {{ readonly length: number, at(i: number): { ch: string | null, fg: string | null, bg: string | null, gr: string | null, editable: boolean } | undefined }} cells array-like; the server reads its cells from the emulator
  * @param {number} row
  * @param {number} cols
  * @returns {import('../server/protocol.js').PaintRow}
@@ -9,10 +9,10 @@ export function paintRow(cells, row, cols) {
   const runs = [];
   /** @type {import('../server/protocol.js').PaintRun | null} */
   let run = null;
-  let last = cells[row * cols];
+  let last = cells.at(row * cols);
 
   for (let col = 0; col < cols; col++) {
-    const cell = cells[row * cols + col];
+    const cell = cells.at(row * cols + col);
     if (cell === undefined) break;
     if (
       run === null ||

@@ -2,6 +2,7 @@ import { fork } from "node:child_process";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Session } from "../src/index.js";
+import "./read.js";
 
 // Many sessions in one process, each a simulated user driving node3270 the way the web server does:
 // run() for actions, every indication serialized to JSON as if sent to a browser. The hosts are

@@ -6,21 +6,10 @@ import {
   psProcess,
   writeSscpLu,
 } from "./ctlr.js";
-import { KL_AWAITING_FIRST, KL_BID } from "./kybd.js";
-import {
-  popupError,
-  reportTerminalName,
-  statsPoke,
-  statusLu,
-  statusReset,
-} from "./ui.js";
-import { linemodeBufInit, linemodeDump, linemodeOut } from "./linemode.js";
-import { nvtProcess } from "./nvt.js";
+import { KL_BID } from "./kybd.js";
+import { popupError, statusLu, statusReset } from "./ui.js";
 import {
   CONNECTED_3270,
-  CONNECTED_E_NVT,
-  CONNECTED_NVT,
-  CONNECTED_NVT_CHAR,
   CONNECTED_SSCP,
   CONNECTED_TN3270E,
   CONNECTED_UNBOUND,
@@ -29,7 +18,6 @@ import {
   TELNET_PENDING,
   changeCstate,
   inE,
-  inNvt,
   in3270,
 } from "./session.js";
 
@@ -45,7 +33,6 @@ const IAC = 0xff,
 const NOP = 0xf1;
 const IP = 0xf4,
   BREAK = 0xf3,
-  DM = 0xf2,
   SE = 0xf0,
   EOR = 0xef;
 
@@ -81,8 +68,7 @@ const TN3270E_DT_3270_DATA = 0x00,
   TN3270E_DT_RESPONSE = 0x02,
   TN3270E_DT_BIND_IMAGE = 0x03,
   TN3270E_DT_UNBIND = 0x04;
-const TN3270E_DT_NVT_DATA = 0x05,
-  TN3270E_DT_SSCP_LU_DATA = 0x07,
+const TN3270E_DT_SSCP_LU_DATA = 0x07,
   TN3270E_DT_BID = 0x09;
 const TN3270E_RQF_SEND_DATA = 0x01,
   TN3270E_RQF_KEYBOARD_RESTORE = 0x02;
@@ -96,7 +82,6 @@ const EH_SIZE = 5;
 
 export const E_UNBOUND = 0,
   E_3270 = 1,
-  E_NVT = 2,
   E_SSCP = 3;
 
 const TNS_DATA = 0,
@@ -156,9 +141,7 @@ export function netConnected(s) {
   tn3270eInit(s);
   s.telnetState = TNS_DATA;
   s.ibLen = 0;
-  s.syncing = false;
   setupLus(s);
-  checkLinemode(s, true);
   netNopSeconds(s);
 }
 
@@ -176,7 +159,7 @@ export function netDisconnected(s) {
 export function netSetDefaultTermtype(s) {
   const previous = s.termtype;
   s.termtype = s.options.termName ?? create3270Termtype(s, false);
-  if (s.termtype !== previous) reportTerminalName(s);
+  if (s.termtype !== previous) s.ui?.b3270?.terminalName(s);
 }
 
 /**
@@ -248,11 +231,7 @@ function framedOut(s, buf) {
 export function netInput(s, buf) {
   let i = 0;
   while (i < buf.length) {
-    if (
-      s.telnetState === TNS_DATA &&
-      s.cstate !== TELNET_PENDING &&
-      !(inNvt(s) && !inE(s))
-    ) {
+    if (s.telnetState === TNS_DATA && s.cstate !== TELNET_PENDING) {
       // Bulk path for 3270 data: copy up to the next IAC in one go.
       let end = buf.indexOf(IAC, i);
       if (end < 0) end = buf.length;
@@ -288,34 +267,25 @@ function telnetFsm(s, c) {
         break;
       }
       if (s.cstate === TELNET_PENDING) {
-        if (s.linemode) linemodeBufInit(s);
-        changeCstate(s, s.linemode ? CONNECTED_NVT : CONNECTED_NVT_CHAR);
-        s.kybdlock &= ~KL_AWAITING_FIRST;
-        statusReset(s);
-        psProcess(s);
+        // x3270 would fall back to a plain-text NVT terminal here; this emulator has none.
+        s.log.warn("N1203 host sent data before negotiating TN3270");
+        s.connectError = "N1203 Host does not speak TN3270";
+        popupError(s, s.connectError);
+        return false;
       }
-      if (inNvt(s) && !inE(s)) {
-        if (!s.syncing) nvtProcess(s, c);
-      } else {
-        ONE[0] = c;
-        store3270in(s, ONE);
-      }
+      // The bulk path in telnetInput() takes every other data byte.
       break;
     case TNS_IAC:
       switch (c) {
         case IAC:
-          if (inNvt(s) && !inE(s)) {
-            nvtProcess(s, c);
-          } else {
-            ONE[0] = c;
-            store3270in(s, ONE);
-          }
+          ONE[0] = c;
+          store3270in(s, ONE);
           s.telnetState = TNS_DATA;
           break;
         case EOR:
           if (in3270(s) || (inE(s) && s.tn3270eNegotiated)) {
             s.stats.rrcvd++;
-            statsPoke(s);
+            s.ui?.b3270?.statsPoke(s);
             processEor(s);
           } else {
             s.log.warn("N2201 EOR received when not in 3270 mode, ignored");
@@ -340,10 +310,6 @@ function telnetFsm(s, c) {
           s.telnetState = TNS_SB;
           s.sbLen = 0;
           break;
-        case DM:
-          s.syncing = false;
-          s.telnetState = TNS_DATA;
-          break;
         default:
           s.telnetState = TNS_DATA;
       }
@@ -365,7 +331,6 @@ function telnetFsm(s, c) {
               rawout(s, [IAC, WILL, c]);
             }
             checkIn3270(s);
-            checkLinemode(s, false);
           }
           break;
         default:
@@ -378,12 +343,10 @@ function telnetFsm(s, c) {
         s.hisopts[c] = 0;
         rawout(s, [IAC, DONT, c]);
         checkIn3270(s);
-        checkLinemode(s, false);
       } else if (c === TELOPT_TN3270E && s.myopts[c]) {
         s.myopts[c] = 0;
         rawout(s, [IAC, WONT, c]);
         checkIn3270(s);
-        checkLinemode(s, false);
       }
       s.telnetState = TNS_DATA;
       break;
@@ -396,7 +359,6 @@ function telnetFsm(s, c) {
         s.myopts[c] = 0;
         rawout(s, [IAC, WONT, c]);
         checkIn3270(s);
-        checkLinemode(s, false);
       }
       if (c === TELOPT_TTYPE && s.deferredWillTtype)
         s.deferredWillTtype = false;
@@ -452,7 +414,6 @@ function doOption(s, c) {
         if (c !== TELOPT_TM) s.myopts[c] = 1;
         rawout(s, [IAC, WILL, c]);
         checkIn3270(s);
-        checkLinemode(s, false);
       }
       if (c === TELOPT_NAWS) sendNaws(s);
       return;
@@ -519,7 +480,6 @@ function subnegotiation(s) {
     if (s.deferredWillTtype && s.myopts[TELOPT_TTYPE]) {
       rawout(s, [IAC, WILL, TELOPT_TTYPE]);
       checkIn3270(s);
-      checkLinemode(s, false);
       s.deferredWillTtype = false;
     }
   }
@@ -748,7 +708,6 @@ function checkIn3270(s) {
   if (s.myopts[TELOPT_TN3270E]) {
     if (!s.tn3270eNegotiated) next = CONNECTED_UNBOUND;
     else if (s.tn3270eSubmode === E_UNBOUND) next = CONNECTED_UNBOUND;
-    else if (s.tn3270eSubmode === E_NVT) next = CONNECTED_E_NVT;
     else if (s.tn3270eSubmode === E_3270) next = CONNECTED_TN3270E;
     else next = CONNECTED_SSCP;
   } else if (
@@ -766,36 +725,7 @@ function checkIn3270(s) {
   }
   if (next === s.cstate) return;
   if (!s.myopts[TELOPT_TN3270E]) tn3270eInit(s);
-  if ((next === CONNECTED_NVT && s.linemode) || next === CONNECTED_E_NVT)
-    linemodeBufInit(s);
   changeCstate(s, next);
-}
-
-/** net_linemode(): asks the host to stop echoing, for Set(lineMode, true). @param {State} s */
-export function netLinemode(s) {
-  if (!inNvt(s)) return;
-  if (s.hisopts[TELOPT_ECHO]) rawout(s, [IAC, DONT, TELOPT_ECHO]);
-  if (s.hisopts[TELOPT_SGA]) rawout(s, [IAC, DONT, TELOPT_SGA]);
-}
-
-/** net_charmode(): asks the host to echo, for Set(lineMode, false). @param {State} s */
-export function netCharmode(s) {
-  if (!inNvt(s)) return;
-  if (!s.hisopts[TELOPT_ECHO]) rawout(s, [IAC, DO, TELOPT_ECHO]);
-  if (!s.hisopts[TELOPT_SGA]) rawout(s, [IAC, DO, TELOPT_SGA]);
-}
-
-/** check_linemode(): NVT line mode follows the host's ECHO. @param {State} s @param {boolean} init */
-function checkLinemode(s, init) {
-  const wasline = s.linemode;
-  s.linemode = !s.hisopts[TELOPT_ECHO];
-  if (!init && s.linemode === wasline) return;
-  if (s.cstate === CONNECTED_NVT || s.cstate === CONNECTED_NVT_CHAR) {
-    changeCstate(s, s.linemode ? CONNECTED_NVT : CONNECTED_NVT_CHAR);
-  }
-  if (!inNvt(s)) return;
-  if (s.linemode) linemodeBufInit(s);
-  else linemodeDump(s);
 }
 
 /** @param {number} c */
@@ -887,7 +817,7 @@ function processBind(s, buf) {
 
 /** process_eor(): a complete record from the host. @param {State} s */
 function processEor(s) {
-  if (s.syncing || s.ibLen === 0) return;
+  if (s.ibLen === 0) return;
   const rec = s.ibuf.subarray(0, s.ibLen);
   if (!inE(s)) {
     processDs(s, rec, false);
@@ -949,12 +879,6 @@ function processEor(s) {
       s.tn3270eSubmode = E_UNBOUND;
       checkIn3270(s);
       return;
-    case TN3270E_DT_NVT_DATA:
-      s.tn3270eSubmode = E_NVT;
-      checkIn3270(s);
-      for (const c of data) nvtProcess(s, c);
-      if (responseFlag === TN3270E_RSF_ALWAYS_RESPONSE) tn3270eAck(s);
-      return;
     case TN3270E_DT_SSCP_LU_DATA:
       s.tn3270eSubmode = E_SSCP;
       checkIn3270(s);
@@ -999,10 +923,7 @@ function tn3270eNak(s, rv) {
 
 /** net_output(): sends s.out as one record, with the TN3270E header when needed. @param {State} s */
 export function netOutput(s) {
-  const tn3270e =
-    s.cstate === CONNECTED_TN3270E ||
-    s.cstate === CONNECTED_SSCP ||
-    s.cstate === CONNECTED_E_NVT;
+  const tn3270e = s.cstate === CONNECTED_TN3270E || s.cstate === CONNECTED_SSCP;
   const body = s.out.bytes.subarray(0, s.out.length);
   const xo = new Uint8Array((body.length + EH_SIZE) * 2 + 2);
   let n = 0;
@@ -1014,9 +935,7 @@ export function netOutput(s) {
     const dataType =
       s.cstate === CONNECTED_TN3270E
         ? TN3270E_DT_3270_DATA
-        : s.cstate === CONNECTED_E_NVT
-          ? TN3270E_DT_NVT_DATA
-          : TN3270E_DT_SSCP_LU_DATA;
+        : TN3270E_DT_SSCP_LU_DATA;
     for (const c of [
       dataType,
       0,
@@ -1038,51 +957,7 @@ export function netOutput(s) {
   xo[n++] = EOR;
   s.write(xo.subarray(0, n));
   s.stats.rsent++;
-  statsPoke(s);
-}
-
-/** net_cookedout(): NVT keyboard data, already line-edited. @param {State} s @param {number[]} bytes */
-export function netCookedout(s, bytes) {
-  if (!bytes.length) return;
-  if (s.cstate !== CONNECTED_E_NVT) {
-    rawout(s, bytes);
-    return;
-  }
-  s.out.reset();
-  s.out.push(...bytes);
-  netOutput(s);
-}
-
-/** net_cookout(): NVT keyboard data, edited locally in line mode. @param {State} s @param {Uint8Array | number[]} bytes */
-function netCookout(s, bytes) {
-  if (!inNvt(s) || s.kybdlock & KL_AWAITING_FIRST) return;
-  if (s.linemode) linemodeOut(s, bytes);
-  else netCookedout(s, Array.from(bytes));
-}
-
-/** net_sendc(): one NVT character; a lone CR is quoted in character mode. @param {State} s @param {number} c */
-export function netSendc(s, c) {
-  if (c === 0x0d && !s.linemode) netCookout(s, [0x0d, 0x00]);
-  else netCookout(s, [c]);
-}
-
-/** net_sends() @param {State} s @param {Uint8Array} bytes */
-export function netSends(s, bytes) {
-  if (bytes.length === 1 && bytes[0] === 0x0d && !s.linemode)
-    netCookout(s, [0x0d, 0x00]);
-  else netCookout(s, bytes);
-}
-
-/** net_hexnvt_out(): raw bytes from HexString() in NVT mode, with IAC doubled and a bare CR padded. @param {State} s @param {number[]} bytes */
-export function netHexnvtOut(s, bytes) {
-  /** @type {number[]} */
-  const out = [];
-  for (let i = 0; i < bytes.length; i++) {
-    out.push(bytes[i]);
-    if (bytes[i] === IAC) out.push(IAC);
-    else if (bytes[i] === 0x0d && bytes[i + 1] !== 0x0a) out.push(0);
-  }
-  if (out.length) rawout(s, out);
+  s.ui?.b3270?.statsPoke(s);
 }
 
 /** net_break(): the Attn key outside TN3270E. @param {State} s */

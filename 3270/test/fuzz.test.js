@@ -12,11 +12,10 @@ import { assertSameLines, noB3270 } from "./harness.js";
 const FINDINGS = new URL("fuzz-findings/", import.meta.url);
 const findings = existsSync(FINDINGS) ? readdirSync(FINDINGS) : [];
 
-/** @type {Record<"keyboard" | "datastream" | "nvt", number[]>} */
+/** @type {Record<"keyboard" | "datastream", number[]>} */
 const SEEDS = {
   keyboard: [5, 10, 34, 42, 50, 135, 9000087],
   datastream: [1, 700108, 409255822, 151094620],
-  nvt: [3, 17, 33, 120],
 };
 
 describe(

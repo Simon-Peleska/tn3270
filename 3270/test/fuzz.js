@@ -18,7 +18,7 @@ import {
 import { netConnected, netInput } from "../src/telnet.js";
 
 // Random scenarios that b3270 and node3270 must play out identically: keyboard actions on a
-// formatted screen, random 3270 data streams from the host, and random NVT text and escapes.
+// formatted screen and random 3270 data streams from the host.
 // Every choice comes from a seeded Rng, so a failure replays exactly. Jazzer.js's coverage-guided
 // fuzz() below (npm run fuzz) runs host data streams through node3270 alone, in-process, for
 // speed; scripts/fuzz.mjs --corpus then plays what it kept against b3270.
@@ -55,7 +55,7 @@ function hexBytes(r, bytes) {
 
 /** Actions that edit the screen and never wait on the host. @param {Rng} r @returns {Step} */
 function editAction(r) {
-  switch (r.int(14)) {
+  switch (r.int(11)) {
     case 0:
     case 1:
     case 2:
@@ -108,18 +108,7 @@ function editAction(r) {
         "PasteString",
         Buffer.from(typedText(r).replace(/\\/g, ""), "utf8").toString("hex"),
       ];
-    case 10: {
-      const row = 1 + r.int(24);
-      const col = 1 + r.int(80);
-      return [
-        "ClearRegion",
-        row,
-        col,
-        r.int(25 - row + 1),
-        r.int(81 - col + 1),
-      ];
-    }
-    case 11:
+    default:
       return [
         "Toggle",
         r.pick([
@@ -131,10 +120,6 @@ function editAction(r) {
           "underscoreBlankFill",
         ]),
       ];
-    case 12:
-      return ["SaveInput"];
-    default:
-      return ["RestoreInput"];
   }
 }
 
@@ -154,7 +139,7 @@ function aidAction(r) {
 
 /** Actions that only read; the screen must stay inside 24x80 for the ranges, as dumping from the very end crashes b3270. @param {Rng} r @returns {Step} */
 function readAction(r) {
-  switch (r.int(8)) {
+  switch (r.int(7)) {
     case 0:
       return ["Ascii"];
     case 1:
@@ -167,13 +152,11 @@ function readAction(r) {
       return ["ReadBuffer", "Ebcdic"];
     case 5:
       return ["AsciiField"];
-    case 6:
+    default:
       return [
         "Query",
         r.pick(["Cursor", "Cursor1", "Formatted", "ScreenCurSize"]),
       ];
-    default:
-      return ["Snap", "Ascii", 0, 0, 1 + r.int(80)];
   }
 }
 
@@ -332,94 +315,14 @@ export function dataStreamCase(r) {
   return { trace: "three-fields.trc", actions };
 }
 
-/** Random NVT output: text, controls, UTF-8 and ANSI escapes. @param {Rng} r */
-function nvtBytes(r) {
-  let text = "";
-  const parts = 1 + r.int(8);
-  for (let i = 0; i < parts; i++) {
-    switch (r.int(9)) {
-      case 0:
-      case 1:
-        for (let n = 1 + r.int(30); n > 0; n--) text += r.pick(TYPED_CHARS);
-        break;
-      case 2:
-        text += r.pick([
-          "\r\n",
-          "\r",
-          "\n",
-          "\b",
-          "\t",
-          "\x07",
-          "\x0e",
-          "\x0f",
-        ]);
-        break;
-      case 3: {
-        const params = [];
-        for (let n = r.int(3); n > 0; n--) params.push(String(r.int(50)));
-        text += `\x1b[${r.chance(0.1) ? "?" : ""}${params.join(";")}${r.pick([..."ABCDEFGHJKLMPX@dfghlmnrsu"])}`;
-        break;
-      }
-      case 4:
-        text += `\x1b[${r.pick(["0", "1", "4", "5", "7", "22", "24", "27", "3" + r.int(10), "4" + r.int(10)])}m`;
-        break;
-      case 5:
-        text += `\x1b${r.pick([..."78DEMc=>"])}`;
-        break;
-      case 6:
-        text += `\x1b${r.pick(["(", ")"])}${r.pick(["0", "B", "A"])}`;
-        break;
-      case 7:
-        text += `\x1b[${1 + r.int(24)};${1 + r.int(80)}H`;
-        break;
-      default:
-        text += String.fromCharCode(r.int(128));
-    }
-  }
-  const bytes = Buffer.from(text, r.chance(0.8) ? "utf8" : "latin1");
-  return Buffer.from(
-    [...bytes].flatMap((b) => (b === 0xff ? [b, b] : [b])),
-  ).toString("hex");
-}
-
-/** NVT host output on nvt-data.trc, mixed with typing and reading. @param {Rng} r */
-export function nvtCase(r) {
-  /** @type {Step[]} */
-  const actions = [];
-  const steps = 10 + r.int(25);
-  for (let i = 0; i < steps; i++) {
-    const roll = r.next();
-    if (roll < 0.55) actions.push(["host", `0500000000${nvtBytes(r)}ffef`]);
-    else if (roll < 0.75)
-      actions.push(
-        r.chance(0.6)
-          ? ["String", typedText(r)]
-          : [r.pick(["Enter", "Tab", "BackSpace", "Left", "Right", "Home"])],
-      );
-    else
-      actions.push(
-        r.pick([
-          /** @type {Step} */ (["Ascii"]),
-          ["NvtText"],
-          ["Query", "Cursor"],
-          ["ReadBuffer"],
-          ["Ascii", r.int(24), r.int(80), 1 + r.int(80)],
-        ]),
-      );
-  }
-  actions.push(["Ascii"], ["NvtText"]);
-  return { trace: "nvt-data.trc", actions };
-}
-
 export const CASES = {
   keyboard: keyboardCase,
   datastream: dataStreamCase,
-  nvt: nvtCase,
 };
 
 /**
  * Plays one case against both emulators; a mismatch names the case and lists the steps to replay.
- * b3270 hangs or crashes on some inputs (see test/script.test.js); then there is nothing to compare,
+ * b3270 hangs or crashes on some inputs; then there is nothing to compare,
  * and the case only has to finish on our side.
  * @param {string} label what replays it, like "keyboard seed 42"
  * @param {{trace: string, actions: Step[]}} fuzzCase
@@ -506,6 +409,5 @@ export function fuzz(data) {
     if (!netInput(s, record)) break;
     session.flush();
   }
-  clearTimeout(s.ui?.statsTimer ?? undefined);
   clearTimeout(s.unlockTimer ?? undefined);
 }

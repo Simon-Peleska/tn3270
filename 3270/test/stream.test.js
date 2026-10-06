@@ -4,7 +4,6 @@ import { readFileSync, readdirSync } from "node:fs";
 import net from "node:net";
 import tls from "node:tls";
 import { Session } from "../src/index.js";
-import { utf8ToUnicode } from "../src/nvt.js";
 import {
   FakeHost,
   TRACES,
@@ -151,48 +150,6 @@ test("saveLines 0 keeps no scrollback at all, unlike b3270's five screens", asyn
   );
 });
 
-// Typing over an SO that sits right before a field attribute wipes the attribute, in x3270
-// too. Restoring a saved screen full of SOs wipes all of them, and b3270 then spins forever
-// walking from field to field. On a pool thread that would freeze every session on it.
-const WIPE_EVERY_FIELD = /** @type {[string, ...(string | number)[]][]} */ ([
-  ["HexString", "0e99ee74"],
-  ["SaveInput"],
-  ["RestoreInput"],
-]);
-
-test("every field walk still ends on a formatted screen whose field attributes were typed away", async () => {
-  const { lines, received } = await scenario(startOurs(), "three-fields.trc", [
-    ...WIPE_EVERY_FIELD,
-    ["Query", "Formatted"],
-    ["FieldEnd"],
-    ["DeleteField"],
-    ["EraseEOF"],
-    ["PF", 12],
-    ["ClearRegion", 1, 1, 43, 80],
-    ["DeleteWord"],
-    ["EraseInput"],
-    ["Query", "Formatted"],
-  ]);
-  const answers = lines.flatMap(
-    (line) => line.match(/"text":\["((?:un)?formatted)"\]/)?.[1] ?? [],
-  );
-  assert.deepEqual(answers, ["formatted", "unformatted"]);
-  // PF12 reads the screen as an unformatted one: AID, cursor, then every character.
-  assert.ok(received.includes("00000000007c40c5400e99ee40ffef"), received);
-});
-
-test("the host's Erase All Unprotected still ends on a screen whose field attributes were typed away", async () => {
-  const { lines } = await scenario(startOurs(), "three-fields.trc", [
-    ...WIPE_EVERY_FIELD,
-    ["host", "00000000006fffef"],
-    ["Query", "Formatted"],
-  ]);
-  assert.ok(
-    lines.some((line) => line.includes('"text":["unformatted"]')),
-    lines.join("\n"),
-  );
-});
-
 const QUERY_KEYS = [
   "BindPluName",
   "CodePage",
@@ -245,47 +202,12 @@ const QUERIES = [
   ["Query", "Model", "x"],
 ];
 
-for (const trace of ["three-fields.trc", "nvt-data.trc", "ibmlink.trc"])
+for (const trace of ["three-fields.trc", "ibmlink.trc"])
   test(
     `Query and Show answer like b3270 (${trace})`,
     { skip: noB3270, timeout: 20_000 },
     () => compare(trace, QUERIES, QUERIES),
   );
-
-test(
-  "NVT data scrolling off the top fills the scrollback like b3270",
-  { skip: noB3270, timeout: 20_000 },
-  () =>
-    compare("nvt-data.trc", [
-      ["Scroll", "Backward"],
-      ["Scroll", "Set", "3"],
-      ["Scroll", "Forward"],
-      ["Scroll", "Backward"],
-      ["String", "x"],
-    ]),
-);
-
-test("NVT UTF-8 decoding rejects pseudo-UCS4 past U+10FFFF, unlike x3270's own decoder", () => {
-  // x3270's utf8_to_unicode() predates the Unicode ceiling and never checks for it, so a
-  // 4/5/6-byte sequence can decode past U+10FFFF there without complaint. node3270 must
-  // reject it instead: String.fromCodePoint() throws on that when the UI renders the
-  // screen, which used to crash the whole process - found by fuzzing a live NVT session.
-  const v = { ch: 0 };
-  assert.equal(
-    utf8ToUnicode(v, Uint8Array.from([0xf4, 0x90, 0x80, 0x80]), 4),
-    -1,
-  );
-  assert.equal(
-    utf8ToUnicode(v, Uint8Array.from([0xf7, 0xbf, 0xbf, 0xbf]), 4),
-    -1,
-  );
-  // U+10FFFF itself, the true max, must still decode.
-  assert.equal(
-    utf8ToUnicode(v, Uint8Array.from([0xf4, 0x8f, 0xbf, 0xbf]), 4),
-    4,
-  );
-  assert.equal(v.ch, 0x10ffff);
-});
 
 test(
   "classic toggles and deferred settings stream like b3270",
@@ -467,7 +389,7 @@ test(
   { skip: noB3270, timeout: 20_000 },
   () =>
     compare(
-      "three-fields.trc",
+      "wont-tn3270e.trc",
       [["ReadBuffer", "Ascii"]],
       [],
       "c:LUA\\,X@N:[127.0.0.1]:PORT=accepted.example",

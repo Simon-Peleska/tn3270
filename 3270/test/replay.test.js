@@ -8,6 +8,7 @@ import { FakeHost, parseTrace } from "../../test/fakehost.js";
 import { Session } from "../src/index.js";
 import { CSTATE_NAMES } from "../src/ui.js";
 import { TRACES, UNLOCK_KEYBOARD, noB3270, startB3270 } from "./harness.js";
+import { screenText, statusString } from "./read.js";
 
 // Every trace is replayed into our Session and into a real s3270 with the same options.
 // Everything each one sends to the host, from the first TELNET byte on, must match,
@@ -26,18 +27,6 @@ const AID_ACTIONS = new Set(["Enter", "PF", "PA", "Clear"]);
  * @typedef {[string, ...(string | number)[]]} Action
  * @typedef {{ sent: string, screen: string[], status: string, results: boolean[] }} Outcome
  */
-
-/** Pseudo-action: the host sends this text as TN3270E NVT data. */
-const HOST_NVT = "HostNvt";
-
-/** @param {FakeHost} host @param {string} text */
-async function sendNvt(host, text) {
-  const body = [...Buffer.from(text, "utf8")].flatMap((b) =>
-    b === 0xff ? [0xff, 0xff] : [b],
-  );
-  host.socket?.write(Buffer.from([0x05, 0, 0, 0, 0, ...body, 0xff, 0xef]));
-  await host.sendTimingMark();
-}
 
 /** @param {string} trace */
 function recordCount(trace) {
@@ -76,10 +65,10 @@ function b3270Status(session) {
 }
 
 /**
- * @param {string} trace @param {Action[]} actions @param {boolean} nvt @param {"s3270" | "b3270"} frontend
+ * @param {string} trace @param {Action[]} actions @param {"s3270" | "b3270"} frontend
  * @returns {Promise<Outcome>}
  */
-async function withOurs(trace, actions, nvt, frontend) {
+async function withOurs(trace, actions, frontend) {
   const host = await FakeHost.listen(TRACES + trace);
   const session = new Session({ frontend, model: "3279-4-E" });
   try {
@@ -91,17 +80,18 @@ async function withOurs(trace, actions, nvt, frontend) {
     /** @type {boolean[]} */
     const results = [];
     for (const [name, ...args] of actions) {
-      if (name === HOST_NVT) {
-        await sendNvt(host, String(args[0]));
-        continue;
-      }
       results.push(/** @type {boolean} */ (session.action(name, ...args)));
-      if (!nvt && AID_ACTIONS.has(name)) await answerAid(host, from, ++aids);
+      if (AID_ACTIONS.has(name)) await answerAid(host, from, ++aids);
     }
     await host.sendTimingMark();
     const status =
-      frontend === "s3270" ? session.status() : b3270Status(session);
-    return { sent: host.received, screen: session.text(), status, results };
+      frontend === "s3270" ? statusString(session.s) : b3270Status(session);
+    return {
+      sent: host.received,
+      screen: screenText(session.s),
+      status,
+      results,
+    };
   } finally {
     session.close();
     await host.close();
@@ -195,8 +185,8 @@ function quote(arg) {
   return `"${String(arg).replaceAll('"', '\\"')}"`;
 }
 
-/** @param {string} trace @param {Action[]} actions @param {boolean} nvt @returns {Promise<Outcome>} */
-async function withS3270(trace, actions, nvt) {
+/** @param {string} trace @param {Action[]} actions @returns {Promise<Outcome>} */
+async function withS3270(trace, actions) {
   const host = await FakeHost.listen(TRACES + trace);
   const s3270 = await startS3270();
   try {
@@ -207,13 +197,9 @@ async function withS3270(trace, actions, nvt) {
     /** @type {boolean[]} */
     const results = [];
     for (const [name, ...args] of actions) {
-      if (name === HOST_NVT) {
-        await sendNvt(host, String(args[0]));
-        continue;
-      }
       // An AID action only finishes once the host unlocks the keyboard.
       const done = s3270.run(`${name}(${args.map(quote).join(",")})`);
-      if (!nvt && AID_ACTIONS.has(name)) await answerAid(host, from, ++aids);
+      if (AID_ACTIONS.has(name)) await answerAid(host, from, ++aids);
       results.push((await done).ok);
     }
     await host.sendTimingMark();
@@ -226,8 +212,8 @@ async function withS3270(trace, actions, nvt) {
   }
 }
 
-/** @param {string} trace @param {Action[]} actions @param {boolean} nvt @returns {Promise<Outcome>} */
-async function withB3270(trace, actions, nvt) {
+/** @param {string} trace @param {Action[]} actions @returns {Promise<Outcome>} */
+async function withB3270(trace, actions) {
   const host = await FakeHost.listen(TRACES + trace);
   const b3270 = startB3270();
   try {
@@ -238,12 +224,8 @@ async function withB3270(trace, actions, nvt) {
     /** @type {boolean[]} */
     const results = [];
     for (const [name, ...args] of actions) {
-      if (name === HOST_NVT) {
-        await sendNvt(host, String(args[0]));
-        continue;
-      }
       const done = b3270.run(name, args);
-      if (!nvt && AID_ACTIONS.has(name)) await answerAid(host, from, ++aids);
+      if (AID_ACTIONS.has(name)) await answerAid(host, from, ++aids);
       results.push((await done).success);
     }
     await host.sendTimingMark();
@@ -264,15 +246,14 @@ async function withB3270(trace, actions, nvt) {
 
 /**
  * Checks us against s3270 and, with the b3270 front end, against b3270.
- * In NVT mode AID keys send escape sequences, so there is no AID record to answer.
- * @param {string} trace @param {Action[]} actions @param {{nvt?: boolean}} [options]
+ * @param {string} trace @param {Action[]} actions
  */
-async function compare(trace, actions, { nvt = false } = {}) {
+async function compare(trace, actions) {
   const [oursS, s3270, oursB, b3270] = await Promise.all([
-    withOurs(trace, actions, nvt, "s3270"),
-    withS3270(trace, actions, nvt),
-    noB3270 ? undefined : withOurs(trace, actions, nvt, "b3270"),
-    noB3270 ? undefined : withB3270(trace, actions, nvt),
+    withOurs(trace, actions, "s3270"),
+    withS3270(trace, actions),
+    noB3270 ? undefined : withOurs(trace, actions, "b3270"),
+    noB3270 ? undefined : withB3270(trace, actions),
   ]);
   for (const [name, ours, theirs] of /** @type {const} */ ([
     ["s3270", oursS, s3270],
@@ -343,103 +324,4 @@ test(
       ["String", "q"],
       ["Enter"],
     ]),
-);
-
-const ESC = "\x1b";
-
-test(
-  "NVT cursor motion, erasing and editing",
-  { skip: noS3270, timeout: 20_000 },
-  () =>
-    compare("nvt-data.trc", [
-      [
-        HOST_NVT,
-        `${ESC}[2J${ESC}[H0123456789\r\nabcdefghij${ESC}[5;10Hmid${ESC}[2A<${ESC}[3B>${ESC}[4D!${ESC}[20C?`,
-      ],
-      [
-        HOST_NVT,
-        `${ESC}[1;3H${ESC}[2P${ESC}[2;4H${ESC}[3@${ESC}[4hINS${ESC}[4l${ESC}[5;1H${ESC}[K${ESC}[6;5H${ESC}[1K`,
-      ],
-      [
-        HOST_NVT,
-        `${ESC}[3;1HL3\r\nL4\r\nL5${ESC}[4;1H${ESC}[2L${ESC}[1;1H${ESC}[M${ESC}[10G@${ESC}[8d#${ESC}[s`,
-      ],
-      [
-        HOST_NVT,
-        `\ttab\tx${ESC}[1;20H${ESC}H${ESC}[1;1H\t=${ESC}[3g\t+${ESC}7${ESC}[40;70Hfar${ESC}8saved${ESC}[6n${ESC}[5n${ESC}[c`,
-      ],
-    ]),
-);
-
-test(
-  "NVT wrapping, scrolling regions and the alternate screen",
-  { skip: noS3270, timeout: 20_000 },
-  () =>
-    compare("nvt-data.trc", [
-      [
-        HOST_NVT,
-        `${ESC}[2J${ESC}[1;75Hwrapping-past-the-edge${ESC}[?7l${ESC}[3;75Hno-wrap-here${ESC}[?7h`,
-      ],
-      [
-        HOST_NVT,
-        `${ESC}[5;10r${ESC}[10;1Hone\ntwo\nthree${ESC}M${ESC}[5;1H${ESC}M${ESC}Mrev${ESC}Edown${ESC}[r`,
-      ],
-      [
-        HOST_NVT,
-        `${ESC}[43;1Hbottom\n\nscrolled${ESC}[?1049hALT${ESC}[2;2Halt-screen${ESC}[?1049lback`,
-      ],
-      [
-        HOST_NVT,
-        `${ESC}[20;1H${ESC}[1;31;44mcolor${ESC}[0m${ESC}(0lqqk${ESC}(B${ESC})0\x0eqq\x0f${ESC}(A#`,
-      ],
-      [
-        HOST_NVT,
-        `${ESC}[25;1Hgrüße € 日本語 bad:\xff\xfe ok${ESC}[25;2H漢${ESC}[26;80H字${ESC}]0;title\x07after`,
-      ],
-    ]),
-);
-
-test(
-  "NVT keys follow application cursor mode",
-  { skip: noS3270, timeout: 20_000 },
-  () =>
-    compare(
-      "nvt-data.trc",
-      [
-        ["Up"],
-        ["Left"],
-        ["Home"],
-        ["PF", 1],
-        ["PF", 5],
-        ["PF", 24],
-        ["PA", 2],
-        ["Clear"],
-        ["PageUp"],
-        [HOST_NVT, `${ESC}[?1h`],
-        ["Up"],
-        ["Right"],
-        ["Down"],
-        ["Home"],
-        [HOST_NVT, `${ESC}[?1l`],
-        ["Down"],
-        ["String", "hi\\n"],
-      ],
-      { nvt: true },
-    ),
-);
-
-test(
-  "NVT line mode edits locally and sends whole lines",
-  { skip: noS3270, timeout: 20_000 },
-  () =>
-    compare(
-      "nvt-data.trc",
-      [
-        ["String", "abc def\\x17gh\\x08i\\x7fj"],
-        ["String", "\\x12 more\\x15xyz\\x16\\x08\\x5c\\x08 \\n"],
-        ["String", "日本\\x08語\\x17wide\\n"],
-        ["String", "dropped\\x03 after\\x1c quit\\x04"],
-      ],
-      { nvt: true },
-    ),
 );

@@ -4,22 +4,15 @@ import { ALIASES, CODE_PAGES } from "./codepages.js";
 import { erase, newCells, setRowsCols } from "./ctlr.js";
 import {
   in3270,
-  inNvt,
   MODEL_SIZES,
   NOT_CONNECTED,
   TELNET_PENDING,
 } from "./session.js";
 import { insertMode } from "./kybd.js";
-import {
-  netCharmode,
-  netLinemode,
-  netNopSeconds,
-  netSetDefaultTermtype,
-} from "./telnet.js";
+import { netNopSeconds, netSetDefaultTermtype } from "./telnet.js";
 import {
   actionOutput,
   popupError,
-  reportTerminalName,
   screenChangeModel,
   screenDisp,
   statusFlag,
@@ -279,8 +272,6 @@ function modelDone(s, success, defer) {
     s.maxCols = ovc || modelCols;
     const size = s.maxRows * s.maxCols;
     Object.assign(s, newCells(size));
-    s.altCells = null;
-    s.isAltbuffer = false;
     setRowsCols(s);
     netSetDefaultTermtype(s);
     s.rows = s.maxRows;
@@ -288,7 +279,7 @@ function modelDone(s, success, defer) {
   }
   screenChangeModel(s);
   if (resize) erase(s, true);
-  if (s.options.termName === null) reportTerminalName(s);
+  if (s.options.termName === null) s.ui?.b3270?.terminalName(s);
   if (p.model !== null) s.options.model = p.model;
   if (p.oversize) s.options.oversize = p.oversize;
   else if (p.oversize === "") {
@@ -564,17 +555,8 @@ const EXTENDED = [
   {
     name: "lineMode",
     type: "boolean",
-    get: (s) => s.linemode,
-    set(s, _typed, value) {
-      if (!inNvt(s))
-        return reject(s, "N9038", "Can only change lineMode in NVT mode");
-      const b = boolstr(value);
-      if (b === null)
-        return reject(s, "N9039", "lineMode value must be true or false");
-      if (b) netLinemode(s);
-      else netCharmode(s);
-      return OK;
-    },
+    get: () => true,
+    set: (s) => reject(s, "N9038", "Can only change lineMode in NVT mode"),
   },
   {
     name: "noTelnetInputMode",
@@ -654,9 +636,6 @@ export function doToggle(s, name) {
   s.options[name] = on;
   s.log.debug(`toggle ${name} ${on}`);
   switch (name) {
-    case "lineWrap":
-      s.nvt.wraparoundMode = on;
-      break;
     case "visibleControl":
       if (s.ui) screenDisp(s, true);
       break;
@@ -681,7 +660,6 @@ export function doToggle(s, name) {
       break;
   }
   s.ui?.out("setting", { name, value: on });
-  if (name === "trace") s.ui?.out("trace-file", {});
 }
 
 /** split_equals(): "x=y" counts as two arguments where a name is expected. @param {string[]} args */
@@ -909,7 +887,6 @@ export function initialSettings(s) {
   }
   for (const name of CLASSIC) {
     list.push({ kind: "setting", body: { name, value: s.options[name] } });
-    if (name === "trace") list.push({ kind: "trace-file", body: {} });
   }
   return list;
 }

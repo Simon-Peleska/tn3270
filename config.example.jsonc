@@ -15,9 +15,6 @@
     // Connect to hosts over TLS by default. Set false for plain telnet.
     "tls": true,
 
-    // Threads the sessions are spread over; 0 is one per CPU core.
-    "workers": 0,
-
     // Any of x3270's resources that node3270 has, by name, with a value of its
     // type: true/false, a number or a string. A name it lacks stops the start.
     // https://x3270.miraheze.org/wiki/Category:Resources

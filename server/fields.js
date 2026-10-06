@@ -10,18 +10,16 @@ import {
  * buffer, and its own cell is never typeable.
  *
  * @param {ArrayLike<number>} fa row-major, one per cell
- * @returns {{ editable: boolean[], hidden: boolean[], formatted: boolean }}
- *   `editable`/`hidden` are row-major, as long as `fa`
+ * @returns {{ editable: Uint8Array, hidden: Uint8Array, formatted: boolean }}
+ *   `editable`/`hidden` are row-major, as long as `fa`, 1 where marked
  */
 export function fieldMap(fa) {
   const size = fa.length;
   let last = -1;
   for (let i = size - 1; i >= 0 && last < 0; i--) if (fa[i]) last = i;
 
-  /** @type {boolean[]} */
-  const editable = new Array(size).fill(false);
-  /** @type {boolean[]} */
-  const hidden = new Array(size).fill(false);
+  const editable = new Uint8Array(size);
+  const hidden = new Uint8Array(size);
   // An unformatted screen is all unprotected, but tinting every cell is wrong.
   if (last < 0) return { editable, hidden, formatted: false };
 
@@ -33,8 +31,8 @@ export function fieldMap(fa) {
       isHidden = (fa[i] & FA_INTENSITY) === FA_INT_ZERO_NSEL;
       continue;
     }
-    editable[i] = !isProtected;
-    hidden[i] = isHidden;
+    editable[i] = isProtected ? 0 : 1;
+    hidden[i] = isHidden ? 1 : 0;
   }
   return { editable, hidden, formatted: true };
 }

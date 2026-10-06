@@ -12,7 +12,7 @@ import { in3270, CONNECTED_UNBOUND, isConnected } from "./session.js";
 import { KL_SCROLLED } from "./kybd.js";
 
 /** @typedef {import("./session.js").State} State */
-/** One typed array per cell attribute, maxCols cells per row. @typedef {Record<(typeof CELL_ARRAYS)[number], Uint8Array | Uint32Array>} Rows */
+/** One typed array per cell attribute, maxCols cells per row. @typedef {Record<(typeof CELL_ARRAYS)[number], Uint8Array>} Rows */
 
 const HOST_COLOR_BLACK = 8;
 
@@ -33,39 +33,13 @@ export function createScroll() {
     top: 0,
     topBase: 0,
     shown: 1,
-    last: { top: -1, shown: -1, saved: -1, back: -1 },
   };
 }
 /** @typedef {ReturnType<typeof createScroll>} Scroll */
 
-/** b3270 prints thumb doubles with %g, and scroll.c computes them in float. @param {number} x */
-function g(x) {
-  return Number(Math.fround(x).toPrecision(6));
-}
-
-/** screen_set_thumb(): b3270 drops repeats. @param {State} s */
+/** screen_set_thumb() @param {State} s */
 function setThumb(s, top = s.scroll.top) {
-  const sc = s.scroll;
-  const last = sc.last;
-  if (!s.ui) return;
-  if (
-    top === last.top &&
-    sc.shown === last.shown &&
-    sc.saved === last.saved &&
-    sc.back === last.back
-  )
-    return;
-  last.top = top;
-  last.shown = sc.shown;
-  last.saved = sc.saved;
-  last.back = sc.back;
-  s.ui?.out("thumb", {
-    top: g(top),
-    shown: g(sc.shown),
-    saved: sc.saved,
-    screen: s.maxRows,
-    back: sc.back,
-  });
+  s.ui?.b3270?.thumb(s, top);
 }
 
 /** @param {State} s @param {number} rows @returns {Rows} */
@@ -145,12 +119,12 @@ function push(s, fill) {
   if (sc.saved < sc.max) sc.saved++;
 }
 
-/** scroll_save(): saves n lines from the top of the screen. @param {State} s @param {number} n */
-export function scrollSave(s, n) {
+/** scroll_save(): saves the screen before the host replaces it. @param {State} s */
+export function scrollSave(s) {
   const sc = s.scroll;
   if (!sc.max) return;
   if (sc.back) syncScroll(s, 0);
-  for (let row = 0; row < n; row++) {
+  for (let row = 0; row < s.maxRows; row++) {
     if (row < s.rows)
       push(s, (rows, at) => {
         copyFromScreen(s, rows, at, row * s.cols);
@@ -158,12 +132,8 @@ export function scrollSave(s, n) {
       });
     else push(s, (rows, at) => fillDefaults(s, rows, at, 0));
   }
-  // x3270 advances only once here, however many rows it means to pad.
-  if (n === s.rows && n < s.maxRows)
-    push(s, (rows, at) => fillDefaults(s, rows, at, 0));
-
-  // A whole screen that ended off a screenful boundary was scrolled NVT data.
-  if (n !== 1 && sc.next % s.maxRows) {
+  // Keeps the saved screens on screenful boundaries, which a model change can shift.
+  if (sc.next % s.maxRows) {
     for (let pad = s.maxRows - (sc.next % s.maxRows); pad; pad--)
       push(s, (rows, at) => fillDefaults(s, rows, at, 0));
   }

@@ -13,7 +13,7 @@ function screen(rows, attributes) {
 }
 
 /**
- * @param {boolean[]} map
+ * @param {Uint8Array} map
  * @param {number} cols
  * @returns {string[]} one string per row, '.' unmarked and '#' marked
  */
@@ -21,8 +21,7 @@ function picture(map, cols) {
   const rows = [];
   for (let i = 0; i < map.length; i += cols) {
     rows.push(
-      map
-        .slice(i, i + cols)
+      Array.from(map.slice(i, i + cols))
         .map((cell) => (cell ? "#" : "."))
         .join(""),
     );

@@ -54,9 +54,7 @@ for (const m of block("cpalias_t cpaliases[]").matchAll(
   aliases[m[1]] = m[2];
 
 const apl2uc = numbers(block("static ucs4_t apl2uc[256]"));
-const ld2uc = numbers(block("static ucs4_t ld2uc[32]"));
-if (apl2uc.length !== 256 || ld2uc.length !== 32)
-  throw new Error("table sizes changed");
+if (apl2uc.length !== 256) throw new Error("table sizes changed");
 
 const hex = (/** @type {number[]} */ list) =>
   list.map((n) => `0x${n.toString(16)}`).join(",");
@@ -70,8 +68,7 @@ for (const p of pages) {
 }
 out += "};\n\n";
 out += `export const ALIASES = ${JSON.stringify(aliases, null, 2)};\n\n`;
-out += `export const APL2UC = [${hex(apl2uc)}];\n\n`;
-out += `export const LD2UC = [${hex(ld2uc)}];\n`;
+out += `export const APL2UC = [${hex(apl2uc)}];\n`;
 writeFileSync(new URL("../src/codepages.js", import.meta.url), out);
 console.log(
   `${pages.length} code pages, ${Object.keys(aliases).length} aliases`,

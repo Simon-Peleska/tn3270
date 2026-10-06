@@ -25,20 +25,6 @@ export function setLogLevel(level) {
   threshold = level;
 }
 
-/** @type {((line: string) => void) | null} */
-let sink = null;
-
-/**
- * Hand every line to `write` instead: a worker thread's lines go to the main thread,
- * which alone owns stderr's ordering and the log file's rollover.
- *
- * @param {(line: string) => void} write
- * @returns {void}
- */
-export function setLogSink(write) {
-  sink = write;
-}
-
 /** @returns {boolean} */
 export function logsDebug() {
   return threshold === "debug";
@@ -73,10 +59,6 @@ export function closeLogFile() {
  * @returns {void}
  */
 function write(line) {
-  if (sink !== null) {
-    sink(line);
-    return;
-  }
   process.stderr.write(line);
   if (file === null) return;
 
@@ -157,5 +139,3 @@ export function logger(scope, context = {}) {
 }
 
 /** @typedef {ReturnType<typeof logger>} Logger */
-
-export { write as writeLogLine };

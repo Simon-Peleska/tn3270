@@ -5,7 +5,7 @@ import { AppError } from "./errors.js";
 /**
  * @typedef {object} Config
  * @property {{ host: string, port: number }} server
- * @property {{ model: number, defaultHost: string | null, tls: boolean, settings: Settings, workers: number }} emulator
+ * @property {{ model: number, defaultHost: string | null, tls: boolean, settings: Settings }} emulator
  * @property {{ maxSessions: number, maxViewersPerSession: number, idleTimeoutMs: number }} sessions
  * @property {{ allowedHosts: string[], trustProxyHeaders: boolean }} security
  * @property {'debug' | 'info' | 'warn' | 'error'} logLevel
@@ -107,8 +107,6 @@ const DEFAULTS = {
       // costs a few MB per session.
       saveLines: 0,
     },
-    // Worker threads the sessions are spread over; 0 is one per core.
-    workers: 0,
   },
   sessions: {
     maxSessions: 16,
@@ -318,17 +316,6 @@ export function validateConfig(raw) {
     );
   }
 
-  const workers = num(
-    emulatorSection,
-    "emulator",
-    "workers",
-    DEFAULTS.emulator.workers,
-    0,
-    1024,
-  );
-  if (!Number.isInteger(workers))
-    throw new AppError("E1004", '"emulator.workers" must be a whole number');
-
   const logLevel = str(root, "", "logLevel", DEFAULTS.logLevel);
   if (
     logLevel !== "debug" &&
@@ -362,7 +349,6 @@ export function validateConfig(raw) {
         ...DEFAULTS.emulator.settings,
         ...settings(emulatorSection, "emulator", "settings"),
       },
-      workers,
     },
     sessions: {
       maxSessions: num(

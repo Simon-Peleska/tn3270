@@ -204,7 +204,7 @@ async function handleRequest(req, res) {
 
   const terminateMatch = /^\/api\/sessions\/([0-9a-fA-F-]{36})$/.exec(path);
   if (terminateMatch !== null && req.method === "DELETE") {
-    await registry.terminate(
+    registry.terminate(
       String(terminateMatch[1]),
       header(req, "x-session-pass"),
     );
@@ -215,7 +215,7 @@ async function handleRequest(req, res) {
 
   if (path === "/api/sessions" && req.method === "GET") {
     sendJson(res, 200, {
-      sessions: await registry.list(),
+      sessions: registry.list(),
       defaultHost: config.emulator.defaultHost,
     });
     return;
@@ -265,7 +265,7 @@ server.on("upgrade", (req, socket, head) => {
 
   const id = String(match[1]);
   try {
-    registry.threadOf(id);
+    registry.get(id);
   } catch (err) {
     const { code, summary } = describeError(err);
     log.error(err, { path: url.pathname, ...client });
@@ -283,9 +283,6 @@ server.on("upgrade", (req, socket, head) => {
 });
 
 /**
- * The session itself runs on a worker thread: this only passes frames to it and its
- * messages, serialized there, back out.
- *
  * @param {string} id
  * @param {import('ws').WebSocket} ws
  * @param {import('node:stream').Duplex} socket the connection under `ws`
@@ -296,8 +293,8 @@ server.on("upgrade", (req, socket, head) => {
 function attachViewer(id, ws, socket, client, pass) {
   /** @type {ReturnType<SessionRegistry["attach"]>} */
   let viewer;
-  // Under load the workers' frames for one viewer pile up within a turn, and a
-  // system call per frame is most of what this thread does.
+  // Under load a viewer's frames pile up within a turn, and a system call per
+  // frame would be much of what the server does.
   let corked = false;
   try {
     viewer = registry.attach(id, client, pass, {

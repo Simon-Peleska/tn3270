@@ -1,4 +1,4 @@
-import { ALIASES, APL2UC, CODE_PAGES, LD2UC } from "./codepages.js";
+import { ALIASES, APL2UC, CODE_PAGES } from "./codepages.js";
 import { NodeError } from "./errors.js";
 
 // Port of the single-byte parts of x3270's Common/unicode.c. Tables are built
@@ -6,7 +6,6 @@ import { NodeError } from "./errors.js";
 
 export const CS_BASE = 0x00;
 export const CS_APL = 0x01;
-export const CS_LINEDRAW = 0x02;
 export const CS_DBCS = 0x03;
 export const CS_MASK = 0x03;
 export const CS_GE = 0x04;
@@ -96,9 +95,4 @@ export function unicodeToEbcdic(cp, u, preferApl = false) {
 /** An underlined APL letter, which x3270 shows as the plain letter underlined. @param {number} c */
 export function aplUnderlined(c) {
   return !APL2UC[c] && UNDERLINED_APL.includes(c);
-}
-
-/** @param {number} ucs4 */
-export function linedrawToUnicode(ucs4) {
-  return LD2UC[ucs4 % 32];
 }

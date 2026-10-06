@@ -1,8 +1,7 @@
 # tn3270
 
 An IBM 3270 terminal in a browser tab. A Node server runs every session on
-node3270 (`3270/`), a port of x3270's `b3270` that runs in-process on a pool of
-worker threads; the page draws the screen onto a canvas of its own, with no
+node3270 (`3270/`), a port of x3270's `b3270` that runs in-process; the page draws the screen onto a canvas of its own, with no
 bundler and one runtime dependency. Share the URL and the other person sees the
 same screen live.
 

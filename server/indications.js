@@ -1,18 +1,6 @@
 // The JSON indications the emulator reports, as session.js reads them. Types only.
 
 /**
- * @typedef {object} ScreenChange
- * @property {number} column 1-based
- * @property {string} [text]
- * @property {number} [count]
- * @property {string} [fg]
- * @property {string} [bg]
- * @property {string} [gr] comma-separated graphic rendition list
- *
- * @typedef {object} ScreenRow
- * @property {number} row 1-based
- * @property {ScreenChange[]} changes
- *
  * @typedef {object} ScreenCursor
  * @property {boolean} [enabled]
  * @property {number} [row] 1-based
@@ -20,7 +8,7 @@
  *
  * @typedef {object} ScreenIndication
  * @property {ScreenCursor} [cursor]
- * @property {ScreenRow[]} [rows]
+ * @property {number[]} [rows] 1-based, the ones that changed
  *
  * @typedef {object} EraseIndication
  * @property {number} [logical-rows]

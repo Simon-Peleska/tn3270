@@ -1,147 +1,26 @@
-// Sessions live on worker threads (worker.js), so a busy server uses every core for them. This
-// side only picks a thread for each new session, remembers where each one lives, and passes
-// requests and websocket frames through.
-import { availableParallelism } from "node:os";
-import { Worker } from "node:worker_threads";
+// The open sessions, and the websockets watching them: each frame from a browser goes to its
+// session, each message back is serialized and handed to the socket.
 import { randomUUID } from "node:crypto";
-import { AppError } from "./errors.js";
-import { logger, writeLogLine } from "./log.js";
+import { Session } from "./session.js";
+import { parseClientMessage } from "./protocol.js";
+import { AppError, describeError } from "./errors.js";
+import { logger } from "./log.js";
 
 /**
- * @typedef {object} Thread
- * @property {Worker} worker
- * @property {Set<string>} sessions
- * @property {number} creating sessions asked for and not yet there, which count as there
- * @property {Map<string, ViewerSocket>} viewers
- * @property {Map<number, { resolve: (value: any) => void, reject: (err: Error) => void }>} requests
- * @property {boolean} dead
- */
-
-/**
- * The main thread's end of a viewer: its websocket.
+ * A viewer's websocket.
  * @typedef {object} ViewerSocket
- * @property {(text: string) => void} send a message already serialized by the worker
+ * @property {(text: string) => void} send a serialized message
  * @property {(code: number, reason: string) => void} close
  */
-
-/**
- * An error as the worker described it, rebuilt so it keeps its code here.
- * @param {{ code: string, summary: string }} remote
- * @returns {Error}
- */
-function rebuildError({ code, summary }) {
-  if (code === "E0000") return new Error(summary);
-  const err = new AppError(
-    /** @type {import('./errors.js').ErrorCode} */ (code),
-  );
-  err.summary = summary;
-  err.message = `[${code}] ${summary}`;
-  return err;
-}
 
 export class SessionRegistry {
   /** @param {import('./config.js').Config} config */
   constructor(config) {
     this.config = config;
     this.log = logger("registry");
-    this.size = config.emulator.workers || availableParallelism();
-    /** @type {Thread[]} */
-    this.threads = [];
-    /** @type {Map<string, Thread>} */
+    /** @type {Map<string, Session>} */
     this.sessions = new Map();
     this.creating = 0;
-    this.nextRequest = 1;
-  }
-
-  /** @returns {Thread} the thread with the fewest sessions, starting one while there are fewer than `size`. */
-  pickThread() {
-    if (this.threads.length < this.size) return this.startThread();
-    const load = (/** @type {Thread} */ thread) =>
-      thread.sessions.size + thread.creating;
-    let best = /** @type {Thread} */ (this.threads[0]);
-    for (const thread of this.threads)
-      if (load(thread) < load(best)) best = thread;
-    return best;
-  }
-
-  /** @returns {Thread} */
-  startThread() {
-    const worker = new Worker(new URL("./worker.js", import.meta.url), {
-      workerData: { config: this.config },
-    });
-    /** @type {Thread} */
-    const thread = {
-      worker,
-      sessions: new Set(),
-      creating: 0,
-      viewers: new Map(),
-      requests: new Map(),
-      dead: false,
-    };
-    this.threads.push(thread);
-    this.log.info("worker thread started", { threads: this.threads.length });
-
-    worker.on("message", (/** @type {any[]} */ message) => {
-      const [type] = message;
-      if (type === "send") {
-        thread.viewers.get(message[1])?.send(message[2]);
-      } else if (type === "close") {
-        thread.viewers.get(message[1])?.close(message[2], message[3]);
-      } else if (type === "log") {
-        writeLogLine(message[1]);
-      } else if (type === "reply") {
-        const [, request, value, error] = message;
-        const pending = thread.requests.get(request);
-        thread.requests.delete(request);
-        if (error) pending?.reject(rebuildError(error));
-        else pending?.resolve(value);
-      } else if (type === "closed") {
-        const id = message[1];
-        thread.sessions.delete(id);
-        this.sessions.delete(id);
-        this.log.info("session removed", {
-          session: id,
-          remaining: this.sessions.size,
-        });
-      }
-    });
-    const died = (/** @type {unknown} */ cause) => {
-      if (thread.dead) return;
-      thread.dead = true;
-      this.threads = this.threads.filter((t) => t !== thread);
-      const err = new AppError("E3016", "", cause);
-      this.log.error(err, {
-        sessions: thread.sessions.size,
-        viewers: thread.viewers.size,
-      });
-      for (const id of thread.sessions) this.sessions.delete(id);
-      for (const viewer of thread.viewers.values()) {
-        viewer.send(
-          JSON.stringify({
-            type: "error",
-            code: err.code,
-            message: err.summary,
-          }),
-        );
-        viewer.close(1011, err.code);
-      }
-      for (const pending of thread.requests.values()) pending.reject(err);
-    };
-    worker.on("error", died);
-    worker.on("exit", (code) => died(`exit code ${code}`));
-    return thread;
-  }
-
-  /**
-   * @param {Thread} thread @param {any[]} message the request id goes in second place
-   * @returns {Promise<any>}
-   */
-  ask(thread, [type, ...args]) {
-    const request = this.nextRequest++;
-    return new Promise((resolve, reject) => {
-      thread.requests.set(request, { resolve, reject });
-      thread.worker.postMessage([type, request, ...args]);
-    });
   }
 
   /**
@@ -152,43 +31,59 @@ export class SessionRegistry {
     const open = this.sessions.size + this.creating;
     if (open >= this.config.sessions.maxSessions)
       throw new AppError("E3002", `${open} sessions are already open`);
-    const thread = this.pickThread();
-    this.creating++;
-    thread.creating++;
-    try {
-      const described = await this.ask(thread, ["create", client]);
-      thread.sessions.add(described.id);
-      this.sessions.set(described.id, thread);
-      this.log.info("session created", {
-        session: described.id,
-        ...client,
-        total: this.sessions.size,
+    const session = new Session(this.config);
+    session.startedBy = client.user || client.ip || "Unknown";
+    session.onClosed = () => {
+      this.sessions.delete(session.id);
+      this.log.info("session removed", {
+        session: session.id,
+        remaining: this.sessions.size,
       });
-      return described;
+    };
+    this.creating++;
+    try {
+      if (this.config.emulator.defaultHost !== null)
+        session.connect(this.config.emulator.defaultHost);
+      await session.ready;
     } finally {
       this.creating--;
-      thread.creating--;
     }
+    this.sessions.set(session.id, session);
+    this.log.info("session created", {
+      session: session.id,
+      ...client,
+      total: this.sessions.size,
+    });
+    return {
+      id: session.id,
+      rows: session.screen.rows,
+      cols: session.screen.cols,
+      model: session.model,
+    };
   }
 
-  /** @param {string} id @returns {Thread} */
-  threadOf(id) {
-    const thread = this.sessions.get(id);
-    if (thread === undefined) throw new AppError("E3001", id);
-    return thread;
+  /** @param {string} id @returns {Session} */
+  get(id) {
+    const session = this.sessions.get(id);
+    if (session === undefined) throw new AppError("E3001", id);
+    return session;
   }
 
-  /** @param {string} id @param {string} pass @returns {Promise<void>} */
-  async terminate(id, pass) {
-    await this.ask(this.threadOf(id), ["terminate", id, pass]);
+  /** @param {string} id @param {string} pass @returns {void} */
+  terminate(id, pass) {
+    this.get(id).terminate(pass);
   }
 
-  /** @returns {Promise<Array<{ id: string, viewers: number, connection: string, host: string | null, startedAt: string, startedBy: string }>>} */
-  async list() {
-    const lists = await Promise.all(
-      this.threads.map((thread) => this.ask(thread, ["list"])),
-    );
-    return lists.flat();
+  /** @returns {Array<{ id: string, viewers: number, connection: string, host: string | null, startedAt: string, startedBy: string }>} */
+  list() {
+    return [...this.sessions.values()].map((session) => ({
+      id: session.id,
+      viewers: session.viewers.size,
+      connection: session.oia.connectionState,
+      host: session.oia.host,
+      startedAt: session.startedAt,
+      startedBy: session.startedBy,
+    }));
   }
 
   /**
@@ -200,34 +95,63 @@ export class SessionRegistry {
    * @returns {{ viewerId: string, message: (text: string) => void, detach: () => void }}
    */
   attach(id, client, pass, socket) {
-    const thread = this.threadOf(id);
+    const session = this.get(id);
     const viewerId = randomUUID().slice(0, 8);
-    thread.viewers.set(viewerId, socket);
-    thread.worker.postMessage(["attach", viewerId, id, client, pass]);
+    // What a viewer is sent in one turn, a paint and the status with it, goes
+    // out as one frame: an array when there is more than one message.
+    /** @type {import('./protocol.js').ServerMessage[] | null} */
+    let outbox = null;
+    let attached = true;
+    /** @type {import('./session.js').Viewer} */
+    const viewer = {
+      id: viewerId,
+      role: "observer",
+      ip: client.ip,
+      user: client.user,
+      pass,
+      sendMessage: (msg) => {
+        if (outbox === null) {
+          outbox = [];
+          queueMicrotask(() => {
+            const batch = /** @type {any[]} */ (outbox);
+            outbox = null;
+            socket.send(JSON.stringify(batch.length === 1 ? batch[0] : batch));
+          });
+        }
+        outbox.push(msg);
+      },
+      // Behind the messages still in the outbox, which say why.
+      close: (code = 1008, reason = "refused") =>
+        queueMicrotask(() => socket.close(code, reason)),
+    };
+    session.attach(viewer);
     return {
       viewerId,
       message: (text) => {
-        if (!thread.dead)
-          thread.worker.postMessage(["message", viewerId, text]);
+        if (!attached) return;
+        try {
+          session.handleClientMessage(viewer, parseClientMessage(text));
+        } catch (err) {
+          const { code, summary } = describeError(err);
+          this.log.warn("bad client message", {
+            session: id,
+            viewer: viewerId,
+            code,
+            summary,
+          });
+          viewer.sendMessage({ type: "error", code, message: summary });
+        }
       },
       detach: () => {
-        if (!thread.viewers.delete(viewerId) || thread.dead) return;
-        thread.worker.postMessage(["detach", viewerId]);
+        if (!attached) return;
+        attached = false;
+        session.detach(viewer);
       },
     };
   }
 
   /** @returns {void} */
   closeAll() {
-    for (const thread of this.threads) thread.worker.postMessage(["closeAll"]);
-  }
-
-  /** Ends every thread and the sessions on it, without the error a dying thread reports. @returns {Promise<void>} */
-  async stop() {
-    const threads = this.threads;
-    this.threads = [];
-    for (const thread of threads) thread.dead = true;
-    this.sessions.clear();
-    await Promise.all(threads.map((thread) => thread.worker.terminate()));
+    for (const session of [...this.sessions.values()]) session.close();
   }
 }

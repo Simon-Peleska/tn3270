@@ -13,7 +13,7 @@
  * A 3270 field can wrap past the last cell into the first, so the run there is
  * one run, taken from where it starts.
  *
- * @param {{ ch: string }[]} cells row-major
+ * @param {{ readonly length: number, at(i: number): { ch: string } | undefined }} cells row-major
  * @param {number[]} inputCells where the editable cells are, ascending
  * @param {boolean} fieldsFormatted an unformatted screen has no fields to track
  * @param {number} cols
@@ -33,7 +33,7 @@ export function editableSnapshot(
   const found = [];
   let previous = -2;
   for (const pos of inputCells) {
-    const ch = cells[pos]?.ch ?? " ";
+    const ch = cells.at(pos)?.ch ?? " ";
     const open = found[found.length - 1];
     if (open !== undefined && pos === previous + 1) open.text += ch;
     else found.push({ start: pos, text: ch });
@@ -69,7 +69,7 @@ export function editableSnapshot(
 
 /**
  * @param {Snapshot} snapshot
- * @param {{ ch: string, editable: boolean }[]} cells
+ * @param {{ readonly length: number, at(i: number): { ch: string, editable: boolean } | undefined }} cells
  * @param {number} cols
  * @returns {Run[]} the runs to erase and retype, in order
  */
@@ -81,7 +81,7 @@ export function changedRuns(snapshot, cells, cols) {
     /** @type {string | null} */
     let onScreen = "";
     for (let i = 0; i < run.text.length; i++) {
-      const cell = cells[(start + i) % cells.length];
+      const cell = cells.at((start + i) % cells.length);
       if (cell === undefined || !cell.editable) {
         onScreen = null;
         break;

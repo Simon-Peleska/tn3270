@@ -9,15 +9,16 @@ host, sees the host's screen, and types on it. A second person opening the same
 URL sees the same screen live.
 
 Out of scope for this build: file transfer (IND$FILE), printer sessions
-(`pr3287`), DBCS / double-width characters, scripting, and login/authentication.
+(`pr3287`), DBCS / double-width characters, scripting, plain-TELNET (NVT and
+line-mode) hosts, and login/authentication. A host that sends data before
+negotiating TN3270 is dropped with `N1203`.
 
 ## 2. Session lifecycle
 
 A **session** is one emulator and one host connection: one screen, one host
 connection, one keyboard. The emulator is node3270 (`3270/`), a port of x3270's
-`b3270 -json` that runs in the server's own process. Each session lives whole
-on one of a pool of worker threads, so they share the machine's cores; the main
-thread only serves HTTP and passes websocket frames to and from them.
+`b3270 -json` that runs in the server's own process, on its one thread, beside
+the HTTP and websocket serving.
 
 One page holds up to **4** sessions at once and shows one, two, three or four of
 them side by side (§5, `Ctrl-B`). Every session it holds keeps its WebSocket open
@@ -37,7 +38,6 @@ at it; `Ctrl-B` and a digit does the same from the keyboard.
 | A digit with no session behind it is pressed | A session is created for that slot and appended to the fragment (`E5006` if the server refuses)                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | Browser reloads or the network drops         | The session is untouched. The page shows the disconnect and retries with exponential backoff and jitter, asking `/api/sessions` before each attempt. It keeps waiting while the server does not answer. Once the server answers, it reattaches if the session still exists, or creates a new one if the server has reaped it (`E5014` if that fails). The reconnected page reloads itself, so a server that came back with newer page code is picked up; the fragment still names the same sessions, so it reattaches to them |
 | Last viewer detaches                         | The session is kept alive for `sessions.idleTimeoutMs`, then closed. A viewer attaching inside that window cancels the reaping                                                                                                                                                                                                                                                                                                                                                                                                |
-| A session thread dies                        | Its sessions close and every viewer is told (`E3016`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 Sharing the URL is how a session is shared: there is no invite step, and sharing
 a page that holds four sessions shares all four. But nobody gets in on the URL
@@ -503,7 +503,6 @@ Errors are JSON: `{"code":"E6001","message":"…"}` with a matching status.
 | `server.port`                   | `8017`                               | Listen port                                                                                                                                                                                                                                                                                                                                                                    |
 | `emulator.model`                | `2`                                  | 3270 model a session starts on, 2–5; changeable from the settings panel                                                                                                                                                                                                                                                                                                        |
 | `emulator.defaultHost`          | `null`                               | Connect new sessions here; `null` starts disconnected                                                                                                                                                                                                                                                                                                                          |
-| `emulator.workers`              | `0`                                  | Worker threads the sessions are spread over; `0` is one per CPU core                                                                                                                                                                                                                                                                                                           |
 | `emulator.settings`             | `{"nopSeconds": 60, "saveLines": 0}` | node3270's options, which are x3270's resources under the same names, each with a value of its default's type; anything else stops the start with `E1005` or `E1003`. `nopSeconds` sends a TELNET NOP after that many quiet seconds, so a firewall or NAT never drops the host connection as idle; `0` turns it off. `saveLines` is the scrollback, which the page never shows |
 | `sessions.maxSessions`          | `16`                                 | Refuses more with `E3002`                                                                                                                                                                                                                                                                                                                                                      |
 | `sessions.maxViewersPerSession` | `8`                                  | Refuses more with `E3003`                                                                                                                                                                                                                                                                                                                                                      |
@@ -521,7 +520,7 @@ and in the page. The blocks are subsystems, and a code belongs to the subsystem
 that decides it is an error rather than to the file that throws it: `E1xxx`
 config, `E2xxx` the emulator, `E3xxx` session, `E4xxx` client messages, `E5xxx`
 browser, `E6xxx` server transport. Retired codes — `E2001`–`E2003` and `E2006`
-of the old b3270 child process, `E2007` of the old emulator thread pool, `E7xxx` of the old REST proxy — are not reused.
+of the old b3270 child process, `E2007` of the old emulator thread pool, `E3016` of the old session worker threads, `E7xxx` of the old REST proxy — are not reused.
 
 | Code    | Meaning                                                |
 | ------- | ------------------------------------------------------ |
@@ -548,7 +547,6 @@ of the old b3270 child process, `E2007` of the old emulator thread pool, `E7xxx`
 | `E3013` | Session input queue is full                            |
 | `E3014` | Only the session's owner may terminate it              |
 | `E3015` | Session terminated by its owner                        |
-| `E3016` | Session worker thread died                             |
 | `E4001` | WebSocket message was not valid JSON                   |
 | `E4002` | WebSocket message had an unknown type                  |
 | `E4003` | Pasted text is too large to type into a screen         |

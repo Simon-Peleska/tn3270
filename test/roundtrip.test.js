@@ -166,32 +166,32 @@ test("an editable field is marked as one all the way to the grid", async (t) => 
 });
 
 test("a delta on top of a full paint keeps the grid agreeing with the model", async (t) => {
-  const fixture = await startTracedSession("test/traces/reverse.trc");
+  const fixture = await startTracedSession("test/traces/fields.trc");
   t.after(() => fixture.close());
 
   const { screen } = fixture.session;
   await waitUntil(
-    () => screen.rowText(0).includes("_____"),
-    "the screen to be drawn",
+    () => screen.inputCells.some((i) => !screen.fieldsHidden[i]),
+    "the screen and its fields to be read",
   );
 
   const grid = paintedGrid(screen);
-  const untouched = grid.rowText(0);
+  const start = screen.inputCells.find((i) => !screen.fieldsHidden[i]) ?? 0;
+  const changed = Math.floor(start / screen.cols);
+  const col = start % screen.cols;
+  const other = changed === 0 ? 1 : 0;
+  const untouched = grid.rowText(other);
 
-  const changed = 4;
-  for (let col = 0; col < 5; col++) {
-    const cell = screen.cellAt(changed, col);
-    cell.ch = "ABCDE"[col] ?? " ";
-    cell.fg = "turquoise";
-    cell.gr = null;
-  }
+  await fixture.session.emulator.run([
+    { action: "MoveCursor1", args: [String(changed + 1), String(col + 1)] },
+    { action: "String", args: ["ABCDE"] },
+  ]);
   grid.applyPaint(paintDelta(screen, [changed]));
 
   assertGridMatches(screen, grid);
-  assert.equal(grid.rowText(changed).slice(0, 5), "ABCDE");
-  assert.equal(grid.cellAt(changed, 0)?.fg, "turquoise");
+  assert.equal(grid.rowText(changed).slice(col, col + 5), "ABCDE");
   assert.equal(
-    grid.rowText(0),
+    grid.rowText(other),
     untouched,
     "a delta must not disturb other rows",
   );

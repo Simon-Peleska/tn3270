@@ -1,13 +1,4 @@
-import {
-  CS_APL,
-  CS_BASE,
-  CS_DBCS,
-  CS_GE,
-  CS_LINEDRAW,
-  CS_MASK,
-  ebcdicToUnicode,
-  linedrawToUnicode,
-} from "./charset.js";
+import { CS_APL, CS_BASE, CS_DBCS, CS_GE, CS_MASK } from "./charset.js";
 import { scrollSave, scrollToBottom } from "./scroll.js";
 import {
   doReset,
@@ -23,7 +14,6 @@ import {
   enableCursor,
   popupError,
   screenDisp,
-  screenScroll,
   statusReset,
   statusSyswait,
 } from "./ui.js";
@@ -220,33 +210,17 @@ export function nextUnprotected(s, baddr0) {
 
 /** ctlr_add() @param {State} s @param {number} b @param {number} c @param {number} cs */
 export function add(s, b, c, cs) {
-  if (s.fa[b] || s.ucs4[b] || s.ec[b] !== c || s.cs[b] !== cs) {
-    const old = s.fa[b] || s.ucs4[b] ? 0 : s.ec[b];
+  if (s.fa[b] || s.ec[b] !== c || s.cs[b] !== cs) {
+    const old = s.fa[b] ? 0 : s.ec[b];
     if (s.tracePrimed && !isBlank(old)) {
-      scrollSave(s, s.maxRows);
+      scrollSave(s);
       s.tracePrimed = false;
     }
     s.ec[b] = c;
     s.cs[b] = cs;
     s.fa[b] = 0;
-    s.ucs4[b] = 0;
     s.changed = true;
   }
-}
-
-/** ctlr_add_nvt() @param {State} s @param {number} b @param {number} ucs4 @param {number} cs */
-export function addNvt(s, b, ucs4, cs) {
-  if (!s.fa[b] && s.ucs4[b] === ucs4 && !s.ec[b] && s.cs[b] === cs) return;
-  if (s.tracePrimed && !isBlank(s.ec[b])) {
-    scrollSave(s, s.maxRows);
-    s.tracePrimed = false;
-  }
-  s.ucs4[b] = ucs4;
-  s.ec[b] = 0;
-  s.cs[b] = cs;
-  s.fa[b] = 0;
-  if (cs === CS_DBCS) s.db[b] = ucs4 === 0x20 ? DBCS_RIGHT : DBCS_LEFT;
-  s.changed = true;
 }
 
 /** ctlr_add_fa() @param {State} s @param {number} b @param {number} fa @param {number} cs */
@@ -333,8 +307,6 @@ export const CELL_ARRAYS = /** @type {const} */ ([
   "bg",
   "gr",
   "ic",
-  "ucs4",
-  "db",
 ]);
 
 /** One zeroed typed array per cell attribute. @param {number} size */
@@ -347,36 +319,9 @@ export function newCells(size) {
     bg: new Uint8Array(size),
     gr: new Uint8Array(size),
     ic: new Uint8Array(size),
-    ucs4: new Uint32Array(size),
-    db: new Uint8Array(size),
   };
 }
 /** @typedef {ReturnType<typeof newCells>} Cells */
-
-export const DBCS_NONE = 0,
-  DBCS_LEFT = 1,
-  DBCS_RIGHT = 2,
-  DBCS_LEFT_WRAP = 5,
-  DBCS_RIGHT_WRAP = 6;
-
-/** ctlr_dbcs_state(): only NVT text is DBCS here, since 3270 data is SBCS only. @param {State} s @param {number} b */
-export function dbcsState(s, b) {
-  return s.ucs4[b] ? s.db[b] : DBCS_NONE;
-}
-
-/** ctlr_altbuffer(): swaps in the NVT alternate screen, allocated on first use. @param {State} s @param {boolean} alt */
-export function altBuffer(s, alt) {
-  if (alt === s.isAltbuffer) return;
-  if (!s.altCells) s.altCells = newCells(s.maxRows * s.maxCols);
-  const other = s.altCells;
-  for (const name of CELL_ARRAYS) {
-    const mine = s[name];
-    s[name] = /** @type {any} */ (other[name]);
-    other[name] = /** @type {any} */ (mine);
-  }
-  s.isAltbuffer = alt;
-  s.changed = true;
-}
 
 /** @param {State} s @param {number} to @param {number} from */
 function copyCell(s, to, from) {
@@ -387,8 +332,6 @@ function copyCell(s, to, from) {
   s.bg[to] = s.bg[from];
   s.gr[to] = s.gr[from];
   s.ic[to] = s.ic[from];
-  s.ucs4[to] = s.ucs4[from];
-  s.db[to] = s.db[from];
 }
 
 /** ctlr_bcopy()/memmove over every attribute. @param {State} s @param {number} from @param {number} to @param {number} count */
@@ -421,18 +364,12 @@ export function clearCells(s, b, count) {
   s.changed = true;
 }
 
-/** ctlr_scroll(): shifts the screen up a row. @param {State} s @param {number} fg @param {number} bg */
-export function scroll(s, fg, bg) {
-  // b3270 flushes pending changes first, so the UI can scroll its own copy.
-  screenDisp(s);
+/** ctlr_scroll(): shifts the screen up a row; only b3270's own render scrolls along. @param {State} s */
+export function scroll(s) {
+  s.ui?.b3270?.scroll(s);
   const qty = (s.rows - 1) * s.cols;
   copyCells(s, s.cols, 0, qty);
   clearCells(s, qty, s.cols);
-  if ((fg & 0xf0) !== 0xf0) fg = 0;
-  if ((bg & 0xf0) !== 0xf0) bg = 0;
-  s.fg.fill(fg, qty, qty + s.cols);
-  s.bg.fill(bg, qty, qty + s.cols);
-  screenScroll(s, fg, bg);
 }
 
 /** set_formatted() @param {State} s */
@@ -461,7 +398,7 @@ export function setRowsCols(s) {
 
 /** ctlr_clear() @param {State} s */
 export function clear(s) {
-  if (anyData(s)) scrollSave(s, s.maxRows);
+  if (anyData(s)) scrollSave(s);
   clearCells(s, 0, s.rows * s.cols);
   s.cursor = 0;
   s.savedBaddr = 0;
@@ -480,11 +417,7 @@ const isBlank = (c) => c === EBC_NULL || c === 0x40;
 /** ctlr_any_data() @param {State} s */
 function anyData(s) {
   const size = s.rows * s.cols;
-  for (let b = 0; b < size; b++) {
-    if (!isBlank(s.ec[b])) return true;
-    const u = s.ucs4[b];
-    if (u !== 0 && u !== 0x20 && u !== 0x3000) return true;
-  }
+  for (let b = 0; b < size; b++) if (!isBlank(s.ec[b])) return true;
   return false;
 }
 
@@ -492,7 +425,6 @@ function anyData(s) {
 export function erase(s, alt) {
   kybdInhibit(s, false);
   clear(s);
-  taskHostOutput(s);
   const rows = alt ? s.altRows : s.defRows;
   const cols = alt ? s.altCols : s.defCols;
   if (alt === s.screenAlt && s.rows === rows && s.cols === cols) return;
@@ -526,7 +458,6 @@ export function ctlrConnect(s) {
 }
 
 export const EC_SCROLL = 0x01,
-  EC_NVT = 0x02,
   EC_CONNECT = 0x04;
 
 /** ctlr_enable_cursor(): the cursor shows unless some source has it off. @param {State} s @param {boolean} enable @param {number} source */
@@ -1031,7 +962,6 @@ export function write(s, buf, eraseFlag) {
   if (wcc & 0x04) s.emit({ type: "alarm" });
   s.tracePrimed = false;
   psProcess(s);
-  taskHostOutput(s);
   return rv;
 }
 
@@ -1053,7 +983,7 @@ export function writeSscpLu(s, buf) {
     addWithDefaults(s, s.bufferAddr, c, cs);
     s.bufferAddr = inc(s, s.bufferAddr);
     if (s.bufferAddr === 0) {
-      scroll(s, 0, 0);
+      scroll(s);
       s.bufferAddr = (s.rows - 1) * s.cols;
     }
   };
@@ -1066,7 +996,7 @@ export function writeSscpLu(s, buf) {
           s.bufferAddr = inc(s, s.bufferAddr);
         }
         if (s.bufferAddr === 0) {
-          scroll(s, 0, 0);
+          scroll(s);
           s.bufferAddr = (s.rows - 1) * s.cols;
         }
         break;
@@ -1092,14 +1022,6 @@ export function writeSscpLu(s, buf) {
   s.sscpStart = s.bufferAddr;
   s.aid = AID_NO;
   doReset(s, false);
-  taskHostOutput(s);
-}
-
-/** task_host_output(): the host changed the screen, which a waiting Wait(Output) or Snap(Wait) wants to know. @param {State} s */
-export function taskHostOutput(s) {
-  s.script.outputWaitNeeded = false;
-  if (!s.script.onHostOutput.length) return;
-  for (const fn of s.script.onHostOutput.splice(0)) fn();
 }
 
 /** ctlr_sscp_up() @param {State} s */
@@ -1141,11 +1063,10 @@ export function eraseAllUnprotected(s) {
 }
 
 /** host_cs(): the charset attribute value to report. @param {number} cs */
-function hostCs(cs) {
+export function hostCs(cs) {
   switch (cs & CS_MASK) {
     case CS_APL:
-    case CS_LINEDRAW:
-      return 0xf0 | (cs & CS_MASK);
+      return 0xf1;
     case CS_DBCS:
       return 0xf8;
     default:
@@ -1341,129 +1262,4 @@ export function readBuffer(s, aid) {
   netOutput(s);
 }
 
-/** calc_cs(): the character set as ReadBuffer shows it. @param {number} cs */
-function calcCs(cs) {
-  if ((cs & CS_MASK) === CS_APL) return 0xf1;
-  if ((cs & CS_MASK) === CS_LINEDRAW) return 0xf2;
-  if ((cs & CS_MASK) === CS_DBCS) return 0xf8;
-  return 0x00;
-}
-
 const hex2 = (/** @type {number} */ n) => n.toString(16).padStart(2, "0");
-
-/**
- * ReadBuffer(Ascii|Ebcdic|Unicode) of the whole screen: one line per row, one token per cell,
- * with SF() for field attributes and SA() where the character attributes change.
- * With a field address, just that field, as one line.
- * @param {State} s @param {"ascii" | "ebcdic" | "unicode"} mode @param {number} [field]
- */
-export function readBufferText(s, mode, field = -1) {
-  /** @type {string[]} */
-  const lines = [];
-  let fg = 0,
-    bg = 0,
-    gr = 0,
-    cs = 0;
-  let faCs = csAt(s, field >= 0 ? field : findFieldAttributeRaw(s, 0));
-  let line = "";
-  const size = s.rows * s.cols;
-  for (let i = 0; i < size; i++) {
-    const b = (Math.max(field, 0) + i) % size;
-    if (field < 0 && b % s.cols === 0 && b) {
-      lines.push(line.slice(1));
-      line = "";
-    }
-    if (field >= 0 && i && s.fa[b]) break;
-    if (s.fa[b]) {
-      faCs = s.cs[b];
-      line += ` SF(${hex2(XA_3270)}=${hex2(s.fa[b])}`;
-      if (s.fg[b]) line += `,${hex2(XA_FOREGROUND)}=${hex2(s.fg[b])}`;
-      if (s.bg[b]) line += `,${hex2(XA_BACKGROUND)}=${hex2(s.bg[b])}`;
-      if (s.gr[b]) line += `,${hex2(XA_HIGHLIGHTING)}=${hex2(s.gr[b] | 0xf0)}`;
-      if (s.ic[b]) line += `,${hex2(XA_INPUT_CONTROL)}=${hex2(s.ic[b])}`;
-      if (s.cs[b] & CS_MASK)
-        line += `,${hex2(XA_CHARSET)}=${hex2(calcCs(s.cs[b]))}`;
-      line += ")";
-      continue;
-    }
-    /** @type {string[]} */
-    const sa = [];
-    if (s.fg[b] !== fg)
-      sa.push(`${hex2(XA_FOREGROUND)}=${hex2((fg = s.fg[b]))}`);
-    if (s.bg[b] !== bg)
-      sa.push(`${hex2(XA_BACKGROUND)}=${hex2((bg = s.bg[b]))}`);
-    if (s.gr[b] !== gr)
-      sa.push(`${hex2(XA_HIGHLIGHTING)}=${hex2((gr = s.gr[b]) | 0xf0)}`);
-    // x3270 never updates its current input control, so any set one repeats on every cell.
-    if (s.ic[b]) sa.push(`${hex2(XA_INPUT_CONTROL)}=${hex2(s.ic[b])}`);
-    const xcs =
-      (s.cs[b] & CS_MASK) === CS_LINEDRAW ? CS_BASE : s.cs[b] & CS_MASK;
-    if (xcs !== (cs & CS_MASK))
-      sa.push(`${hex2(XA_CHARSET)}=${hex2(calcCs((cs = xcs)))}`);
-    if (sa.length) line += ` SA(${sa.join(",")})`;
-
-    let u = 0;
-    if (s.cs[b] === CS_LINEDRAW) u = linedrawToUnicode(s.ucs4[b]);
-    else if (s.ucs4[b]) u = s.ucs4[b];
-    const nvt = u !== 0;
-    if (mode === "ebcdic") {
-      line += s.cs[b] & CS_GE ? ` GE(${hex2(s.ec[b])})` : ` ${hex2(s.ec[b])}`;
-      continue;
-    }
-    const d = dbcsState(s, b);
-    if (d === DBCS_RIGHT || d === DBCS_RIGHT_WRAP) {
-      line += " -";
-      continue;
-    }
-    if (!nvt) {
-      const c = s.ec[b];
-      u =
-        c === 0x00
-          ? 0
-          : c === 0x0e
-            ? 0x0e
-            : c === 0x0f
-              ? 0x0f
-              : ebcdicToUnicode(s.codePage, c, s.cs[b] || faCs);
-    }
-    if (mode === "unicode") line += ` ${u.toString(16).padStart(4, "0")}`;
-    else if (u < 0x80) line += ` ${hex2(u)}`;
-    else line += ` ${Buffer.from(String.fromCodePoint(u)).toString("hex")}`;
-  }
-  lines.push(line.slice(1));
-  return lines;
-}
-
-/** The screen as text, one string per row, the way s3270's Ascii() shows it. @param {State} s */
-export function screenText(s) {
-  /** @type {string[]} */
-  const rows = [];
-  const attr = findFieldAttributeRaw(s, 0);
-  let zero = isZero(faAt(s, attr));
-  let faCs = csAt(s, attr);
-  for (let row = 0; row < s.rows; row++) {
-    let line = "";
-    for (let b = row * s.cols; b < (row + 1) * s.cols; b++) {
-      if (s.fa[b]) {
-        faCs = s.cs[b];
-        zero = isZero(s.fa[b]);
-        line += " ";
-      } else if (zero) {
-        line += " ";
-      } else if (dbcsState(s, b) === DBCS_RIGHT) {
-        continue;
-      } else if (dbcsState(s, b) === DBCS_RIGHT_WRAP) {
-        line += " ";
-      } else if (s.cs[b] === CS_LINEDRAW) {
-        line += String.fromCodePoint(linedrawToUnicode(s.ucs4[b]));
-      } else if (s.ucs4[b]) {
-        line += String.fromCodePoint(s.ucs4[b]);
-      } else {
-        const u = ebcdicToUnicode(s.codePage, s.ec[b], faCs || s.cs[b]);
-        line += u ? String.fromCodePoint(u) : " ";
-      }
-    }
-    rows.push(line);
-  }
-  return rows;
-}

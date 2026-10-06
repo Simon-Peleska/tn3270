@@ -61,8 +61,6 @@ export class Session {
     this.config = config;
     this.log = logger("session", { session: this.id });
 
-    /** @type {ScreenModel} */
-    this.screen = new ScreenModel();
     /** @type {OiaModel} */
     this.oia = new OiaModel();
     /** @type {number} the emulator confirms this in screen-mode. */
@@ -144,6 +142,8 @@ export class Session {
     };
     this.log.info("starting emulator", { options: JSON.stringify(options) });
     this.emulator = new Emulator(options, this.log);
+    /** @type {ScreenModel} */
+    this.screen = new ScreenModel(this.emulator.s);
     this.emulator.on("quit", () => this.close());
     /** @type {number} */
     this.nextTag = 1;
@@ -1210,10 +1210,9 @@ export class Session {
    */
   canBackspace() {
     if (!this.screen.fieldsFormatted) return true;
-    const { cursor, cells, cols } = this.screen;
+    const { cursor, editable, cols } = this.screen;
     const at = cursor.row * cols + cursor.col;
-    const left = cells[(at - 1 + cells.length) % cells.length];
-    return left?.editable ?? true;
+    return editable[(at - 1 + editable.length) % editable.length] === 1;
   }
 
   /**
@@ -1223,11 +1222,11 @@ export class Session {
    * @returns {{ row: number, col: number }}
    */
   backNewlineTarget() {
-    const { cursor, cells, rows, cols } = this.screen;
+    const { cursor, editable, rows, cols } = this.screen;
     for (let above = 1; above <= rows; above++) {
       const row = (cursor.row - above + rows) % rows;
       for (let col = 0; col < cols; col++) {
-        if (cells[row * cols + col]?.editable) return { row, col };
+        if (editable[row * cols + col] === 1) return { row, col };
       }
     }
     return { row: (cursor.row - 1 + rows) % rows, col: 0 };
@@ -1240,14 +1239,14 @@ export class Session {
    * @returns {{ row: number, col: number }}
    */
   fieldStartTarget() {
-    const { cursor, cells, cols } = this.screen;
+    const { cursor, editable, cols } = this.screen;
     if (!this.screen.fieldsFormatted) return { row: cursor.row, col: 0 };
     let at = cursor.row * cols + cursor.col;
-    if (!cells[at]?.editable) return { row: cursor.row, col: cursor.col };
+    if (editable[at] !== 1) return { row: cursor.row, col: cursor.col };
     // A field can wrap past the last cell of the screen back to the first.
-    for (let steps = 1; steps < cells.length; steps++) {
-      const left = (at - 1 + cells.length) % cells.length;
-      if (!cells[left]?.editable) break;
+    for (let steps = 1; steps < editable.length; steps++) {
+      const left = (at - 1 + editable.length) % editable.length;
+      if (editable[left] !== 1) break;
       at = left;
     }
     return { row: Math.floor(at / cols), col: at % cols };
@@ -1261,11 +1260,11 @@ export class Session {
    */
   typingNudge() {
     if (!this.screen.fieldsFormatted) return null;
-    const { cursor, cells, cols } = this.screen;
+    const { cursor, editable, cols } = this.screen;
     const at = cursor.row * cols + cursor.col;
-    if (cells[at]?.editable ?? true) return null;
-    const right = (at + 1) % cells.length;
-    if (!(cells[right]?.editable ?? false)) return null;
+    if (editable[at] === 1) return null;
+    const right = (at + 1) % editable.length;
+    if (editable[right] !== 1) return null;
     return { row: Math.floor(right / cols), col: right % cols };
   }
 

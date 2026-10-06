@@ -3,18 +3,10 @@ import net from "node:net";
 import { readFileSync } from "node:fs";
 import tls from "node:tls";
 import { codePage } from "./charset.js";
-import {
-  ctlrConnect,
-  erase,
-  newCells,
-  screenText,
-  setRowsCols,
-} from "./ctlr.js";
+import { ctlrConnect, erase, newCells, setRowsCols } from "./ctlr.js";
 import { NodeError } from "./errors.js";
 import { splitHost } from "./host.js";
 import * as kybd from "./kybd.js";
-import { createLinemode } from "./linemode.js";
-import { createNvt, nvtConnect, nvtIn3270 } from "./nvt.js";
 import {
   createScroll,
   scrollAction,
@@ -33,18 +25,10 @@ import {
   initializeIndications,
   popupError,
   screenDisp,
-  statsPoke,
   statusFlag,
   uiConnect,
 } from "./ui.js";
 import { query } from "./query.js";
-import {
-  SCRIPT_ACTIONS,
-  asyncFail,
-  ckbwait,
-  createScript,
-  statusString,
-} from "./script.js";
 import {
   create3270Termtype,
   netSetDefaultTermtype,
@@ -63,21 +47,14 @@ export const NOT_CONNECTED = 0,
   TLS_PENDING = 5;
 export const PROXY_PENDING = 6,
   TELNET_PENDING = 7,
-  CONNECTED_NVT = 8,
-  CONNECTED_NVT_CHAR = 9,
   CONNECTED_3270 = 10;
+// 8, 9 and 12 are x3270's NVT states, which this emulator doesn't have.
 export const CONNECTED_UNBOUND = 11,
-  CONNECTED_E_NVT = 12,
   CONNECTED_SSCP = 13,
   CONNECTED_TN3270E = 14;
 
 /** @param {State} s */
 export const isConnected = (s) => s.cstate > TCP_PENDING;
-/** @param {State} s */
-export const inNvt = (s) =>
-  s.cstate === CONNECTED_NVT ||
-  s.cstate === CONNECTED_NVT_CHAR ||
-  s.cstate === CONNECTED_E_NVT;
 /** @param {State} s */
 export const in3270 = (s) =>
   s.cstate === CONNECTED_3270 ||
@@ -87,8 +64,6 @@ export const in3270 = (s) =>
 export const inSscp = (s) => s.cstate === CONNECTED_SSCP;
 /** @param {State} s */
 export const inE = (s) => s.cstate >= CONNECTED_UNBOUND;
-/** @param {State} s */
-export const fullSession = (s) => inNvt(s) || in3270(s);
 
 export const MODEL_SIZES = {
   2: [24, 80],
@@ -105,7 +80,7 @@ export const DEFAULTS = {
   /**
    * Which x3270 front end's own state hook to copy. Both clear the screen to the alternate
    * (model) size: "b3270" only when a connection starts, "s3270" on every connect and every
-   * 3270/NVT mode change, UNBIND included.
+   * 3270 mode change, UNBIND included.
    * @type {"b3270" | "s3270"}
    */
   frontend: "b3270",
@@ -269,9 +244,6 @@ export function createState(opts = {}, io = {}) {
     screenAlt: false,
 
     ...newCells(size),
-    isAltbuffer: false,
-    /** @type {null | import("./ctlr.js").Cells} */
-    altCells: null,
     changed: false,
 
     cursor: 0,
@@ -313,8 +285,6 @@ export function createState(opts = {}, io = {}) {
     ibLen: 0,
     sbbuf: new Uint8Array(1024),
     sbLen: 0,
-    syncing: false,
-    linemode: true,
     didNeSend: false,
     deferredWillTtype: false,
     eFuncs: new Uint8Array(256),
@@ -351,8 +321,6 @@ export function createState(opts = {}, io = {}) {
     runSeq: 0,
     runAction: "",
     stats: { brcvd: 0, rrcvd: 0, bsent: 0, rsent: 0 },
-    nvt: createNvt(),
-    lm: createLinemode(),
     /** Set()'s model, oversize and extendedDataStream, until they apply together. */
     modelPending: {
       /** @type {string | null} */ model: null,
@@ -368,9 +336,6 @@ export function createState(opts = {}, io = {}) {
     log: io.log ?? SILENT,
     tracePrimed: false,
     scroll: createScroll(),
-    script: createScript(),
-    /** @type {Set<() => void>} called whenever the session settles after a change, for waiting actions */
-    settled: new Set(),
   };
   s.termtype = create3270Termtype(s, false);
   setRowsCols(s);
@@ -424,17 +389,15 @@ export function changeCstate(s, next) {
   ) {
     kybd.kybdConnect(s);
     ctlrConnect(s);
-    nvtConnect(s, isConnected(s));
     frontendHook(s, old);
     replayDisconnectSets(s);
     scrollConnect(s);
   }
   if (next >= RESOLVING && next <= TELNET_PENDING) uiConnect(s);
-  if (next >= CONNECTED_NVT) {
-    if (inNvt(s) || next === CONNECTED_UNBOUND) uiConnect(s);
+  if (next > TELNET_PENDING) {
+    if (next === CONNECTED_UNBOUND) uiConnect(s);
     kybd.kybdIn3270(s);
     ctlrConnect(s);
-    nvtIn3270(s, in3270(s));
     frontendHook(s, old);
     scrollConnect(s);
   }
@@ -455,6 +418,8 @@ function frontendHook(s, old) {
 
 /** task.c's KBWAIT: the keyboard is locked for something the host will end. @param {State} s */
 export const kbwait = (s) => (s.kybdlock & KBWAIT_MASK) !== 0;
+/** CKBWAIT: Open and an AID wait for the host to unlock the keyboard. @param {State} s */
+const ckbwait = (s) => s.options.aidWait && kbwait(s);
 const KBWAIT_MASK =
   kybd.KL_OIA_LOCKED |
   kybd.KL_OIA_TWAIT |
@@ -541,8 +506,6 @@ export const ACTIONS = {
     kybd.keyUnicode(s, in3270(s) ? 0xac : 0x5e, { oerrFail: true });
     return true;
   },
-  PageUp: kybd.pageUp,
-  PageDown: kybd.pageDown,
   MoveCursor: (s, a, b) =>
     kybd.moveCursor(
       s,
@@ -566,7 +529,6 @@ export const ACTIONS = {
   Set: set,
   Toggle: toggle,
   Scroll: scrollAction,
-  ...SCRIPT_ACTIONS,
 };
 
 /**
@@ -678,7 +640,7 @@ export class Session extends EventEmitter {
         if (!this.socket) return;
         this.socket.write(bytes);
         this.s.stats.bsent += bytes.length;
-        statsPoke(this.s);
+        this.s.ui?.b3270?.statsPoke(this.s);
       },
       emit: (e) => {
         if (e.type === "alarm") this.s.ui?.out("bell", {});
@@ -742,7 +704,7 @@ export class Session extends EventEmitter {
       socket.on("data", (/** @type {Buffer} */ buf) => {
         this.log.debug(`< ${buf.length} bytes`);
         s.stats.brcvd += buf.length;
-        statsPoke(s);
+        s.ui?.b3270?.statsPoke(s);
         if (!netInput(s, buf)) {
           this.log.warn(
             `N1102 disconnecting: ${s.connectError || "host data ended the session"}`,
@@ -793,15 +755,15 @@ export class Session extends EventEmitter {
   }
 
   /**
-   * Streams what `b3270 -json` would write, as {kind, body} pairs: first its initialize block,
-   * then every change. Drive the session with run() to get run-results too.
+   * Streams b3270-style indications, as {kind, body} pairs: first an initialize block, then
+   * every change. Drive the session with run() to get run-results too. A screen indication
+   * only lists the rows that changed, which ui.saved holds rendered, unless `b3270` draws instead.
    * @param {(indication: {kind: string, body: any}) => void} listener
+   * @param {import("./ui.js").B3270Hooks | null} [b3270]
    */
-  indications(listener) {
+  indications(listener, b3270 = null) {
     const s = this.s;
-    s.ui = createUi(s.maxRows * s.maxCols, (kind, body) =>
-      listener({ kind, body }),
-    );
+    s.ui = createUi((kind, body) => listener({ kind, body }), b3270);
     for (const indication of initializeIndications(s)) listener(indication);
   }
 
@@ -819,9 +781,7 @@ export class Session extends EventEmitter {
     /** @type {RunText} */
     const out = { text: [], err: [] };
     let success = true;
-    let aborted = false;
     let quitting = false;
-    asyncFail(s);
     s.runSeq++;
     for (const { action, args = [] } of actions) {
       s.runAction = `${action}(${args.map((a) => JSON.stringify(String(a))).join(",")})`;
@@ -885,12 +845,6 @@ export class Session extends EventEmitter {
           await this.untilKeyboardWaitEnds();
       }
       this.flush();
-      if (s.script.abort) {
-        s.script.abort = false;
-        fail(out, "Canceled");
-        aborted = true;
-        break;
-      }
       if (!success) break;
     }
     if (s.ui) {
@@ -901,7 +855,6 @@ export class Session extends EventEmitter {
         result.text = out.text;
         result["text-err"] = out.err;
       }
-      if (aborted) result.abort = true;
       result.time = Math.round(performance.now() - started) / 1000;
       s.ui.out("run-result", result);
     }
@@ -1096,7 +1049,6 @@ export class Session extends EventEmitter {
   flush() {
     const s = this.s;
     if (s.ui) screenDisp(s);
-    for (const settled of [...s.settled]) settled();
     if (
       !s.changed &&
       s.kybdlock === this.lastKybdlock &&
@@ -1126,15 +1078,5 @@ export class Session extends EventEmitter {
       this.on("update", check);
       this.once("close", closed);
     });
-  }
-
-  /** s3270's status line without its window id and timing. */
-  status() {
-    return statusString(this.s).replace(/ 0x0$/, "");
-  }
-
-  /** The screen as text rows, like s3270's Ascii(). */
-  text() {
-    return screenText(this.s);
   }
 }

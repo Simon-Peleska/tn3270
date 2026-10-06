@@ -1,12 +1,15 @@
 // Load test of the whole server: browsers as the real one talks to it, over HTTP and websockets,
 // against fake hosts (3270/test/loadhost.js). Each user types and presses PF3 over and over; an
 // operation ends with the paint of the host's answer.
-//   node scripts/load.mjs [--sessions 1000] [--seconds 15] [--workers 0] [--hosts 4] [--clients 8]
-// --workers is the server's emulator.workers; --clients is how many processes play the browsers,
+//   node scripts/load.mjs [--sessions 1000] [--seconds 15] [--hosts 4] [--clients 8] [--think 0]
+// --clients is how many processes play the browsers,
 // so that they are not what runs out of CPU. PROF=1 writes the server's CPU profiles to /tmp/prof.
+// --think paces users like people: each reads the screen for a mean of that many ms, types a field
+// a key at a time at about 5 keys/s, then presses Enter or PF3; an operation is one such screen.
 // Prints the totals; exits 1 on any error.
 import { fork, spawn } from "node:child_process";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { freePort, waitUntil } from "../test/helpers.js";
 import { WebSocket } from "../vendor/ws.mjs";
@@ -27,13 +30,21 @@ async function main() {
     options: {
       sessions: { type: "string", default: "1000" },
       seconds: { type: "string", default: "15" },
-      workers: { type: "string", default: "0" },
       hosts: { type: "string", default: "4" },
       clients: { type: "string", default: "8" },
+      think: { type: "string", default: "0" },
     },
   });
   const sessions = Number(values.sessions);
   const clients = Number(values.clients);
+  // The server's config refuses a larger sessions.maxSessions (E1004).
+  const MAX_SESSIONS = 1000;
+  if (sessions > MAX_SESSIONS) {
+    console.log(
+      `--sessions is at most ${MAX_SESSIONS}, the server's own limit`,
+    );
+    process.exit(1);
+  }
 
   const hosts = await Promise.all(
     Array.from({ length: Number(values.hosts) }, async () => {
@@ -51,12 +62,11 @@ async function main() {
     configFile,
     JSON.stringify({
       server: { host: "127.0.0.1", port },
-      sessions: { maxSessions: sessions + 10, idleTimeoutMs: 0 },
+      sessions: { maxSessions: MAX_SESSIONS, idleTimeoutMs: 0 },
       logLevel: "warn",
       emulator: {
         model: 4,
         tls: false,
-        workers: Number(values.workers),
         settings: { saveLines: 0 },
       },
     }),
@@ -89,6 +99,7 @@ async function main() {
     child.send({
       base,
       sessions: share,
+      thinkMs: Number(values.think),
       hosts: hosts.map((_, h) => hosts[(i + h) % hosts.length].port),
     });
     return child;
@@ -109,14 +120,21 @@ async function main() {
   const connectStarted = performance.now();
   await fromAll("ready");
   const connectSeconds = (performance.now() - connectStarted) / 1000;
+  const connectedRssMiB = rssMiBOf(server.pid);
 
   const cpuBefore = cpuOf(server.pid);
   const mainBefore = cpuOf(server.pid, server.pid);
   const started = performance.now();
   const seconds = Number(values.seconds);
+  let peakRssMiB = connectedRssMiB;
+  const rssSampler = setInterval(() => {
+    peakRssMiB = Math.max(peakRssMiB, rssMiBOf(server.pid));
+  }, 250);
   for (const child of children) child.send({ go: seconds });
   const results = /** @type {any[]} */ (await fromAll("done"));
+  clearInterval(rssSampler);
   const elapsed = (performance.now() - started) / 1000;
+  const keystrokes = results.reduce((sum, r) => sum + r.keystrokes, 0);
   const cpu = cpuOf(server.pid) - cpuBefore;
   const mainCpu = cpuOf(server.pid, server.pid) - mainBefore;
 
@@ -133,7 +151,13 @@ async function main() {
 
   console.log(
     `${sessions} sessions connected in ${connectSeconds.toFixed(1)} s; ` +
-      `${operations} operations in ${elapsed.toFixed(1)} s: ${(operations / elapsed).toFixed(0)}/s`,
+      `${operations} operations in ${elapsed.toFixed(1)} s: ${(operations / elapsed).toFixed(0)}/s` +
+      (keystrokes
+        ? `, plus ${(keystrokes / elapsed).toFixed(0)} keystrokes/s`
+        : ""),
+  );
+  console.log(
+    `server RSS ${connectedRssMiB.toFixed(0)} MiB once connected, peak ${peakRssMiB.toFixed(0)} MiB`,
   );
   console.log(
     `server CPU ${((cpu / elapsed) * 100).toFixed(0)}%, of it main thread ${((mainCpu / elapsed) * 100).toFixed(0)}%; ` +
@@ -163,13 +187,14 @@ async function main() {
 
 /** One process's share of the browsers. */
 async function client() {
-  /** @type {{ base: string, sessions: number, hosts: number[] }} */
+  /** @type {{ base: string, sessions: number, thinkMs: number, hosts: number[] }} */
   const job = await new Promise((resolve) => process.once("message", resolve));
   /** @type {string[]} */
   const errors = [];
   /** @type {number[]} */
   const latencies = [];
   let operations = 0;
+  let keystrokes = 0;
 
   const users = await Promise.all(
     Array.from({ length: job.sessions }, async (_, i) => {
@@ -221,6 +246,42 @@ async function client() {
   const perSession = await Promise.all(
     users.map(async ({ socket, until }) => {
       let done = 0;
+      if (job.thinkMs) {
+        const pause = (/** @type {number} */ ms) =>
+          sleep(Math.max(0, Math.min(ms, deadline - performance.now())));
+        await pause(Math.random() * job.thinkMs);
+        while (performance.now() < deadline) {
+          const length = 3 + Math.floor(Math.random() * 13);
+          for (let k = 0; k < length && performance.now() < deadline; k++) {
+            socket.send(JSON.stringify({ type: "text", value: "X" }));
+            keystrokes++;
+            await pause(100 + Math.random() * 200);
+          }
+          if (performance.now() >= deadline) break;
+          const sent = performance.now();
+          let sawLock = false;
+          const answered = until((text) => {
+            for (const [, lock] of text.matchAll(/"lock":"([^"]*)"/g)) {
+              if (lock) sawLock = true;
+              else if (sawLock) return true;
+            }
+            return false;
+          });
+          socket.send(
+            JSON.stringify(
+              Math.random() < 0.7
+                ? { type: "action", action: "Enter" }
+                : { type: "action", action: "PF", args: ["3"] },
+            ),
+          );
+          await answered;
+          latencies.push(performance.now() - sent);
+          operations++;
+          done++;
+          await pause(-Math.log(1 - Math.random()) * job.thinkMs);
+        }
+        return done;
+      }
       while (performance.now() < deadline) {
         const sent = performance.now();
         const answered = until(
@@ -236,7 +297,20 @@ async function client() {
       return done;
     }),
   );
-  process.send?.({ type: "done", operations, perSession, latencies, errors });
+  process.send?.({
+    type: "done",
+    operations,
+    keystrokes,
+    perSession,
+    latencies,
+    errors,
+  });
+}
+
+/** @param {number | undefined} pid */
+function rssMiBOf(pid) {
+  const status = readFileSync(`/proc/${pid}/status`, "utf8");
+  return Number(/VmRSS:\s+(\d+)/.exec(status)?.[1] ?? 0) / 1024;
 }
 
 /** User+system seconds of a process, or of one of its threads. @param {number | undefined} pid @param {number} [tid] */

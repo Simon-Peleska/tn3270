@@ -400,13 +400,3 @@ test("an empty allowedHosts list means any host, a populated one means only thos
   assert.equal(isHostAllowed("mainframe:992", ["mainframe:992"]), true);
   assert.equal(isHostAllowed("elsewhere:23", ["mainframe"]), false);
 });
-
-test("the emulator uses a thread per core unless the config sets how many", () => {
-  assert.equal(validateConfig({}).emulator.workers, 0);
-  assert.equal(
-    validateConfig({ emulator: { workers: 4 } }).emulator.workers,
-    4,
-  );
-  for (const workers of [-1, 2.5, "many"])
-    assert.throws(() => validateConfig({ emulator: { workers } }), /workers/);
-});

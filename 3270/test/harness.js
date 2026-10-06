@@ -3,6 +3,8 @@ import { spawn, spawnSync } from "node:child_process";
 import { createInterface } from "node:readline";
 import { FakeHost } from "../../test/fakehost.js";
 import { Session } from "../src/index.js";
+import { b3270Indications } from "./b3270.js";
+import "./read.js";
 
 export { FakeHost };
 
@@ -84,8 +86,12 @@ export function startB3270() {
   });
 }
 
-/** @returns {Emulator} */
-export function startOurs() {
+/**
+ * @param {boolean} [b3270] write what b3270 writes, or only what the app gets
+ * @param {(s: import("../src/session.js").State, kind: string, body: any) => void} [watch] sees each indication first
+ * @returns {Emulator}
+ */
+export function startOurs(b3270 = true, watch) {
   // LOG=1 shows node3270's log, for debugging a mismatch.
   const log = (/** @type {string} */ m) => console.error(m);
   const session = new Session(
@@ -93,10 +99,14 @@ export function startOurs() {
     process.env.LOG ? { warn: log, info: log, debug: log } : undefined,
   );
   return track((push, results) => {
-    session.indications(({ kind, body }) => {
+    /** @param {{kind: string, body: any}} indication */
+    const listener = ({ kind, body }) => {
+      watch?.(session.s, kind, body);
       push(kind, body);
       if (kind === "run-result") results.get(body["r-tag"])?.(body);
-    });
+    };
+    if (b3270) b3270Indications(session, listener);
+    else session.indications(listener);
     return {
       send: (tag, actions) => void session.run(actions, tag),
       stop: () => session.close(),
@@ -299,19 +309,15 @@ export async function scenario(
       done.then(finish, finish);
       // A String can send several AIDs, each waiting for the host to unlock the keyboard.
       let records = host.received.split("ffef").length;
-      let before = host.received.length;
       while (!finished) {
         await host.waitUntil(
           () => finished || host.received.split("ffef").length > records,
           5000,
           "no AID record",
         );
-        // Only a 3270 AID waits for the host; NVT-DATA (type 05) just races the run-result.
-        const nvtData = host.received.slice(before).startsWith("05");
         records = host.received.split("ffef").length;
-        before = host.received.length;
         // No timing mark after the unlock: its answer would race the next AID of a String.
-        if (!finished && !nvtData) host.socket?.write(UNLOCK_KEYBOARD);
+        if (!finished) host.socket?.write(UNLOCK_KEYBOARD);
       }
       await done;
     }

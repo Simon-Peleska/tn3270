@@ -1,5 +1,12 @@
 import { AppError } from "./errors.js";
 import { fieldMap } from "./fields.js";
+import {
+  BLUE,
+  COLOR_NAMES,
+  NEUTRAL_BLACK,
+  NEUTRAL_WHITE,
+  seeGr,
+} from "../3270/src/index.js";
 
 /**
  * @typedef {object} Cell
@@ -11,23 +18,34 @@ import { fieldMap } from "./fields.js";
  */
 
 /**
+ * What the shared helpers (paint runs, paste, history) read a screen through:
+ * a plain array of cells in the browser, the emulator's own buffer here.
+ *
+ * @typedef {{ readonly length: number, at(i: number): Cell | undefined }} Cells
+ */
+
+/**
  * @typedef {object} Cursor
  * @property {number} row 0-based
  * @property {number} col 0-based
  * @property {boolean} enabled
  */
 
-/** @returns {Cell} */
-function blankCell() {
-  return { ch: " ", fg: null, bg: null, gr: null, editable: false };
-}
+/** @typedef {import('../3270/src/index.js').Session['s']} EmulatorState */
 
+/**
+ * The screen as viewers are sent it. The characters and colours are read
+ * straight from the emulator's last render, so there is one copy of the screen;
+ * the screen indications only say which rows to send again.
+ */
 export class ScreenModel {
   /**
+   * @param {EmulatorState} emulator
    * @param {number} rows
    * @param {number} cols
    */
-  constructor(rows = 24, cols = 80) {
+  constructor(emulator, rows = 24, cols = 80) {
+    this.emulator = emulator;
     /** @type {number} */
     this.rows = rows;
     /** @type {number} */
@@ -40,12 +58,12 @@ export class ScreenModel {
     this.defaultBg = null;
     /** @type {Cursor} */
     this.cursor = { row: 0, col: 0, enabled: false };
-    /** @type {Cell[]} Row-major, length rows*cols. */
-    this.cells = [];
+    /** @type {Uint8Array} Row-major, 1 where a cell can be typed into. */
+    this.editable = new Uint8Array(0);
     /** @type {boolean} False for an unformatted screen, or before the first read. */
     this.fieldsFormatted = false;
-    /** @type {boolean[]} Row-major. Non-display fields: a password is typed here. */
-    this.fieldsHidden = [];
+    /** @type {Uint8Array} Row-major, 1 in a non-display field: a password is typed here. */
+    this.fieldsHidden = new Uint8Array(0);
     /** @type {number[]} Where the editable cells are, ascending. */
     this.inputCells = [];
     /** @type {Uint8Array | null} The emulator's field attributes the above came from. */
@@ -56,6 +74,14 @@ export class ScreenModel {
     this.version = 0;
     /** @type {boolean} A cursor move touches no row, so it is tracked apart. */
     this.cursorMoved = false;
+    const screen = this;
+    /** @type {Cells} */
+    this.cells = {
+      get length() {
+        return screen.rows * screen.cols;
+      },
+      at: (i) => screen.cell(i),
+    };
 
     this.resize(rows, cols);
   }
@@ -68,11 +94,10 @@ export class ScreenModel {
   resize(rows, cols) {
     this.rows = rows;
     this.cols = cols;
-    this.cells = new Array(rows * cols);
-    for (let i = 0; i < this.cells.length; i++) this.cells[i] = blankCell();
+    this.editable = new Uint8Array(rows * cols);
     this.moveCursor(0, 0, this.cursor.enabled);
     this.fieldsFormatted = false;
-    this.fieldsHidden = [];
+    this.fieldsHidden = new Uint8Array(0);
     this.inputCells = [];
     this.fieldAttributes = null;
     this.markAllDirty();
@@ -82,6 +107,50 @@ export class ScreenModel {
   markAllDirty() {
     this.version++;
     for (let row = 0; row < this.rows; row++) this.dirtyRows.add(row);
+  }
+
+  /**
+   * @param {number} i row-major
+   * @returns {Cell | undefined}
+   */
+  cell(i) {
+    if (i < 0 || i >= this.rows * this.cols) return undefined;
+    const editable = this.editable[i] === 1;
+    const rendered = this.emulator.ui?.saved;
+    // The render is laid out at the model's largest size, whatever the host uses now.
+    const at =
+      Math.floor(i / this.cols) * this.emulator.maxCols + (i % this.cols);
+    if (rendered === undefined || at >= rendered.cc.length)
+      return { ch: " ", fg: null, bg: null, gr: null, editable };
+    const cc = rendered.cc[at];
+    const fg = rendered.fg[at];
+    const bg = rendered.bg[at];
+    const gr = rendered.gr[at];
+    const defaultFg = this.emulator.mode3279 ? BLUE : NEUTRAL_WHITE;
+    return {
+      ch: cc ? String.fromCodePoint(cc) : " ",
+      // The colours a blank screen is filled with are the defaults, and a
+      // named background would hide the editable-field tint.
+      fg: fg === defaultFg ? null : (COLOR_NAMES[fg] ?? null),
+      bg: bg === NEUTRAL_BLACK ? null : (COLOR_NAMES[bg] ?? null),
+      gr: gr ? seeGr(gr) : null,
+      editable,
+    };
+  }
+
+  /**
+   * @param {number} row 0-based
+   * @param {number} col 0-based
+   * @returns {Cell}
+   */
+  cellAt(row, col) {
+    const cell =
+      col >= 0 && col < this.cols
+        ? this.cell(row * this.cols + col)
+        : undefined;
+    if (cell === undefined)
+      throw new AppError("E3004", `row=${row} col=${col}`);
+    return cell;
   }
 
   /**
@@ -95,18 +164,6 @@ export class ScreenModel {
     if (at.row === row && at.col === col && at.enabled === enabled) return;
     this.cursor = { row, col, enabled };
     this.cursorMoved = true;
-  }
-
-  /**
-   * @param {number} row 0-based
-   * @param {number} col 0-based
-   * @returns {Cell}
-   */
-  cellAt(row, col) {
-    const cell = this.cells[row * this.cols + col];
-    if (cell === undefined)
-      throw new AppError("E3004", `row=${row} col=${col}`);
-    return cell;
   }
 
   /**
@@ -128,15 +185,9 @@ export class ScreenModel {
     if (typeof erase.fg === "string") this.defaultFg = erase.fg;
     if (typeof erase.bg === "string") this.defaultBg = erase.bg;
 
-    for (const cell of this.cells) {
-      cell.ch = " ";
-      cell.fg = null;
-      cell.bg = null;
-      cell.gr = null;
-      cell.editable = false;
-    }
+    this.editable.fill(0);
     this.fieldsFormatted = false;
-    this.fieldsHidden = [];
+    this.fieldsHidden = new Uint8Array(0);
     this.inputCells = [];
     this.fieldAttributes = null;
     this.moveCursor(0, 0, this.cursor.enabled);
@@ -164,8 +215,8 @@ export class ScreenModel {
    * now": the cursor moves without the fields changing, and a stale answer
    * writes a password into a recording.
    *
-   * @param {boolean[]} editable row-major
-   * @param {boolean[]} hidden row-major
+   * @param {Uint8Array} editable row-major, 1 where typeable
+   * @param {Uint8Array} hidden row-major, 1 in a non-display field
    * @param {boolean} formatted whether the screen has any fields at all
    * @returns {void}
    */
@@ -175,13 +226,10 @@ export class ScreenModel {
     this.fieldsFormatted = formatted;
     this.fieldsHidden = hidden;
     this.inputCells = [];
-    for (let i = 0; i < this.cells.length; i++) {
-      const cell = this.cells[i];
-      const next = editable[i] ?? false;
-      if (cell === undefined) continue;
-      if (next) this.inputCells.push(i);
-      if (cell.editable === next) continue;
-      cell.editable = next;
+    for (let i = 0; i < this.editable.length; i++) {
+      if (editable[i]) this.inputCells.push(i);
+      if (this.editable[i] === editable[i]) continue;
+      this.editable[i] = editable[i];
       this.dirtyRows.add(Math.floor(i / this.cols));
       this.version++;
     }
@@ -190,7 +238,7 @@ export class ScreenModel {
   /** @returns {boolean} Whether what is typed now goes into a password field. */
   cursorHidden() {
     const at = this.cursor.row * this.cols + this.cursor.col;
-    return this.fieldsHidden[at] ?? false;
+    return this.fieldsHidden[at] === 1;
   }
 
   /**
@@ -202,14 +250,14 @@ export class ScreenModel {
   hiddenRuns() {
     /** @type {{ row: number, col: number, length: number }[]} */
     const runs = [];
-    this.cells.forEach((cell, i) => {
-      if (!cell.editable || !this.fieldsHidden[i]) return;
+    for (const i of this.inputCells) {
+      if (!this.fieldsHidden[i]) continue;
       const row = Math.floor(i / this.cols);
       const col = i % this.cols;
       const last = runs.at(-1);
       if (last?.row === row && last.col + last.length === col) last.length += 1;
       else runs.push({ row, col, length: 1 });
-    });
+    }
     return runs;
   }
 
@@ -225,44 +273,18 @@ export class ScreenModel {
   }
 
   /**
-   * b3270's rows and columns are 1-based, and an attribute it does not mention
-   * keeps its old value per cell. A colour changing back to the default comes
-   * named, and a named background would hide the editable-field tint.
+   * The rows and the cursor are 1-based, as b3270 counts. The rows are already
+   * drawn in the emulator's render; they only need sending again.
    *
    * @param {import('./indications.js').ScreenIndication} screen
    * @returns {void}
    */
   applyScreen(screen) {
     for (const row of screen.rows ?? []) {
-      const y = row.row - 1;
+      const y = row - 1;
       if (y < 0 || y >= this.rows) continue;
-
-      for (const change of row.changes ?? []) {
-        const startX = change.column - 1;
-        if (startX < 0 || startX >= this.cols) continue;
-
-        const characters =
-          typeof change.text === "string" ? [...change.text] : null;
-        const fg = change.fg === this.defaultFg ? null : change.fg;
-        const bg = change.bg === this.defaultBg ? null : change.bg;
-        const span =
-          characters !== null ? characters.length : (change.count ?? 0);
-
-        for (let i = 0; i < span; i++) {
-          const x = startX + i;
-          if (x >= this.cols) break;
-          const cell = this.cellAt(y, x);
-          if (characters !== null) cell.ch = characters[i] ?? " ";
-          if (fg !== undefined) cell.fg = fg;
-          if (bg !== undefined) cell.bg = bg;
-          if (change.gr !== undefined)
-            cell.gr = change.gr === "" ? null : change.gr;
-        }
-        if (span > 0) {
-          this.dirtyRows.add(y);
-          this.version++;
-        }
-      }
+      this.dirtyRows.add(y);
+      this.version++;
     }
 
     if (screen.cursor) {

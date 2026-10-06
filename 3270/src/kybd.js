@@ -36,17 +36,8 @@ import {
   EBC_SO,
 } from "./ctlr.js";
 import { KEYSYMS } from "./keysyms.js";
-import { nvtSendKey } from "./nvt.js";
 import { doToggle } from "./toggles.js";
-import {
-  bound,
-  netAbort,
-  netBreak,
-  netHexnvtOut,
-  netInterrupt,
-  netSendc,
-  netSends,
-} from "./telnet.js";
+import { bound, netAbort, netBreak, netInterrupt } from "./telnet.js";
 import {
   popupError,
   statusCtlrDone,
@@ -58,9 +49,7 @@ import {
 } from "./ui.js";
 import {
   CONNECTED_UNBOUND,
-  fullSession,
   inE,
-  inNvt,
   inSscp,
   in3270,
   isConnected,
@@ -110,7 +99,7 @@ export const PA_AIDS = [0x6c, 0x6e, 0x6b];
 
 /** enq_ta(): holds an action until the keyboard unlocks. @param {State} s @param {Action} fn @param {any[]} args */
 function enqTa(s, fn, ...args) {
-  if (!in3270(s) && !inNvt(s) && !inSscp(s)) return;
+  if (!in3270(s) && !inSscp(s)) return;
   if (s.kybdlock & (KL_OERR_MASK | KL_SCROLLED | KL_FT)) {
     s.emit({ type: "alarm" });
     return;
@@ -182,7 +171,7 @@ export function kybdIn3270(s) {
       if (!s.hostPrefixes.includes("C")) s.kybdlock |= KL_AWAITING_FIRST;
       break;
     default:
-      if (inNvt(s) || inSscp(s)) {
+      if (inSscp(s)) {
         s.kybdlock = 0;
       } else if (inE(s)) {
         if (s.options.bindUnlock && bound(s)) s.kybdlock = 0;
@@ -263,17 +252,6 @@ export function doReset(s, explicit) {
 
 /** key_AID() @param {State} s @param {number} aid */
 function keyAid(s, aid) {
-  if (inNvt(s)) {
-    if (aid === AID_ENTER) {
-      netSendc(s, 0x0d);
-      return;
-    }
-    const pf = PF_AIDS.indexOf(aid);
-    if (pf >= 0) nvtSendKey(s, "pf", pf + 1);
-    const pa = PA_AIDS.indexOf(aid);
-    if (pa >= 0) nvtSendKey(s, "pa", pa + 1);
-    return;
-  }
   if (inSscp(s)) {
     if (s.kybdlock & KL_OIA_MINUS) return;
     if (aid === AID_CLEAR) return;
@@ -291,7 +269,7 @@ function keyAid(s, aid) {
     readModified(s, aid, false);
     statusCtlrDone(s);
     if (needScroll) {
-      scroll(s, 0, 0);
+      scroll(s);
       cursorMove(s, (s.rows - 1) * s.cols);
       s.bufferAddr = (s.rows - 1) * s.cols;
     }
@@ -344,12 +322,8 @@ export function pa(s, /** @type {number | string} */ arg) {
 /** Clear_action @type {Action} */
 export function clearKey(s) {
   if (s.kybdlock & KL_OIA_MINUS) return true;
-  if (s.kybdlock && fullSession(s)) {
+  if (s.kybdlock && in3270(s)) {
     enqTa(s, clearKey);
-    return true;
-  }
-  if (inNvt(s)) {
-    nvtSendKey(s, "clear", 0);
     return true;
   }
   s.bufferAddr = 0;
@@ -361,7 +335,6 @@ export function clearKey(s) {
 
 /** SysReq_action @type {Action} */
 export function sysReq(s) {
-  if (inNvt(s)) return false;
   if (inE(s)) {
     netAbort(s);
   } else if (s.kybdlock & KL_OIA_MINUS) {
@@ -558,7 +531,7 @@ function keyCharacter(s, ebc, withGe, pasting, oerrFail) {
     if (!s.options.reverseInputMode) {
       baddr = inc(s, baddr);
       if (inSscp(s) && baddr === 0) {
-        scroll(s, 0, 0);
+        scroll(s);
         sscpUp(s);
         cursorMove(s, (s.rows - 1) * s.cols);
         s.bufferAddr = (s.rows - 1) * s.cols;
@@ -666,10 +639,6 @@ export function keyUnicode(s, ucs4, how = {}) {
       oerrFail,
     ).ok;
   }
-  if (inNvt(s)) {
-    netSends(s, Buffer.from(String.fromCodePoint(ucs4), "utf8"));
-    return true;
-  }
   s.log.debug(`U+${ucs4.toString(16)} dropped, not connected`);
   return true;
 }
@@ -677,10 +646,6 @@ export function keyUnicode(s, ucs4, how = {}) {
 /** Tab_action @type {Action} */
 export function tab(s) {
   if (!oerrClearOrEnq(s, tab)) return true;
-  if (inNvt(s)) {
-    netSendc(s, 0x09);
-    return true;
-  }
   cursorMove(s, nextUnprotected(s, s.cursor));
   return true;
 }
@@ -688,11 +653,6 @@ export function tab(s) {
 /** BackTab_action @type {Action} */
 export function backTab(s) {
   if (!oerrClearOrEnq(s, backTab)) return true;
-  if (inNvt(s)) {
-    s.log.warn("N3014 BackTab() in NVT mode");
-    popupError(s, "BackTab() is not valid in NVT mode");
-    return false;
-  }
   if (!in3270(s)) return true;
   let baddr = dec(s, s.cursor);
   if (s.fa[baddr]) baddr = dec(s, baddr);
@@ -713,10 +673,6 @@ export function backTab(s) {
 /** Home_action @type {Action} */
 export function home(s) {
   if (!oerrClearOrEnq(s, home)) return true;
-  if (inNvt(s)) {
-    nvtSendKey(s, "home", 0);
-    return true;
-  }
   if (!s.formatted) cursorMove(s, 0);
   else cursorMove(s, nextUnprotected(s, s.rows * s.cols - 1));
   return true;
@@ -730,10 +686,6 @@ function doLeft(s) {
 /** Left_action @type {Action} */
 export function left(s) {
   if (!oerrClearOrEnq(s, left)) return true;
-  if (inNvt(s)) {
-    nvtSendKey(s, "left", 0);
-    return true;
-  }
   if (!s.flipped) doLeft(s);
   else cursorMove(s, inc(s, s.cursor));
   return true;
@@ -742,10 +694,6 @@ export function left(s) {
 /** Right_action @type {Action} */
 export function right(s) {
   if (!oerrClearOrEnq(s, right)) return true;
-  if (inNvt(s)) {
-    nvtSendKey(s, "right", 0);
-    return true;
-  }
   if (!s.flipped) cursorMove(s, inc(s, s.cursor));
   else doLeft(s);
   return true;
@@ -754,7 +702,6 @@ export function right(s) {
 /** Left2_action @type {Action} */
 export function left2(s) {
   if (!oerrClearOrEnq(s, left2)) return true;
-  if (inNvt(s)) return false;
   cursorMove(s, dec(s, dec(s, s.cursor)));
   return true;
 }
@@ -762,7 +709,6 @@ export function left2(s) {
 /** Right2_action @type {Action} */
 export function right2(s) {
   if (!oerrClearOrEnq(s, right2)) return true;
-  if (inNvt(s)) return false;
   cursorMove(s, inc(s, inc(s, s.cursor)));
   return true;
 }
@@ -770,10 +716,6 @@ export function right2(s) {
 /** Up_action @type {Action} */
 export function up(s) {
   if (!oerrClearOrEnq(s, up)) return true;
-  if (inNvt(s)) {
-    nvtSendKey(s, "up", 0);
-    return true;
-  }
   let baddr = s.cursor - s.cols;
   if (baddr < 0) baddr = s.cursor + s.rows * s.cols - s.cols;
   cursorMove(s, baddr);
@@ -783,10 +725,6 @@ export function up(s) {
 /** Down_action @type {Action} */
 export function down(s) {
   if (!oerrClearOrEnq(s, down)) return true;
-  if (inNvt(s)) {
-    nvtSendKey(s, "down", 0);
-    return true;
-  }
   cursorMove(s, (s.cursor + s.cols) % (s.cols * s.rows));
   // x3270 4.5's Down() reports failure after moving; scripts see the same.
   return false;
@@ -840,10 +778,6 @@ export function deleteKey(s) {
     enqTa(s, deleteKey);
     return true;
   }
-  if (inNvt(s)) {
-    netSendc(s, 0x7f);
-    return true;
-  }
   if (!doDelete(s)) return true;
   if (s.options.reverseInputMode) {
     const baddr = dec(s, s.cursor);
@@ -856,10 +790,6 @@ export function deleteKey(s) {
 export function backSpace(s) {
   if (s.kybdlock) {
     enqTa(s, backSpace);
-    return true;
-  }
-  if (inNvt(s)) {
-    nvtSendKey(s, "erase", 0);
     return true;
   }
   if (s.options.reverseInputMode) doDelete(s);
@@ -892,10 +822,6 @@ export function erase(s) {
     enqTa(s, erase);
     return true;
   }
-  if (inNvt(s)) {
-    nvtSendKey(s, "erase", 0);
-    return true;
-  }
   if (s.options.reverseInputMode) doDelete(s);
   else doErase(s);
   return true;
@@ -910,7 +836,7 @@ export function previousWord(s) {
     enqTa(s, previousWord);
     return true;
   }
-  if (inNvt(s) || !s.formatted) return false;
+  if (!s.formatted) return false;
   let baddr = s.cursor;
   let prot = isProtected(fieldAttribute(s, baddr));
   // Skip to before this word, if in one now.
@@ -975,7 +901,7 @@ export function nextWord(s) {
     enqTa(s, nextWord);
     return true;
   }
-  if (inNvt(s) || !s.formatted) return false;
+  if (!s.formatted) return false;
   if (s.fa[s.cursor] || isProtected(fieldAttribute(s, s.cursor))) {
     const baddr = nuWord(s, s.cursor);
     if (baddr !== -1) cursorMove(s, baddr);
@@ -1014,10 +940,6 @@ export function newline(s) {
     enqTa(s, newline);
     return true;
   }
-  if (inNvt(s)) {
-    netSendc(s, 0x0a);
-    return true;
-  }
   let baddr = (s.cursor + s.cols) % (s.cols * s.rows);
   baddr = ((baddr / s.cols) | 0) * s.cols;
   const faddr = findFieldAttribute(s, baddr);
@@ -1032,7 +954,6 @@ export function dup(s, oerrFail = false) {
     enqTa(s, dup, oerrFail);
     return true;
   }
-  if (inNvt(s)) return false;
   const r = keyCharacter(s, EBC_DUP, false, false, oerrFail);
   if (!r.ok) return false;
   if (r.consumed) cursorMove(s, nextUnprotected(s, s.cursor));
@@ -1045,7 +966,6 @@ export function fieldMark(s, oerrFail = false) {
     enqTa(s, fieldMark, oerrFail);
     return true;
   }
-  if (inNvt(s)) return false;
   return keyCharacter(s, EBC_FM, false, false, oerrFail).ok;
 }
 
@@ -1089,7 +1009,6 @@ export function cursorSelect(s) {
     enqTa(s, cursorSelect);
     return true;
   }
-  if (inNvt(s)) return false;
   lightpenSelect(s, s.cursor);
   return true;
 }
@@ -1097,7 +1016,6 @@ export function cursorSelect(s) {
 /** EraseEOF_action @type {Action} */
 export function eraseEOF(s) {
   if (!oerrClearOrEnq(s, eraseEOF)) return true;
-  if (inNvt(s)) return false;
   let baddr = s.cursor;
   const fa = fieldAttribute(s, baddr);
   if (isProtected(fa) || s.fa[baddr])
@@ -1121,7 +1039,6 @@ export function eraseEOF(s) {
 /** EraseInput_action @type {Action} */
 export function eraseInput(s) {
   if (!oerrClearOrEnq(s, eraseInput)) return true;
-  if (inNvt(s)) return false;
   if (!hasFields(s)) {
     clear(s);
     cursorMove(s, 0);
@@ -1157,10 +1074,6 @@ export function eraseInput(s) {
 /** DeleteWord_action @type {Action} */
 export function deleteWord(s) {
   if (!oerrClearOrEnq(s, deleteWord)) return true;
-  if (inNvt(s)) {
-    nvtSendKey(s, "werase", 0);
-    return true;
-  }
   if (!s.formatted) return false;
   const fa = fieldAttribute(s, s.cursor);
   if (isProtected(fa) || s.fa[s.cursor])
@@ -1186,10 +1099,6 @@ export function deleteWord(s) {
 /** DeleteField_action @type {Action} */
 export function deleteField(s) {
   if (!oerrClearOrEnq(s, deleteField)) return true;
-  if (inNvt(s)) {
-    nvtSendKey(s, "kill", 0);
-    return true;
-  }
   if (!hasFields(s)) return false;
   let baddr = s.cursor;
   const fa = fieldAttribute(s, baddr);
@@ -1209,10 +1118,6 @@ export function deleteField(s) {
 /** FieldEnd_action @type {Action} */
 export function fieldEnd(s) {
   if (!oerrClearOrEnq(s, fieldEnd)) return true;
-  if (inNvt(s)) {
-    nvtSendKey(s, "end", 0);
-    return true;
-  }
   if (!hasFields(s)) return false;
   let baddr = s.cursor;
   const faddr = findFieldAttribute(s, baddr);
@@ -1247,11 +1152,6 @@ export function moveCursor(
   origin = 0,
 ) {
   const name = origin ? "MoveCursor1" : "MoveCursor";
-  if (inNvt(s)) {
-    s.log.warn(`N3015 ${name}() in NVT mode`);
-    popupError(s, `${name}() is not valid in NVT mode`);
-    return false;
-  }
   if (s.kybdlock) {
     enqTa(s, moveCursor, a, col, origin);
     return true;
@@ -1303,32 +1203,15 @@ export function moveCursor(
   return true;
 }
 
-/** PageUp_action: only meaningful in NVT mode. @type {Action} */
-export function pageUp(s) {
-  if (!inNvt(s)) return false;
-  nvtSendKey(s, "pageup", 0);
-  return true;
-}
-
-/** PageDown_action @type {Action} */
-export function pageDown(s) {
-  if (!inNvt(s)) return false;
-  nvtSendKey(s, "pagedown", 0);
-  return true;
-}
-
 /**
- * hex_input(): HexString()'s bytes, typed as EBCDIC in 3270 mode or sent as they are in NVT mode.
+ * hex_input(): HexString()'s bytes, typed as EBCDIC.
  * HexString() has checked that the text is pairs of hex digits.
  * @param {State} s @param {string} hex
  */
 export function hexInput(s, hex) {
-  const bytes = Array.from(Buffer.from(hex, "hex"));
-  if (!in3270(s)) {
-    netHexnvtOut(s, bytes);
-    return;
-  }
-  for (const c of bytes) keyCharacter(s, c, false, true, true);
+  if (!in3270(s)) return;
+  for (const c of Buffer.from(hex, "hex"))
+    keyCharacter(s, c, false, true, true);
 }
 
 /**
@@ -1398,7 +1281,7 @@ export function emulateInput(s, text, pasting, margin = true) {
             }
             break;
           case 0x0a:
-            if (pasting && !inNvt(s)) {
+            if (pasting) {
               if (autoSkip) {
                 if (!justWrapped) newline(s);
               } else {

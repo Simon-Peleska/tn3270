@@ -1,5 +1,5 @@
 // Differential fuzzing against b3270: random seeds until the time is up, several at once.
-//   node scripts/fuzz.mjs [--kind keyboard|datastream|nvt|all] [--seconds 25] [--from SEED] [--jobs 8]
+//   node scripts/fuzz.mjs [--kind keyboard|datastream|all] [--seconds 25] [--from SEED] [--jobs 8]
 // Without --from, the seeds start at a random point; each failure prints its seed and steps,
 // and test/fuzz.js's check(..., CASES[kind](rng(seed))) replays it.
 //   node scripts/fuzz.mjs --corpus test/fuzz-corpus [--jobs 8]

@@ -2,7 +2,7 @@
 
 A web page that behaves like an IBM 3270 terminal. A Node server runs one
 emulator per session in its own process — node3270 (`3270/`), a port of x3270's
-`b3270 -json` on a pool of worker threads; the browser renders onto a canvas of
+`b3270 -json`, all on one thread; the browser renders onto a canvas of
 its own.
 
 ```
@@ -19,37 +19,30 @@ browser                          node server                        host
 
 ## The one hard problem
 
-node3270 speaks `b3270 -json`'s **structured, incremental screen model**, the
-same JSON indications byte for byte, such as
+`b3270 -json` describes the screen **incrementally**: a screen indication says
+"row 1 column 3 went red" and means nothing to anyone who doesn't hold the rest
+of the screen. So somebody has to hold the whole screen.
+
+**That somebody is the server.** node3270 speaks b3270's indications except for
+this one: its screen indication only names the rows that changed,
 
 ```json
 {
   "screen": {
     "cursor": { "enabled": true, "row": 2, "column": 9 },
-    "rows": [
-      {
-        "row": 1,
-        "changes": [
-          { "column": 3, "text": "____", "fg": "neutralBlack", "bg": "red" }
-        ]
-      }
-    ]
+    "rows": [1]
   }
 }
 ```
 
-Two properties of that format decide everything else:
+and leaves them drawn in the emulator's render (`ui.saved`), which
+`server/screen.js`'s `ScreenModel` reads cell by cell. There is one copy of the
+screen, and no change descriptions to build or apply. `server/paint.js` ships the
+named rows as a delta, or the whole screen as a repaint.
 
-- _"a screen indication does not specify the entire contents of the screen; it is
-  an incremental update to what is already displayed"_
-- _"if a particular screen attribute is not specified, then it stays the same"_
-
-So somebody has to hold the whole screen, or an update that says "row 1 column 3
-went red" means nothing.
-
-**That somebody is the server.** `server/screen.js` holds the authoritative
-`ScreenModel`; `server/paint.js` ships it, either as a delta (changed rows only)
-or as a complete repaint.
+b3270's own screen indications live on as a test adapter, `3270/test/b3270.js`,
+so the conformance tests still compare node3270 with real b3270 line by line;
+`3270/test/rows.test.js` checks that the rows named are all that changed.
 
 This single decision is also what makes multiple viewers work. Because the
 server already owns the full screen, a browser that joins an hour into a session
@@ -59,7 +52,7 @@ own shadow buffer fed from the beginning of time, and joining late would be
 impossible.
 
 The cost, accepted deliberately: **there is no local echo.** A keystroke travels
-browser → server → b3270 → screen indication → paint → browser. On localhost or
+browser → server → node3270 → screen indication → paint → browser. On localhost or
 a LAN this is a few milliseconds. It is also _required_ for a coherent shared
 session — one authoritative screen, one ordered input stream.
 
