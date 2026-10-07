@@ -15,13 +15,13 @@ import { collectingViewer, testConfig, waitUntil } from "./helpers.js";
 function newScreen(model = "3279-2") {
   const emulator = new Emulator({ model });
   emulator.indications(() => {});
-  return new ScreenModel(emulator.s, 24, 80);
+  return new ScreenModel(emulator.s);
 }
 
 test("a screen indication dirties only the rows it changes", () => {
   const screen = newScreen();
   screen.takeDirtyRows();
-  screen.applyScreen({ rows: [1] });
+  screen.markRows([1]);
   assert.deepEqual(
     screen.takeDirtyRows(),
     [0],
@@ -32,17 +32,17 @@ test("a screen indication dirties only the rows it changes", () => {
 test("out-of-range rows are ignored", () => {
   const screen = newScreen();
   screen.takeDirtyRows();
-  screen.applyScreen({ rows: [99, 0] });
+  screen.markRows([99, 0]);
   assert.deepEqual(screen.takeDirtyRows(), []);
 });
 
-test("cursor fields are individually optional and fall back to the previous value", () => {
-  const screen = newScreen();
-  screen.applyScreen({ cursor: { enabled: true, row: 5, column: 10 } });
-  assert.deepEqual(screen.cursor, { row: 4, col: 9, enabled: true });
+test("the size and the cursor are the emulator's, counted from 0", () => {
+  const screen = newScreen("3279-4");
+  assert.equal(screen.rows, 43);
+  assert.equal(screen.cols, 80);
 
-  screen.applyScreen({ cursor: { enabled: false } });
-  assert.deepEqual(screen.cursor, { row: 4, col: 9, enabled: false });
+  screen.emulator.savedBaddr = 4 * 80 + 9;
+  assert.deepEqual(screen.cursor, { row: 4, col: 9, enabled: true });
 });
 
 test("a cursor move is reported on its own, and standing still is not one", () => {
@@ -51,56 +51,19 @@ test("a cursor move is reported on its own, and standing still is not one", () =
   screen.takeCursorMoved();
 
   // A Tab is the whole of what some keys do, so it has to travel by itself.
-  screen.applyScreen({ cursor: { enabled: true, row: 3, column: 7 } });
+  screen.emulator.savedBaddr = 2 * 80 + 6;
   assert.deepEqual(screen.takeDirtyRows(), [], "a cursor move touches no row");
   assert.equal(screen.takeCursorMoved(), true);
   assert.equal(screen.takeCursorMoved(), false, "and is reported only once");
-
-  screen.applyScreen({ cursor: { enabled: true, row: 3, column: 7 } });
-  assert.equal(screen.takeCursorMoved(), false);
 });
 
-test("erase forgets the fields, adopts the new defaults and homes the cursor", () => {
-  const screen = newScreen();
-  screen.applyFields(
-    new Uint8Array(24 * 80).fill(1),
-    new Uint8Array(24 * 80),
-    true,
-  );
-  screen.applyScreen({ cursor: { enabled: true, row: 5, column: 5 } });
-  screen.takeDirtyRows();
-
-  screen.applyErase({
-    "logical-rows": 24,
-    "logical-columns": 80,
-    fg: "blue",
-    bg: "neutralBlack",
-  });
-
-  assert.equal(screen.cellAt(1, 0).editable, false);
-  assert.deepEqual(screen.inputCells, []);
-  assert.equal(screen.defaultFg, "blue");
-  assert.equal(screen.defaultBg, "neutralBlack");
-  assert.deepEqual(screen.cursor, { row: 0, col: 0, enabled: true });
-  assert.equal(screen.takeDirtyRows().length, 24);
-});
-
-test("a screen-mode change resizes and dirties the whole screen", () => {
-  const screen = newScreen();
-  screen.takeDirtyRows();
-
-  screen.applyScreenMode({
-    model: 4,
-    rows: 43,
-    columns: 80,
-    color: true,
-    oversize: false,
-    extended: true,
-  });
-
-  assert.equal(screen.rows, 43);
-  assert.equal(screen.cols, 80);
-  assert.equal(screen.takeDirtyRows().length, 43);
+test("a colour screen names its default colours, a monochrome one has none", () => {
+  const colour = newScreen("3279-2");
+  assert.equal(colour.defaultFg, "blue");
+  assert.equal(colour.defaultBg, "neutralBlack");
+  const mono = newScreen("3278-2");
+  assert.equal(mono.defaultFg, null);
+  assert.equal(mono.defaultBg, null);
 });
 
 test("a blank screen is all default colours, in colour and in monochrome", () => {
@@ -144,7 +107,6 @@ test("a plain-telnet host is dropped with an error the viewers see", async (t) =
     session.close();
     host.close();
   });
-  await session.ready;
   const viewer = collectingViewer("viewer");
   session.attach(viewer);
 

@@ -1,7 +1,7 @@
 {
   "name": "tn3270",
   "version": "0.1.0",
-  "description": "Web TN3270 terminal: b3270 backend, canvas frontend",
+  "description": "Web TN3270 terminal: node3270 backend, canvas frontend",
   "type": "module",
   "private": true,
   "license": "MIT",

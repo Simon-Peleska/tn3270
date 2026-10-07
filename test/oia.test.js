@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { renderOia, cursorPosition, keyboardLocked } from "../public/oia.js";
-import { OiaModel } from "../server/oia.js";
+import { renderOia, cursorPosition } from "../public/oia.js";
 
 /**
  * @param {Partial<import('../public/oia.js').OiaState>} fields
@@ -70,22 +69,6 @@ test("the line stays inside its width however full it is", () => {
   assert.equal(text.length, 61);
   assert.ok(text.includes("Insert"));
   assert.ok(text.trimEnd().endsWith("24/080"));
-});
-
-test("the browser and the server read a lock word the same way", () => {
-  // Macro playback waits on the browser's answer; the session decides what it
-  // will accept on the server's. They have to be the same answer.
-  const model = new OiaModel();
-  for (const lock of [
-    "",
-    "unlocked",
-    "system",
-    "not-connected",
-    "something-new",
-  ]) {
-    model.lock = lock;
-    assert.equal(keyboardLocked(lock), model.keyboardLocked, lock);
-  }
 });
 
 test("a width with no room left for a line is no line", () => {

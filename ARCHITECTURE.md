@@ -1,7 +1,7 @@
 # Architecture
 
 A web page that behaves like an IBM 3270 terminal. A Node server runs one
-emulator per session in its own process — node3270 (`3270/`), a port of x3270's
+emulator per session inside the server process — node3270 (`3270/`), a port of x3270's
 `b3270 -json`, all on one thread; the browser renders onto a canvas of
 its own.
 
@@ -67,7 +67,7 @@ Against it:
 - Every keystroke costs a full HTTP request.
 - The deciding point: **two independent channels give no ordering guarantee
   between input events.** Our deltas are incremental against a shared shadow
-  buffer, and our inputs must reach b3270's single stdin in the order typed. A
+  buffer, and our inputs must reach the emulator in the order typed. A
   transport that can reorder them is the wrong transport.
 
 WebSocket gives ordered, full-duplex framing over one connection at 2–6 bytes of
@@ -91,15 +91,15 @@ all just `attach` and `detach`; the host connection is never disturbed. A sessio
 with no viewers is reaped after `sessions.idleTimeoutMs`.
 
 - **attach** → assign a role, send `hello`, send `fullPaint()`.
-- **screen indication** → apply to the model, mark rows dirty, `paintDelta()` → broadcast.
+- **screen indication** → mark the named rows dirty, `paintDelta()` → broadcast. Size, cursor and colours are read straight from the emulator; a size change is announced at flush time.
 - **input** → only if `viewer.role === 'controller'` → translate to an emulator action → `run()`.
 - **detach** → if the controller left, promote another viewer, so the session
   never becomes permanently read-only.
 
 When a socket drops, `public/reconnect.js` backs off exponentially with jitter
-and the page asks `/api/sessions` before each attempt. It keeps waiting while the
-server does not answer; once it does, the session list decides whether to
-reattach or create a fresh session. A reconnect that gets as far as a `hello`
+and the page opens the socket again. It keeps waiting while the server does not
+answer; a session the server no longer has closes the socket with `E3001`, and
+the page creates a fresh one. A reconnect that gets as far as a `hello`
 reloads the page, so a server that came back with newer page code is picked up;
 the URL fragment stays unchanged. The reload hangs off `hello`, not socket
 opening, because an attach the server refuses opens a socket too. A viewer the
@@ -142,7 +142,7 @@ a redirect would throw away the session the user is looking at.
 | `E4xxx` | websocket |
 | `E5xxx` | frontend  |
 | `E6xxx` | http      |
-| `E7xxx` | REST      |
+| `E7xxx` | retired   |
 | `E8xxx` | user data |
 
 Codes are an identity, not a label: once assigned to a site, a code never
@@ -221,8 +221,7 @@ No browser driver and no mainframe are needed.
 
 Waiting is always on a condition, never a duration. Where the emulator's own
 timing is involved, `settle()` runs an action and waits for it to finish: a run
-resolves only after its `run-result` and every indication before it have been
-applied.
+resolves only after every indication it caused has been applied.
 
 ## Serving the page
 
@@ -286,7 +285,7 @@ public/
   hints.js      Ctrl-B's field hint letters and the prefix that shows them
   paste.js      a paste split into one segment per stretch of editable cells
                 (run by the server, and by local-host.js for panels)
-  canvas.js     Pane: two grids and a rectangle; Screen: the canvas that draws it
+  canvas.js     Screen: the one canvas, the two grids on it, and the drawing
   colors.js     3270 colour name → ANSI slot, gr → flags
   oia.js        the status line, composed from the last status and cursor
   keymap.js     KeyboardEvent → 3270 action, and the Keymap the Keys panel edits

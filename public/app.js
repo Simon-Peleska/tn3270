@@ -1,4 +1,4 @@
-import { Pane, Screen } from "./canvas.js";
+import { Screen } from "./canvas.js";
 import { renderOia, cursorPosition } from "./oia.js";
 import {
   ComboCapture,
@@ -26,11 +26,10 @@ import {
   loadKeymap,
   saveKeymap,
 } from "./store.js";
-import { backoffDelay, reconnectStep } from "./reconnect.js";
+import { backoffDelay } from "./reconnect.js";
 import {
   createSessionRequest,
   listSessions,
-  liveSessionIds,
   terminateSession,
 } from "./session-api.js";
 import { HintPrefix, computeHints } from "./hints.js";
@@ -164,8 +163,8 @@ function statusButtons(cols) {
 
   /** @type {StatusButton[]} */
   const placed = [];
-  const cursor = session.pane?.overlay.cursor ??
-    session.pane?.host.cursor ?? { row: 0, col: 0 };
+  const cursor = screen.overlay.cursor ??
+    screen.host.cursor ?? { row: 0, col: 0 };
   let col = cols - cursorPosition(cursor).length - 2;
   for (const button of wanted) {
     col -= button.label.length;
@@ -220,15 +219,12 @@ function answerRequest(request, allow) {
   sendUnrecorded({ type: "answer", viewer: request.viewer, allow });
 }
 
-/**
- * @param {import('./canvas.js').Pane} canvas
- * @returns {import('./screen-keyboard.js').PlacedKey[]}
- */
-function keyboardKeys(canvas) {
+/** @returns {import('./screen-keyboard.js').PlacedKey[]} */
+function keyboardKeys() {
   const cursorRow = panels.isOpen()
-    ? (canvas.overlay.cursor?.row ?? 0)
-    : (canvas.host.cursor?.row ?? 0);
-  return placeKeys(canvas.cols, keyboardTop(canvas.rows, cursorRow));
+    ? (screen.overlay.cursor?.row ?? 0)
+    : (screen.host.cursor?.row ?? 0);
+  return placeKeys(screen.cols, keyboardTop(screen.rows, cursorRow));
 }
 
 /** @type {{ code: string, message: string } | null} */
@@ -245,18 +241,17 @@ let errorTimer;
  * @returns {void}
  */
 function drawChrome() {
-  const canvas = session.pane;
-  if (canvas === null) return;
-  const overlay = canvas.overlay;
-  const bottom = canvas.statusRow;
+  if (screen.cols === 0) return;
+  const overlay = screen.overlay;
+  const bottom = screen.statusRow;
   const colors = settings.theme().colors;
   const background = colors["background"] ?? "#000000";
   const foreground = colors["foreground"] ?? "#00ff00";
   const statusInk = colors.statusForeground;
   const statusBar = colors.statusBackground;
   /** @param {string} text */
-  const wide = (text) => text.slice(0, canvas.cols).padEnd(canvas.cols, " ");
-  const statusWidth = Math.max(0, canvas.cols - 2);
+  const wide = (text) => text.slice(0, screen.cols).padEnd(screen.cols, " ");
+  const statusWidth = Math.max(0, screen.cols - 2);
   /** @param {string} text */
   const statusText = (text) =>
     text.slice(0, statusWidth).padEnd(statusWidth, " ");
@@ -264,7 +259,7 @@ function drawChrome() {
   overlay.clear();
   const panel = panels.isOpen();
   if (panel) {
-    const painted = panels.paint(canvas.rows, canvas.cols);
+    const painted = panels.paint(screen.rows, screen.cols);
     overlay.applyPaint(
       panels.pickingMacroCursor()
         ? {
@@ -273,21 +268,21 @@ function drawChrome() {
             rows: painted.rows.filter(
               (row) =>
                 row.row < 3 ||
-                (panels.message !== "" && row.row === canvas.rows - 3),
+                (panels.message !== "" && row.row === screen.rows - 3),
             ),
           }
         : painted,
     );
   }
   const insert = panel ? panels.host.insert : session.insert;
-  canvas.cursorStyle = insert ? "underline" : "block";
+  screen.cursorStyle = insert ? "underline" : "block";
 
   const style = paint(statusInk, statusBar);
   const loud = paint(statusInk, statusBar, true);
-  const cursor = overlay.cursor ?? canvas.host.cursor ?? { row: 0, col: 0 };
+  const cursor = overlay.cursor ?? screen.host.cursor ?? { row: 0, col: 0 };
   const position = cursorPosition(cursor);
-  const positionCol = canvas.cols - position.length - 1;
-  const buttons = statusButtons(canvas.cols);
+  const positionCol = screen.cols - position.length - 1;
+  const buttons = statusButtons(screen.cols);
   const buttonsStart = buttons.at(-1)?.col ?? positionCol - 1;
   // Browser zoom and OS display scaling together; the page cannot tell them apart.
   const scale = Math.round((window.devicePixelRatio || 1) * 100);
@@ -310,7 +305,7 @@ function drawChrome() {
   overlay.put(bottom, positionCol, position, style);
 
   if (keyboardShown) {
-    const keys = keyboardKeys(canvas);
+    const keys = keyboardKeys();
     const rows = new Set(keys.map((key) => key.row));
     for (const row of rows)
       overlay.put(row, 0, wide(""), paint(foreground, background));
@@ -415,19 +410,15 @@ function createSession() {
  *
  * @typedef {object} Session
  * @property {string} id empty until the server has made or confirmed one
- * @property {import('./canvas.js').Pane | null} pane its rectangle on the page's
- *   canvas, once the server has said how big the screen is
  * @property {WebSocket | null} socket
  * @property {number} attempt
  * @property {ReturnType<typeof setTimeout> | null} retryTimer the backoff wait before the next reconnect
  * @property {boolean} reconnecting whether a dropped socket has reattached
  * @property {number} model
- * @property {import('../server/indications.js').ModelInfo[]} models
  * @property {boolean} hostLocked
  * @property {string} codePage
+ * @property {string} chart what each EBCDIC byte from 0x40 to 0xFF shows, empty until the hello
  * @property {string} oversize
- * @property {number} cols
- * @property {number} rows the host's screen; the status row is not the host's
  * @property {string} connection
  * @property {boolean | null} connected null until the first status
  * @property {string | null} hostName what b3270 calls the host it is on
@@ -448,18 +439,15 @@ function createSession() {
 /** @type {Session} */
 const session = {
   id: "",
-  pane: null,
   socket: null,
   attempt: 0,
   retryTimer: null,
   reconnecting: false,
   model: 0,
-  models: [],
   hostLocked: false,
   codePage: "bracket",
+  chart: "",
   oversize: "",
-  cols: 0,
-  rows: 0,
   connection: "not-connected",
   connected: null,
   hostName: null,
@@ -491,7 +479,6 @@ function syncSettings() {
   settings.model = session.model;
   settings.oversize = session.oversize;
   settings.connected = session.connected === true;
-  settings.models = session.models;
   settings.hostLocked = session.hostLocked;
 }
 
@@ -579,6 +566,7 @@ const panels = new Panels({
   settings,
   revision: () => revision,
   codePage: () => session.codePage,
+  chart: () => session.chart,
   keymap,
   macros,
   recorder,
@@ -609,8 +597,7 @@ const panels = new Panels({
   terminateSession: (id) =>
     terminateSession(id, sessionStorage.getItem(`tn3270.pass.${id}`) ?? ""),
   insertCharacter: (character) => {
-    if (panels.isOpen()) panels.receive({ type: "text", value: character });
-    else send({ type: "text", value: character });
+    deliver({ type: "text", value: character });
   },
 });
 
@@ -642,23 +629,6 @@ importInput.addEventListener("change", async () => {
 });
 
 /**
- * Build the session's pane, or resize the one it has to the geometry the server
- * last reported. A session with no geometry yet has nothing to build.
- *
- * @returns {void}
- */
-function ensurePane() {
-  if (session.cols < 1 || session.rows < 1) return;
-  if (session.pane !== null) {
-    session.pane.resize(session.cols, session.rows);
-    return;
-  }
-  session.pane = new Pane(session.cols, session.rows);
-  // It was built empty, and every paint before it was built went nowhere.
-  sendQuietly({ type: "refresh" });
-}
-
-/**
  * The colours are the browser's own now, so a theme change is a repaint and
  * nothing more: the server is not asked for the screen again.
  *
@@ -686,13 +656,13 @@ async function applyFont(font) {
 }
 
 /**
- * How big a screen the pane would hold with text `fontSize` pixels tall.
+ * How big a screen the page would hold with text `fontSize` pixels tall.
  *
  * @param {number} fontSize
  * @returns {{ cols: number, rows: number } | null}
  */
 function paneFit(fontSize) {
-  return session.pane === null ? null : boxFit(session.pane.box, fontSize);
+  return screen.cols === 0 ? null : boxFit(screen.page, fontSize);
 }
 
 /**
@@ -773,6 +743,17 @@ const resizeObserver = new ResizeObserver(() => {
 });
 
 /**
+ * Typing goes to an open panel's host, the same messages the server gets.
+ *
+ * @param {import('../server/protocol.js').ClientMessage} message
+ * @returns {void}
+ */
+function deliver(message) {
+  if (panels.isOpen()) panels.receive(message);
+  else send(message);
+}
+
+/**
  * @param {import('../server/protocol.js').ClientMessage} message
  * @returns {void}
  */
@@ -842,6 +823,11 @@ function connectSocket() {
       showError("E3015", "The session was terminated by its owner.");
       return;
     }
+    if (event.reason === "E3001") {
+      showError("E3001", "The session is gone; starting a new one.");
+      startFreshSession();
+      return;
+    }
     // Coming back on our own would only ask again after a no.
     if (session.refusal !== null) return;
     session.reconnecting = true;
@@ -863,22 +849,9 @@ function scheduleReconnect() {
   session.retryTimer = setTimeout(reconnect, delay);
 }
 
-/** @returns {Promise<void>} */
-async function reconnect() {
+/** @returns {void} */
+function reconnect() {
   session.retryTimer = null;
-  const live = await liveSessionIds();
-  const step = reconnectStep({
-    answered: live !== null,
-    sessionLive: live !== null && live.has(session.id),
-  });
-  if (step === "retry") {
-    scheduleReconnect();
-    return;
-  }
-  if (step === "fresh") {
-    startFreshSession();
-    return;
-  }
   connectSocket();
 }
 
@@ -911,8 +884,7 @@ async function startFreshSession() {
     return;
   }
   session.id = created.id;
-  session.cols = created.cols;
-  session.rows = created.rows;
+  screen.resize(created.cols, created.rows);
   writeHash();
   connectSocket();
 }
@@ -943,34 +915,24 @@ function handleServerMessage(message) {
       session.refusal = `[${message.code}] ${message.message}`;
     }
     // No hello has told us a size, but the status row needs a screen to sit under.
-    if (session.cols < 1) {
-      session.cols = 80;
-      session.rows = 24;
-    }
+    if (screen.cols === 0) screen.resize(80, 24);
     applyLayout();
     return;
   }
   if (message.type === "screen") {
     session.model = message.model;
     session.oversize = message.oversize;
-    session.cols = message.cols;
-    session.rows = message.rows;
+    screen.resize(message.cols, message.rows);
     syncSettings();
     applyLayout();
-    return;
-  }
-  if (message.type === "codePage") {
-    session.codePage = message.name;
-    if (panels.isOpen()) redraw();
     return;
   }
   if (message.type === "hello") {
     session.model = message.model;
     session.codePage = message.codePage;
+    session.chart = message.chart;
     session.oversize = message.oversize;
-    session.cols = message.cols;
-    session.rows = message.rows;
-    session.models = message.models;
+    screen.resize(message.cols, message.rows);
     session.hostLocked = message.hostLocked;
     session.role = message.role;
     syncSettings();
@@ -1000,7 +962,7 @@ function handleServerMessage(message) {
   }
   if (message.type === "paint") {
     // Even behind a panel: the grid underneath is what closing it puts back.
-    session.pane?.applyHostPaint(message);
+    screen.applyHostPaint(message);
     redraw();
     return;
   }
@@ -1021,7 +983,7 @@ function handleServerMessage(message) {
     session.editRequested = message.editRequested;
     redraw();
     syncSettings();
-    // b3270 reports the host without its port, so never overwrite a typed one.
+    // The emulator reports the host without its port, so never overwrite a typed one.
     if (message.host !== null && settings.host === "" && !settings.hostLocked)
       settings.host = message.host;
     if (changed && panels.stack.at(-1)?.id !== "size") {
@@ -1048,9 +1010,7 @@ function handleServerMessage(message) {
  * @returns {void}
  */
 function applyLayout() {
-  ensurePane();
   screen.layout(
-    session.pane,
     { width: screenEl.clientWidth, height: screenEl.clientHeight },
     settings.font().family,
     settings.values.forceMaxFontSize ? settings.values.fitFontSize : undefined,
@@ -1071,8 +1031,7 @@ function jumpToHint(letter) {
     action: "MoveCursor1",
     args: [String(hint.row + 1), String(hint.col + 1)],
   };
-  if (panels.isOpen()) panels.receive(move);
-  else send(move);
+  deliver(move);
 }
 
 const SHARING_COMMANDS = new Set([
@@ -1162,10 +1121,10 @@ window.addEventListener(
       event.preventDefault();
       event.stopPropagation();
       if (decision.action === "arm") {
-        const pane = session.pane;
-        if (pane === null) hints = [];
-        else if (panels.isOpen()) hints = panels.hints(pane.rows, pane.cols);
-        else hints = computeHints(pane.host.cells, pane.host.cols);
+        if (screen.cols === 0) hints = [];
+        else if (panels.isOpen())
+          hints = panels.hints(screen.rows, screen.cols);
+        else hints = computeHints(screen.host.cells, screen.host.cols);
         redraw();
         return;
       }
@@ -1260,13 +1219,7 @@ screenEl.addEventListener(
     event.preventDefault();
     event.stopPropagation();
 
-    // Typing on a panel goes to the panels' host, the same messages the server gets.
     const panel = panels.isOpen();
-    const deliver = panel
-      ? (
-          /** @type {import('../server/protocol.js').ClientMessage} */ message,
-        ) => panels.receive(message)
-      : send;
 
     if (mapped.kind === "text") {
       deliver({ type: "text", value: mapped.value });
@@ -1302,7 +1255,7 @@ screenEl.addEventListener(
 
     const step = SELECT_STEPS[mapped.command];
     if (step !== undefined) {
-      session.pane?.stepSelection(step.row, step.col);
+      screen.stepSelection(step.row, step.col);
       redraw();
       return;
     }
@@ -1310,11 +1263,10 @@ screenEl.addEventListener(
     // Copy and Paste are this browser's clipboard, not 3270 actions, so keymap.js
     // maps them but cannot dispatch them.
     if (mapped.command === "Copy") {
-      const canvas = session.pane;
-      if (canvas !== null && canvas.hasSelection())
-        navigator.clipboard.writeText(canvas.getSelection());
+      if (screen.hasSelection())
+        navigator.clipboard.writeText(screen.getSelection());
       else {
-        const grid = panel ? panels.host.grid() : (canvas?.host ?? null);
+        const grid = panel ? panels.host.grid() : screen.host;
         const cursor = grid?.cursor ?? null;
         const text =
           grid === null || cursor === null
@@ -1333,8 +1285,7 @@ screenEl.addEventListener(
       .readText()
       .then((text) => {
         if (text === "") return;
-        if (panel) panels.receive({ type: "paste", text });
-        else send({ type: "paste", text });
+        deliver({ type: "paste", text });
       })
       .catch((cause) => {
         showError(
@@ -1369,13 +1320,12 @@ screenEl.addEventListener(
  */
 function canvasClicked(event) {
   screenEl.focus();
-  const canvas = session.pane;
   const hit = screen.cellAt(event.clientX, event.clientY);
-  if (canvas === null || hit === null) return;
+  if (hit === null) return;
   const { row, col } = hit;
 
-  if (row === canvas.statusRow) {
-    const button = statusButtons(canvas.cols).find(
+  if (row === screen.statusRow) {
+    const button = statusButtons(screen.cols).find(
       (each) => col >= each.col && col < each.col + each.label.length,
     );
     if (button !== undefined) {
@@ -1384,9 +1334,9 @@ function canvasClicked(event) {
     }
   }
 
-  if (row < 0 || row >= canvas.rows || col < 0 || col >= canvas.cols) return;
+  if (row < 0 || row >= screen.rows || col < 0 || col >= screen.cols) return;
   if (keyboardShown) {
-    const keys = keyboardKeys(canvas);
+    const keys = keyboardKeys();
     if (keys.some((key) => key.row === row)) {
       const key = keyAt(keys, row, col);
       if (key !== null) {
@@ -1399,13 +1349,7 @@ function canvasClicked(event) {
                 ? "HostEnter"
                 : key.action;
           panels.playbackKey(name);
-        } else if (panels.isOpen())
-          panels.receive({
-            type: "action",
-            action: key.action,
-            args: key.args,
-          });
-        else send({ type: "action", action: key.action, args: key.args });
+        } else deliver({ type: "action", action: key.action, args: key.args });
       }
       return;
     }
@@ -1417,7 +1361,7 @@ function canvasClicked(event) {
       panels.playbackClick(row, col);
       return;
     }
-    if (panels.pickingMacroCursor() && row >= 3 && row < canvas.statusRow) {
+    if (panels.pickingMacroCursor() && row >= 3 && row < screen.statusRow) {
       panels.addMacroCursorMove(row, col);
       return;
     }
@@ -1430,8 +1374,8 @@ function canvasClicked(event) {
   }
 
   // A click ending a drag was aiming at the selection.
-  if (canvas.hasSelection()) return;
-  const url = canvas.linkAt(row, col);
+  if (screen.hasSelection()) return;
+  const url = screen.linkAt(row, col);
   if (event.button === 0 && url !== null) {
     window.open(url, "_blank", "noopener,noreferrer");
     return;
@@ -1493,6 +1437,7 @@ try {
     canvas: canvasEl,
     theme: settings.theme().colors,
     fieldBackground: settings.values.fieldBackground,
+    redraw,
   });
 } catch (cause) {
   console.error("[E5001] The renderer failed to start", cause);
@@ -1519,21 +1464,15 @@ screenEl.style.background = settings.theme().colors.background;
 const storedHost = localStorage.getItem("tn3270.host");
 if (storedHost !== null) settings.host = storedHost;
 
-const wantedId = location.hash.replace(/^#/, "").trim();
-if (wantedId !== "") {
-  // No answer is not the same as forgotten: keep it and let the socket wait.
-  const live = await liveSessionIds();
-  if (live === null || live.has(wantedId)) session.id = wantedId;
-  else showError("E3001", "The session is gone; starting a new one.");
-}
+// A session that is gone is found out by the socket, which starts a new one.
+session.id = location.hash.replace(/^#/, "").trim();
 
 let startupFailed = false;
 if (session.id === "") {
   try {
     const created = await createSession();
     session.id = created.id;
-    session.cols = created.cols;
-    session.rows = created.rows;
+    screen.resize(created.cols, created.rows);
   } catch (cause) {
     startupFailed = true;
     console.error(

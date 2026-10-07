@@ -189,14 +189,12 @@ async function startBrowser(t) {
   await command("Network.enable");
   await command("Page.enable");
   await command("Runtime.enable");
-  const hello = frame("Network.webSocketFrameReceived", "hello");
   const connected = frame(
     "Network.webSocketFrameReceived",
     "status",
     (status) => status.connected === true,
   );
   await command("Page.navigate", { url: `http://127.0.0.1:${serverPort}/` });
-  const firstHello = await hello;
   await host.waitForConnection();
   await host.sendRecords(1);
   await connected;
@@ -206,6 +204,11 @@ async function startBrowser(t) {
     returnByValue: true,
   });
   assert.ok(geometry.result.result.value.every((size) => size > 0));
+  const hash = await command("Runtime.evaluate", {
+    expression: "location.hash.slice(1)",
+    returnByValue: true,
+  });
+  const sessionId = hash.result.result.value;
   const commandSocket = socket;
 
   return {
@@ -215,7 +218,7 @@ async function startBrowser(t) {
     event,
     key,
     consoleMessage,
-    firstHello,
+    sessionId,
     exceptions,
     sentFrames,
     server,
@@ -413,21 +416,34 @@ test("the browser opens a panel", async (t) => {
 
 test("the session is restored after reload", async (t) => {
   const browser = await startBrowser(t);
-  const reattached = browser.frame(
-    "Network.webSocketFrameReceived",
-    "hello",
-    (message) => message.sessionId === browser.firstHello.sessionId,
-  );
+  const reattached = browser.frame("Network.webSocketFrameReceived", "hello");
   await browser.command("Page.reload");
   await reattached;
   const afterReload = await browser.command("Runtime.evaluate", {
     expression: "location.hash",
     returnByValue: true,
   });
-  assert.equal(
-    afterReload.result.result.value,
-    `#${browser.firstHello.sessionId}`,
-  );
+  assert.equal(afterReload.result.result.value, `#${browser.sessionId}`);
+  assert.deepEqual(browser.exceptions, []);
+});
+
+test("a link to a session that is gone starts a new one", async (t) => {
+  const browser = await startBrowser(t);
+  const gone = "00000000-0000-0000-0000-000000000000";
+  const reported = browser.consoleMessage("[E3001]");
+  const started = browser.frame("Network.webSocketFrameReceived", "hello");
+  // A new query, or only the hash would change and the page would not load.
+  await browser.command("Page.navigate", {
+    url: `${browser.base}/?link#${gone}`,
+  });
+  await reported;
+  await started;
+  const hash = await browser.command("Runtime.evaluate", {
+    expression: "location.hash.slice(1)",
+    returnByValue: true,
+  });
+  assert.match(hash.result.result.value, /^[0-9a-f-]{36}$/);
+  assert.notEqual(hash.result.result.value, gone);
   assert.deepEqual(browser.exceptions, []);
 });
 
@@ -536,9 +552,7 @@ test("the owner can kill their session from the Sessions panel", async (t) => {
 
   const listed = await (await fetch(`${browser.base}/api/sessions`)).json();
   assert.equal(
-    listed.sessions.some(
-      (session) => session.id === browser.firstHello.sessionId,
-    ),
+    listed.sessions.some((session) => session.id === browser.sessionId),
     false,
   );
   assert.deepEqual(browser.exceptions, []);

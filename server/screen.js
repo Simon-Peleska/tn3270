@@ -31,33 +31,20 @@ import {
  * @property {boolean} enabled
  */
 
-/** @typedef {import('../3270/src/index.js').Session['s']} EmulatorState */
+/**
+ * @typedef {import('../3270/src/index.js').Session['s']} EmulatorState
+ * @typedef {NonNullable<EmulatorState['ui']>} Ui
+ */
 
 /**
- * The screen as viewers are sent it. The characters and colours are read
- * straight from the emulator's last render, so there is one copy of the screen;
- * the screen indications only say which rows to send again.
+ * The screen as viewers are sent it. The size, the cursor and every cell are
+ * read straight from the emulator's last render, so there is one copy of the
+ * screen; the screen indications only say which rows to send again.
  */
 export class ScreenModel {
-  /**
-   * @param {EmulatorState} emulator
-   * @param {number} rows
-   * @param {number} cols
-   */
-  constructor(emulator, rows = 24, cols = 80) {
+  /** @param {EmulatorState} emulator */
+  constructor(emulator) {
     this.emulator = emulator;
-    /** @type {number} */
-    this.rows = rows;
-    /** @type {number} */
-    this.cols = cols;
-    /** @type {boolean} Whether the host reports colours: 3279 vs 3278. */
-    this.color = true;
-    /** @type {string | null} */
-    this.defaultFg = null;
-    /** @type {string | null} */
-    this.defaultBg = null;
-    /** @type {Cursor} */
-    this.cursor = { row: 0, col: 0, enabled: false };
     /** @type {Uint8Array} Row-major, 1 where a cell can be typed into. */
     this.editable = new Uint8Array(0);
     /** @type {boolean} False for an unformatted screen, or before the first read. */
@@ -72,8 +59,8 @@ export class ScreenModel {
     this.dirtyRows = new Set();
     /** @type {number} Goes up with every change to a cell. */
     this.version = 0;
-    /** @type {boolean} A cursor move touches no row, so it is tracked apart. */
-    this.cursorMoved = false;
+    /** @type {string} The cursor as last painted: a move touches no row, so it is tracked apart. */
+    this.paintedCursor = "";
     const screen = this;
     /** @type {Cells} */
     this.cells = {
@@ -82,25 +69,46 @@ export class ScreenModel {
       },
       at: (i) => screen.cell(i),
     };
-
-    this.resize(rows, cols);
   }
 
-  /**
-   * @param {number} rows
-   * @param {number} cols
-   * @returns {void}
-   */
-  resize(rows, cols) {
-    this.rows = rows;
-    this.cols = cols;
-    this.editable = new Uint8Array(rows * cols);
-    this.moveCursor(0, 0, this.cursor.enabled);
-    this.fieldsFormatted = false;
-    this.fieldsHidden = new Uint8Array(0);
-    this.inputCells = [];
-    this.fieldAttributes = null;
-    this.markAllDirty();
+  /** @returns {Ui} */
+  get ui() {
+    return /** @type {Ui} */ (this.emulator.ui);
+  }
+
+  /** @returns {number} */
+  get rows() {
+    return this.ui.lastRows;
+  }
+
+  /** @returns {number} */
+  get cols() {
+    return this.ui.lastCols;
+  }
+
+  /** @returns {boolean} Whether the host reports colours: 3279 vs 3278. */
+  get color() {
+    return this.emulator.mode3279;
+  }
+
+  /** @returns {string | null} what an uncoloured cell means; erase's word for it */
+  get defaultFg() {
+    return this.color ? "blue" : null;
+  }
+
+  /** @returns {string | null} */
+  get defaultBg() {
+    return this.color ? "neutralBlack" : null;
+  }
+
+  /** @returns {Cursor} */
+  get cursor() {
+    const at = this.emulator.savedBaddr;
+    return {
+      row: Math.floor(at / this.cols),
+      col: at % this.cols,
+      enabled: this.ui.cursorEnabled,
+    };
   }
 
   /** @returns {void} */
@@ -116,11 +124,11 @@ export class ScreenModel {
   cell(i) {
     if (i < 0 || i >= this.rows * this.cols) return undefined;
     const editable = this.editable[i] === 1;
-    const rendered = this.emulator.ui?.saved;
+    const rendered = this.ui.saved;
     // The render is laid out at the model's largest size, whatever the host uses now.
     const at =
       Math.floor(i / this.cols) * this.emulator.maxCols + (i % this.cols);
-    if (rendered === undefined || at >= rendered.cc.length)
+    if (at >= rendered.cc.length)
       return { ch: " ", fg: null, bg: null, gr: null, editable };
     const cc = rendered.cc[at];
     const fg = rendered.fg[at];
@@ -154,47 +162,6 @@ export class ScreenModel {
   }
 
   /**
-   * @param {number} row 0-based
-   * @param {number} col 0-based
-   * @param {boolean} enabled
-   * @returns {void}
-   */
-  moveCursor(row, col, enabled) {
-    const at = this.cursor;
-    if (at.row === row && at.col === col && at.enabled === enabled) return;
-    this.cursor = { row, col, enabled };
-    this.cursorMoved = true;
-  }
-
-  /**
-   * The fg/bg an erase carries become the screen-wide defaults.
-   *
-   * @param {import('./indications.js').EraseIndication} erase
-   * @returns {void}
-   */
-  applyErase(erase) {
-    const rows = erase["logical-rows"];
-    const cols = erase["logical-columns"];
-    if (
-      typeof rows === "number" &&
-      typeof cols === "number" &&
-      (rows !== this.rows || cols !== this.cols)
-    ) {
-      this.resize(rows, cols);
-    }
-    if (typeof erase.fg === "string") this.defaultFg = erase.fg;
-    if (typeof erase.bg === "string") this.defaultBg = erase.bg;
-
-    this.editable.fill(0);
-    this.fieldsFormatted = false;
-    this.fieldsHidden = new Uint8Array(0);
-    this.inputCells = [];
-    this.fieldAttributes = null;
-    this.moveCursor(0, 0, this.cursor.enabled);
-    this.markAllDirty();
-  }
-
-  /**
    * The fields as the emulator holds them, one attribute per cell (0 for none).
    * They seldom change between two screen updates, and mapping them is a walk
    * over every cell, so an unchanged copy is skipped.
@@ -205,6 +172,10 @@ export class ScreenModel {
   applyFieldAttributes(fa) {
     const last = this.fieldAttributes;
     if (last !== null && Buffer.compare(last, fa) === 0) return;
+    if (fa.length !== this.editable.length) {
+      this.editable = new Uint8Array(fa.length);
+      this.markAllDirty();
+    }
     this.fieldAttributes = fa.slice();
     const { editable, hidden, formatted } = fieldMap(fa);
     this.applyFields(editable, hidden, formatted);
@@ -262,39 +233,18 @@ export class ScreenModel {
   }
 
   /**
-   * @param {import('./indications.js').ScreenModeIndication} mode
-   * @returns {void}
-   */
-  applyScreenMode(mode) {
-    this.color = mode.color;
-    if (mode.rows !== this.rows || mode.columns !== this.cols) {
-      this.resize(mode.rows, mode.columns);
-    }
-  }
-
-  /**
-   * The rows and the cursor are 1-based, as b3270 counts. The rows are already
-   * drawn in the emulator's render; they only need sending again.
+   * The rows are 1-based, as b3270 counts. They are already drawn in the
+   * emulator's render; they only need sending again.
    *
-   * @param {import('./indications.js').ScreenIndication} screen
+   * @param {number[]} rows
    * @returns {void}
    */
-  applyScreen(screen) {
-    for (const row of screen.rows ?? []) {
+  markRows(rows) {
+    for (const row of rows) {
       const y = row - 1;
       if (y < 0 || y >= this.rows) continue;
       this.dirtyRows.add(y);
       this.version++;
-    }
-
-    if (screen.cursor) {
-      const { enabled, row, column } = screen.cursor;
-      const previous = this.cursor;
-      this.moveCursor(
-        typeof row === "number" ? row - 1 : previous.row,
-        typeof column === "number" ? column - 1 : previous.col,
-        typeof enabled === "boolean" ? enabled : previous.enabled,
-      );
     }
   }
 
@@ -308,12 +258,14 @@ export class ScreenModel {
   }
 
   /**
-   * @returns {boolean} whether the cursor moved; the flag is then cleared
+   * @returns {boolean} whether the cursor moved since it was last painted
    */
   takeCursorMoved() {
-    const moved = this.cursorMoved;
-    this.cursorMoved = false;
-    return moved;
+    const { row, col, enabled } = this.cursor;
+    const cursor = `${row},${col},${enabled}`;
+    if (cursor === this.paintedCursor) return false;
+    this.paintedCursor = cursor;
+    return true;
   }
 
   /**

@@ -18,7 +18,6 @@ import {
 test("the first viewer controls and the rest observe", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
-  await session.ready;
 
   const first = collectingViewer("first");
   const second = collectingViewer("second");
@@ -32,10 +31,9 @@ test("the first viewer controls and the rest observe", async (t) => {
 test("a stalled host cannot grow the input queue without limit", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
-  await session.ready;
   const viewer = collectingViewer("controller");
   session.attach(viewer);
-  session.inputTag = "host-stalled";
+  session.input = new Promise(() => {});
 
   for (let i = 0; i < 300; i++)
     session.handleClientMessage(viewer, { type: "text", value: "A" });
@@ -48,28 +46,27 @@ test("a stalled host cannot grow the input queue without limit", async (t) => {
   );
 });
 
-test("a viewer receives the emulator's active code page and later changes", async (t) => {
+test("a viewer receives the emulator's active code page", async (t) => {
   const config = testConfig({
     emulator: { settings: { codePage: "german" } },
   });
   const session = new Session(config);
   t.after(() => session.close());
-  await session.ready;
-  await waitUntil(() => session.codePage === "cp273", "the code-page setting");
 
   const viewer = collectingViewer("viewer");
   session.attach(viewer);
   const hello = viewer.messages.find((message) => message.type === "hello");
   assert.equal(hello?.type === "hello" ? hello.codePage : "", "cp273");
-
-  session.handleIndication({
-    kind: "setting",
-    body: { name: "codePage", value: "cp1142" },
-  });
-  assert.deepEqual(viewer.messages.at(-1), {
-    type: "codePage",
-    name: "cp1142",
-  });
+  const chart = [...(hello?.type === "hello" ? hello.chart : "")];
+  assert.equal(chart.length, 192, "one character per byte from 0x40 to 0xFF");
+  assert.doesNotMatch(chart.join(""), /\p{C}/u);
+  assert.equal(chart[0x43 - 0x40], "{");
+  assert.equal(chart[0xc1 - 0x40], "A");
+  assert.equal(
+    chart[0xff - 0x40],
+    " ",
+    "the emulator's dot for 0xFF cannot be typed",
+  );
 });
 
 test("a viewer joining mid-stream gets a repaint matching what the first viewer sees", async (t) => {
@@ -136,7 +133,6 @@ test("every attached viewer receives the same delta", async (t) => {
 test("an observer cannot type, and is told why in place", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
-  await session.ready;
 
   const controller = collectingViewer("controller");
   const observer = collectingViewer("observer");
@@ -153,7 +149,6 @@ test("an observer cannot type, and is told why in place", async (t) => {
 test("a session counts as untouched until someone types at it", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
-  await session.ready;
 
   const viewer = collectingViewer("viewer");
   session.attach(viewer);
@@ -164,7 +159,6 @@ test("a session counts as untouched until someone types at it", async (t) => {
     return status?.type === "status" ? status.touched : false;
   };
 
-  session.handleClientMessage(viewer, { type: "refresh" });
   session.handleClientMessage(viewer, { type: "oversize", value: "100x40" });
   assert.equal(session.touched, false);
 
@@ -194,11 +188,18 @@ test("the keyboard locking is pushed to every viewer the moment it happens", asy
   // else going on that would force a broadcast.
   session.handleClientMessage(viewer, { type: "text", value: "a" });
   await settle(session);
-  assert.equal(session.oia.keyboardLocked, false, "the keyboard starts open");
+  assert.equal(
+    keyboardLocked(session.oia.lock),
+    false,
+    "the keyboard starts open",
+  );
   const before = viewer.messages.length;
 
   session.handleClientMessage(viewer, { type: "action", action: "Enter" });
-  await waitUntil(() => session.oia.keyboardLocked, "the keyboard to lock");
+  await waitUntil(
+    () => keyboardLocked(session.oia.lock),
+    "the keyboard to lock",
+  );
 
   const pushed = viewer.messages
     .slice(before)
@@ -225,7 +226,10 @@ test("what is typed while the host has the keyboard runs, in order, once it answ
   await waitUntil(() => session.screen.fieldsFormatted, "the field map");
 
   session.handleClientMessage(viewer, { type: "action", action: "Enter" });
-  await waitUntil(() => session.oia.keyboardLocked, "the keyboard to lock");
+  await waitUntil(
+    () => keyboardLocked(session.oia.lock),
+    "the keyboard to lock",
+  );
   session.handleClientMessage(viewer, { type: "text", value: "x" });
   session.handleClientMessage(viewer, { type: "action", action: "Tab" });
   session.handleClientMessage(viewer, { type: "text", value: "y" });
@@ -255,7 +259,10 @@ test("a held-down PF key repeats only once the host has answered the last one", 
     action: "PF",
     args: ["8"],
   });
-  await waitUntil(() => session.oia.keyboardLocked, "the keyboard to lock");
+  await waitUntil(
+    () => keyboardLocked(session.oia.lock),
+    "the keyboard to lock",
+  );
   session.handleClientMessage(viewer, pf8);
   session.handleClientMessage(viewer, pf8);
   assert.equal(
@@ -269,7 +276,7 @@ test("a held-down PF key repeats only once the host has answered the last one", 
   await settle(session);
 
   session.handleClientMessage(viewer, pf8);
-  assert.notEqual(session.inputTag, null, "a repeat into an empty line runs");
+  assert.notEqual(session.input, null, "a repeat into an empty line runs");
 });
 
 test("Reset while the host has the keyboard throws away what was typed ahead", async (t) => {
@@ -281,11 +288,17 @@ test("Reset while the host has the keyboard throws away what was typed ahead", a
   await waitUntil(() => session.screen.fieldsFormatted, "the field map");
 
   session.handleClientMessage(viewer, { type: "action", action: "Enter" });
-  await waitUntil(() => session.oia.keyboardLocked, "the keyboard to lock");
+  await waitUntil(
+    () => keyboardLocked(session.oia.lock),
+    "the keyboard to lock",
+  );
   session.handleClientMessage(viewer, { type: "text", value: "lost" });
 
   session.handleClientMessage(viewer, { type: "action", action: "Reset" });
-  await waitUntil(() => !session.oia.keyboardLocked, "the keyboard to unlock");
+  await waitUntil(
+    () => !keyboardLocked(session.oia.lock),
+    "the keyboard to unlock",
+  );
   assert.equal(session.inputQueue.length, 0);
 
   session.handleClientMessage(viewer, { type: "text", value: "kept" });
@@ -296,7 +309,6 @@ test("Reset while the host has the keyboard throws away what was typed ahead", a
 test("a second viewer waits until the owner lets them in, and sees nothing before", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
-  await session.ready;
 
   const owner = collectingViewer("owner");
   const guest = { ...collectingViewer("guest"), user: "alice" };
@@ -326,16 +338,14 @@ test("a second viewer waits until the owner lets them in, and sees nothing befor
   assert.equal(after?.type === "status" ? after.guests : null, 1);
 });
 
-test("a viewer still waiting cannot get the screen by asking for a repaint", async (t) => {
+test("a viewer still waiting is sent no screen when it asks to edit", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
-  await session.ready;
 
   const owner = collectingViewer("owner");
   const guest = collectingViewer("guest");
   session.attach(owner);
   session.attach(guest);
-  session.handleClientMessage(guest, { type: "refresh" });
   session.handleClientMessage(guest, { type: "askEdit" });
 
   assert.deepEqual(guest.paints, []);
@@ -346,7 +356,6 @@ test("a viewer still waiting cannot get the screen by asking for a repaint", asy
 test("a viewer the owner says no to is sent away, named by address without a user", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
-  await session.ready;
 
   const owner = { ...collectingViewer("owner"), user: "bob" };
   const guest = collectingViewer("guest");
@@ -376,7 +385,6 @@ test("a viewer the owner says no to is sent away, named by address without a use
 test("a guest asks to edit, and only one guest edits at a time", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
-  await session.ready;
 
   const owner = collectingViewer("owner");
   const first = collectingViewer("first");
@@ -424,7 +432,6 @@ test("a guest asks to edit, and only one guest edits at a time", async (t) => {
 test("an owner can say no to editing and take editing back", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
-  await session.ready;
 
   const owner = collectingViewer("owner");
   const guest = collectingViewer("guest");
@@ -461,7 +468,6 @@ test("an owner can say no to editing and take editing back", async (t) => {
 test("stopping sharing sends every guest away, waiting or watching, and their passes stop working", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
-  await session.ready;
 
   const owner = collectingViewer("owner");
   const watching = collectingViewer("watching");
@@ -486,7 +492,6 @@ test("stopping sharing sends every guest away, waiting or watching, and their pa
 test("a guest cannot answer requests or stop sharing", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
-  await session.ready;
 
   const owner = collectingViewer("owner");
   const guest = collectingViewer("guest");
@@ -515,7 +520,6 @@ test("a guest cannot answer requests or stop sharing", async (t) => {
 test("the pass from hello lets the owner and a guest back in without asking", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
-  await session.ready;
 
   const owner = collectingViewer("owner");
   const guest = collectingViewer("guest");
@@ -542,7 +546,6 @@ test("the pass from hello lets the owner and a guest back in without asking", as
 test("when the owner leaves, guests keep watching and nobody is made owner", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
-  await session.ready;
 
   const owner = collectingViewer("owner");
   const guest = collectingViewer("guest");
@@ -564,7 +567,6 @@ test("when the owner leaves, guests keep watching and nobody is made owner", asy
 test("a viewer that gives up waiting takes its request with it", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
-  await session.ready;
 
   const owner = collectingViewer("owner");
   const guest = collectingViewer("guest");
@@ -581,7 +583,6 @@ test("the viewer ceiling is enforced", async (t) => {
     testConfig({ sessions: { maxViewersPerSession: 1, idleTimeoutMs: 0 } }),
   );
   t.after(() => session.close());
-  await session.ready;
 
   session.attach(collectingViewer("a"));
   assert.throws(
@@ -623,7 +624,6 @@ test("a session survives its viewers leaving and rejoining", async (t) => {
 test("changing the model resizes the grid and tells every viewer before repainting", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
-  await session.ready;
   assert.equal(session.screen.rows, 43, "the fixture starts on a model 4");
 
   const controller = collectingViewer("controller");
@@ -660,29 +660,24 @@ test("changing the model resizes the grid and tells every viewer before repainti
 });
 
 test("a host that only ever erases the default screen shrinks the grid to match", async (t) => {
-  const session = new Session(testConfig());
-  t.after(() => session.close());
-  await session.ready;
+  // A host that never sends Erase/Write Alternate stays at 24x80, which the
+  // emulator reports as an erase indication's logical-rows, not as a new
+  // screen-mode.
+  const fixture = await startTracedSession("test/traces/bid.trc", {
+    records: 0,
+  });
+  t.after(() => fixture.close());
+  const { session, host } = fixture;
+  assert.equal(session.screen.rows, 43, "model 4 starts at its own size");
 
   const viewer = collectingViewer("viewer");
   session.attach(viewer);
-
-  // A host that never sends Erase/Write Alternate stays at 24x80, which b3270
-  // reports as an erase indication's logical-rows, not as a new screen-mode.
-  session.handleIndication({
-    kind: "screen-mode",
-    body: { model: 4, rows: 43, columns: 80, color: true },
-  });
-  await waitUntil(
-    () => session.screen.rows === 43,
-    "the grid to grow to the model 4 size",
-  );
-
   const before = viewer.messages.length;
-  session.handleIndication({
-    kind: "erase",
-    body: { "logical-rows": 24, "logical-columns": 80 },
-  });
+  await host.sendRecords(1);
+  await waitUntil(
+    () => viewer.messages.some((m, i) => i >= before && m.type === "screen"),
+    "the viewer to be told the new size",
+  );
 
   const at = viewer.messages.findIndex(
     (message, i) => i >= before && message.type === "screen",
@@ -760,41 +755,6 @@ test("reconnecting without naming a host reuses the one the session knows", asyn
   assert.equal(session.lastHost, `127.0.0.1:${host.port}`);
 });
 
-test("a refresh repaints only the viewer who asked, even an observer", async (t) => {
-  const fixture = await startTracedSession("test/traces/reverse.trc");
-  t.after(() => fixture.close());
-  const { session } = fixture;
-  await waitUntil(
-    () => session.screen.rowText(0).includes("_____"),
-    "the screen to be drawn",
-  );
-
-  const controller = collectingViewer("controller");
-  const observer = collectingViewer("observer");
-  session.attach(controller);
-  letIn(session, controller, observer);
-  assert.equal(observer.role, "observer");
-
-  const before = controller.paints.length;
-  session.handleClientMessage(observer, { type: "refresh" });
-
-  assert.equal(
-    controller.paints.length,
-    before,
-    "nobody else may be disturbed",
-  );
-  const last = observer.paints.at(-1);
-  assert.equal(last?.full, true, "the asker gets a full repaint");
-  assert.ok(
-    observer.grid.rowText(0).includes("_____"),
-    "and it is the host screen, not an error",
-  );
-  assert.ok(
-    observer.messages.every((message) => message.type !== "error"),
-    "an observer asking for its own screen back is not an input",
-  );
-});
-
 test("a Backspace action deletes the character behind the cursor, not just moves over it", async (t) => {
   // b3270's own Backspace only moves left. The field is nondisplay, so the
   // deletion can only be checked through the cursor.
@@ -857,7 +817,11 @@ test("a Backspace at the very start of a field does nothing, rather than locking
   await settle(session);
 
   assert.deepEqual(screen.cursor, before, "the cursor must not move");
-  assert.equal(session.oia.keyboardLocked, false, "the keyboard must not lock");
+  assert.equal(
+    keyboardLocked(session.oia.lock),
+    false,
+    "the keyboard must not lock",
+  );
 });
 
 test("typing on the attribute byte just left of a field nudges the cursor into it, rather than locking the keyboard", async (t) => {
@@ -883,7 +847,7 @@ test("typing on the attribute byte just left of a field nudges the cursor into i
   session.handleClientMessage(controller, { type: "text", value: "x" });
   await settle(session);
   assert.equal(
-    session.oia.keyboardLocked,
+    keyboardLocked(session.oia.lock),
     false,
     "typing on the attribute byte must not lock the keyboard",
   );
@@ -965,7 +929,7 @@ test("BackNewline walks up to the first field of the row above, where Newline wa
     "BackNewline wraps past the top",
   );
   assert.equal(
-    session.oia.keyboardLocked,
+    keyboardLocked(session.oia.lock),
     false,
     "moving the cursor must not lock the keyboard",
   );
@@ -1129,7 +1093,7 @@ test("pasting more than a field holds is truncated at its edge, not spilled into
   });
   await settle(session);
   assert.equal(
-    session.oia.keyboardLocked,
+    keyboardLocked(session.oia.lock),
     false,
     "landing on the protected field must not lock the keyboard",
   );
@@ -1321,7 +1285,6 @@ test("a setting in the config reaches the emulator", async (t) => {
     }),
   );
   t.after(() => session.close());
-  await session.ready;
 
   assert.equal(session.screen.rows, 30);
   assert.equal(session.screen.cols, 90);
@@ -1330,7 +1293,6 @@ test("a setting in the config reaches the emulator", async (t) => {
 test("fitting the screen to the window grows it while disconnected, and off puts it back", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
-  await session.ready;
   assert.equal(session.screen.rows, 43, "the fixture starts on a model 4");
 
   const controller = collectingViewer("controller");
@@ -1370,7 +1332,6 @@ test("a model too wide for the fitted screen falls back to its own size", async 
   // b3270 refuses a model bigger than the standing oversize, so the two are reconciled first.
   const session = new Session(testConfig());
   t.after(() => session.close());
-  await session.ready;
 
   const controller = collectingViewer("controller");
   session.attach(controller);
@@ -1426,8 +1387,8 @@ test("the registry refuses to exceed maxSessions", async (t) => {
     testConfig({ sessions: { maxSessions: 1, idleTimeoutMs: 0 } }),
   );
   t.after(() => registry.closeAll());
-  await registry.create();
-  await assert.rejects(
+  registry.create();
+  assert.throws(
     () => registry.create(),
     (err) => {
       assert.ok(err instanceof AppError);
@@ -1453,7 +1414,7 @@ test("an unknown session id is a stable error, not a crash", async (t) => {
 test("only the owner may terminate a session through the registry", async (t) => {
   const registry = new SessionRegistry(testConfig());
   t.after(() => registry.closeAll());
-  const { id } = await registry.create();
+  const { id } = registry.create();
   assert.throws(
     () => registry.terminate(id, "not the owner's pass"),
     (err) => {
@@ -1467,7 +1428,7 @@ test("only the owner may terminate a session through the registry", async (t) =>
 test("a closed session removes itself from the registry", async (t) => {
   const registry = new SessionRegistry(testConfig());
   t.after(() => registry.closeAll());
-  await registry.create();
+  registry.create();
   assert.equal(registry.list().length, 1);
   registry.closeAll();
   await waitUntil(() => registry.sessions.size === 0, "the session to close");
@@ -1506,7 +1467,6 @@ test("the field map is read on every session, and rides the paint as a flag", as
 test("recording captures the screen and each step, and stops cleanly", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
-  await session.ready;
 
   const controller = collectingViewer("controller");
   session.attach(controller);
@@ -1575,8 +1535,6 @@ test("recording keeps a full colour paint beside the plain-text screen", async (
   const { session } = fixture;
   await settle(session);
 
-  session.screen.defaultFg = "green";
-  session.screen.defaultBg = "black";
   session.recording = { steps: [] };
   session.record("Enter");
 
@@ -1584,8 +1542,8 @@ test("recording keeps a full colour paint beside the plain-text screen", async (
   assert.equal(step?.screen[0], session.screen.rowText(0));
   assert.deepEqual(step?.paint, fullPaint(session.screen));
   assert.equal(step?.paint?.full, true);
-  assert.equal(step?.paint?.defaultFg, "green");
-  assert.equal(step?.paint?.defaultBg, "black");
+  assert.equal(step?.paint?.defaultFg, "blue");
+  assert.equal(step?.paint?.defaultBg, "neutralBlack");
   assert.ok(
     step?.paint?.rows.some((row) => row.runs.some((run) => run.fg === "red")),
     "this trace paints in red, so the recording must too",
@@ -1674,11 +1632,9 @@ test("recording captures cursor movement actions with their target", async (t) =
 test("Stop acknowledges a recorded cursor move without waiting for the host", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
-  await session.ready;
 
   const controller = collectingViewer("controller");
   session.attach(controller);
-  await waitUntil(() => !session.fieldsStale, "the field map");
   session.handleClientMessage(controller, {
     type: "recorder",
     action: "start",
@@ -1688,7 +1644,7 @@ test("Stop acknowledges a recorded cursor move without waiting for the host", as
     action: "MoveCursor1",
     args: ["5", "12"],
   });
-  assert.notEqual(session.inputTag, null);
+  assert.notEqual(session.input, null);
   session.handleClientMessage(controller, { type: "recorder", action: "stop" });
 
   assert.equal(session.recording, null);
@@ -1701,11 +1657,9 @@ test("Stop acknowledges a recorded cursor move without waiting for the host", as
 test("Stop acknowledges immediately even when typing is queued behind a busy host", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
-  await session.ready;
 
   const controller = collectingViewer("controller");
   session.attach(controller);
-  await waitUntil(() => !session.fieldsStale, "the field map");
   session.handleClientMessage(controller, {
     type: "recorder",
     action: "start",
@@ -1716,7 +1670,7 @@ test("Stop acknowledges immediately even when typing is queued behind a busy hos
     args: ["5", "12"],
   });
   session.handleClientMessage(controller, { type: "text", value: "queued" });
-  assert.notEqual(session.inputTag, null);
+  assert.notEqual(session.input, null);
   assert.equal(session.inputQueue.length, 1);
 
   session.handleClientMessage(controller, { type: "recorder", action: "stop" });
@@ -1731,7 +1685,6 @@ test("Stop acknowledges immediately even when typing is queued behind a busy hos
 test("nothing is recorded while nobody has started a recording", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
-  await session.ready;
 
   const controller = collectingViewer("controller");
   session.attach(controller);
@@ -1748,7 +1701,6 @@ test("nothing is recorded while nobody has started a recording", async (t) => {
 test("an observer cannot start or stop a recording", async (t) => {
   const session = new Session(testConfig());
   t.after(() => session.close());
-  await session.ready;
 
   const controller = collectingViewer("controller");
   const observer = collectingViewer("observer");
@@ -1870,7 +1822,6 @@ test("tabbing into a password field is enough to redact what is typed there", as
 test("a session with no viewers left is closed once the idle timeout passes", async (t) => {
   const session = new Session(testConfig({ sessions: { idleTimeoutMs: 30 } }));
   t.after(() => session.close());
-  await session.ready;
 
   const viewer = collectingViewer("only");
   session.attach(viewer);
@@ -1889,7 +1840,6 @@ test("a viewer reattaching inside the idle window stops the session being reaped
     testConfig({ sessions: { idleTimeoutMs: 30000 } }),
   );
   t.after(() => session.close());
-  await session.ready;
 
   const first = collectingViewer("first");
   session.attach(first);
@@ -1903,19 +1853,4 @@ test("a viewer reattaching inside the idle window stops the session being reaped
   session.attach(collectingViewer("reconnected"));
   assert.equal(session.idleTimer, null);
   assert.equal(session.closed, false);
-});
-
-test("the hello tells a viewer how long a dropped session is held for", async (t) => {
-  const session = new Session(
-    testConfig({ sessions: { idleTimeoutMs: 45000 } }),
-  );
-  t.after(() => session.close());
-  await session.ready;
-
-  const viewer = collectingViewer("only");
-  session.attach(viewer);
-
-  const hello = viewer.messages[0];
-  assert.equal(hello?.type, "hello");
-  assert.equal(hello?.type === "hello" ? hello.idleTimeoutMs : 0, 45000);
 });

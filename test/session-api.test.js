@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import {
   createSessionRequest,
   listSessions,
-  liveSessionIds,
   terminateSession,
 } from "../public/session-api.js";
 
@@ -42,14 +41,13 @@ test("session API uses one response shape for create and list", async (t) => {
     cols: 80,
   });
   assert.equal((await listSessions())[0].id, "created");
-  assert.deepEqual(await liveSessionIds(), new Set(["created"]));
   await terminateSession("created", "owner-pass");
-  assert.deepEqual(requests, ["POST", "GET", "GET", "DELETE"]);
+  assert.deepEqual(requests, ["POST", "GET", "DELETE"]);
   assert.equal(termination.method, "DELETE");
   assert.deepEqual(termination.headers, { "x-session-pass": "owner-pass" });
 });
 
-test("session API surfaces a coded error while the live check tolerates downtime", async (t) => {
+test("session API surfaces a coded error", async (t) => {
   const original = globalThis.fetch;
   t.after(() => {
     globalThis.fetch = original;
@@ -62,7 +60,6 @@ test("session API surfaces a coded error while the live check tolerates downtime
     terminateSession("session", "wrong-pass"),
     /\[E3002\] session limit/,
   );
-  assert.equal(await liveSessionIds(), null);
 });
 
 test("session termination preserves an owner-only error from the server", async (t) => {

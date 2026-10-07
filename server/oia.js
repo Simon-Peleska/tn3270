@@ -26,10 +26,10 @@ export class OiaModel {
         this.lock = typeof value === "string" ? value : "";
         break;
       case "insert":
-        this.insert = value === true || value === "true";
+        this.insert = value === true;
         break;
       case "typeahead":
-        this.typeahead = value === true || value === "true";
+        this.typeahead = value === true;
         break;
       default:
         break;
@@ -48,10 +48,5 @@ export class OiaModel {
   /** @returns {boolean} */
   get connected() {
     return this.connectionState.startsWith("connected");
-  }
-
-  /** @returns {boolean} */
-  get keyboardLocked() {
-    return this.lock !== "" && this.lock !== "unlocked";
   }
 }

@@ -4,7 +4,6 @@ import {
   BASE_DELAY_MS,
   MAX_DELAY_MS,
   backoffDelay,
-  reconnectStep,
 } from "../public/reconnect.js";
 
 test("the first retries are quick and every later one waits longer", () => {
@@ -37,19 +36,4 @@ test("half of every delay is random, so browsers do not all retry on the same ti
       "and never delays a retry by more than double",
     );
   }
-});
-
-test("a session the server still has is reconnected to", () => {
-  assert.equal(
-    reconnectStep({ answered: true, sessionLive: true }),
-    "reconnect",
-  );
-});
-
-test("a server that has forgotten the session is not waited for", () => {
-  assert.equal(reconnectStep({ answered: true, sessionLive: false }), "fresh");
-});
-
-test("a disconnected server is retried rather than asked to create a session", () => {
-  assert.equal(reconnectStep({ answered: false, sessionLive: false }), "retry");
 });

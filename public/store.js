@@ -31,7 +31,7 @@ const LEGACY_KEYS = /** @type {const} */ ({
  */
 
 /** @param {Response} response @returns {Promise<Error>} */
-async function responseError(response) {
+export async function responseError(response) {
   const body = await response.json().catch(() => null);
   return typeof body?.code === "string"
     ? new Error(`[${body.code}] ${body.message}`)

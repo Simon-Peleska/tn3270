@@ -1,4 +1,3 @@
-import { CODE_PAGE_CHARTS } from "./codepages.js";
 import { drawCodePageChart } from "./panel-font.js";
 
 /** @type {import('./panels.js').PanelLayout} */
@@ -17,7 +16,12 @@ export const charsLayout = {
     view.say(7, 4, "-F", "turquoise");
     view.say(7, 6, "F", "yellow");
     view.say(7, 7, " in hex", "turquoise");
-    drawCodePageChart(view, panel.deps.codePage(), "yellow");
+    drawCodePageChart(
+      view,
+      panel.deps.codePage(),
+      panel.deps.chart(),
+      "yellow",
+    );
   },
 
   input(panel, values) {
@@ -39,10 +43,9 @@ export const charsLayout = {
   },
 };
 
-/** @param {string} codePage @param {number} byte @returns {string | null} */
-export function printableCharacter(codePage, byte) {
-  const chart = CODE_PAGE_CHARTS[codePage];
-  if (chart === undefined || byte < 0x40 || byte > 0xff) return null;
+/** @param {string} chart @param {number} byte @returns {string | null} */
+export function printableCharacter(chart, byte) {
+  if (chart === "" || byte < 0x40 || byte > 0xff) return null;
   const glyph = chart[byte - 0x40];
   if (byte === 0x40) return " ";
   // Blank, or a space of its own, like the required space at 0x41.

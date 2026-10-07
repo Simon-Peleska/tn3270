@@ -26,7 +26,7 @@ test("recording keeps text and actions as separate steps", () => {
   macros.record({ type: "text", value: "log" });
   macros.record({ type: "paste", text: "on" });
   macros.record({ type: "action", action: "Enter", args: [] });
-  macros.record({ type: "refresh" });
+  macros.record({ type: "disconnect" });
   macros.record({ type: "text", value: "tso" });
   macros.stopRecording();
   assert.equal(macros.recording, null);

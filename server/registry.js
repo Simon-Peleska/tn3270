@@ -20,16 +20,15 @@ export class SessionRegistry {
     this.log = logger("registry");
     /** @type {Map<string, Session>} */
     this.sessions = new Map();
-    this.creating = 0;
   }
 
   /**
    * @param {{ ip: string, user: string }} [client]
    * @param {{ model?: number, oversize?: string }} [size]
-   * @returns {Promise<{ id: string, rows: number, cols: number, model: number }>}
+   * @returns {{ id: string, rows: number, cols: number }}
    */
-  async create(client = { ip: "", user: "" }, size = {}) {
-    const open = this.sessions.size + this.creating;
+  create(client = { ip: "", user: "" }, size = {}) {
+    const open = this.sessions.size;
     if (open >= this.config.sessions.maxSessions)
       throw new AppError("E3002", `${open} sessions are already open`);
     const session = new Session(this.config, size);
@@ -41,14 +40,8 @@ export class SessionRegistry {
         remaining: this.sessions.size,
       });
     };
-    this.creating++;
-    try {
-      if (this.config.emulator.defaultHost !== null)
-        session.connect(this.config.emulator.defaultHost);
-      await session.ready;
-    } finally {
-      this.creating--;
-    }
+    if (this.config.emulator.defaultHost !== null)
+      session.connect(this.config.emulator.defaultHost);
     this.sessions.set(session.id, session);
     this.log.info("session created", {
       session: session.id,
@@ -61,7 +54,6 @@ export class SessionRegistry {
       id: session.id,
       rows: session.screen.rows,
       cols: session.screen.cols,
-      model: session.model,
     };
   }
 
@@ -77,13 +69,10 @@ export class SessionRegistry {
     this.get(id).terminate(pass);
   }
 
-  /** @returns {Array<{ id: string, viewers: number, connection: string, host: string | null, startedAt: string, startedBy: string }>} */
+  /** @returns {Array<{ id: string, startedAt: string, startedBy: string }>} */
   list() {
     return [...this.sessions.values()].map((session) => ({
       id: session.id,
-      viewers: session.viewers.size,
-      connection: session.oia.connectionState,
-      host: session.oia.host,
       startedAt: session.startedAt,
       startedBy: session.startedBy,
     }));

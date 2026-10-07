@@ -382,11 +382,6 @@ async function handleRequest(req, res) {
     return;
   }
 
-  if (path === "/api/userdata" && req.method === "GET") {
-    sendJson(res, 200, userData.load(ownerOf(client)));
-    return;
-  }
-
   const userDataMatch = /^\/api\/userdata\/([a-z]+)$/.exec(path);
   if (userDataMatch !== null && req.method === "GET") {
     const key = USER_DATA_KEYS.find((name) => name === userDataMatch[1]);
@@ -414,7 +409,7 @@ async function handleRequest(req, res) {
 
   if (path === "/api/sessions" && req.method === "POST") {
     const size = parseSessionSize(await readBody(req, 1024, "E3017"));
-    sendJson(res, 201, await registry.create(client, size));
+    sendJson(res, 201, registry.create(client, size));
     return;
   }
 
@@ -430,10 +425,7 @@ async function handleRequest(req, res) {
   }
 
   if (path === "/api/sessions" && req.method === "GET") {
-    sendJson(res, 200, {
-      sessions: registry.list(),
-      defaultHost: config.emulator.defaultHost,
-    });
+    sendJson(res, 200, { sessions: registry.list() });
     return;
   }
 
@@ -484,39 +476,25 @@ server.on("upgrade", (req, socket, head) => {
     return;
   }
 
+  // An unknown session is refused over the socket, not with a 404 here: the
+  // browser never sees an upgrade's status, only that the socket failed.
   const id = String(match[1]);
-  try {
-    registry.get(id);
-  } catch (err) {
-    const { code, summary } = describeError(err);
-    log.error(err, { path: url.pathname, ...client });
-    socket.write(
-      `HTTP/1.1 404 Not Found\r\ncontent-type: text/plain\r\n\r\n[${code}] ${summary}`,
-    );
-    socket.destroy();
-    return;
-  }
-
   const pass = url.searchParams.get("pass") ?? undefined;
   wss.handleUpgrade(req, socket, head, (ws) =>
-    attachViewer(id, ws, socket, client, pass),
+    attachViewer(id, ws, client, pass),
   );
 });
 
 /**
  * @param {string} id
  * @param {import('ws').WebSocket} ws
- * @param {import('node:stream').Duplex} socket the connection under `ws`
  * @param {{ ip: string, user: string }} client
  * @param {string | undefined} pass from an earlier hello: the owner's, or a guest's let in before
  * @returns {void}
  */
-function attachViewer(id, ws, socket, client, pass) {
+function attachViewer(id, ws, client, pass) {
   /** @type {ReturnType<SessionRegistry["attach"]>} */
   let viewer;
-  // Under load a viewer's frames pile up within a turn, and a system call per
-  // frame would be much of what the server does.
-  let corked = false;
   try {
     viewer = registry.attach(id, client, pass, {
       send(text) {
@@ -527,14 +505,6 @@ function attachViewer(id, ws, socket, client, pass) {
           });
           ws.close(1013, "E6010");
           return;
-        }
-        if (!corked) {
-          corked = true;
-          socket.cork();
-          setImmediate(() => {
-            corked = false;
-            socket.uncork();
-          });
         }
         ws.send(text);
       },

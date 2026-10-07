@@ -6,12 +6,6 @@ function fixture() {
   /** @type {Partial<import('../public/store.js').StoredSettings>[]} */
   const saved = [];
   const settings = new Settings((values) => saved.push(values));
-  settings.models = [
-    { model: 2, rows: 24, columns: 80 },
-    { model: 3, rows: 32, columns: 80 },
-    { model: 4, rows: 43, columns: 80 },
-    { model: 5, rows: 27, columns: 132 },
-  ];
   return { settings, saved };
 }
 

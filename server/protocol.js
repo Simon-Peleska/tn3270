@@ -1,5 +1,8 @@
 import { AppError, describeError } from "./errors.js";
 
+/** The most cells a 3270 buffer address reaches: x3270's ctlr.c limit. */
+export const MAX_CELLS = 16383;
+
 /**
  * Wire format: one ordered channel of JSON messages, screen paints among them.
  *
@@ -12,29 +15,25 @@ import { AppError, describeError } from "./errors.js";
  * @typedef {{ type: 'disconnect' }} DisconnectMessage
  * @typedef {{ type: 'model', model: number }} ModelMessage
  * @typedef {{ type: 'oversize', value: string }} OversizeMessage `<cols>x<rows>`, or '' for the model's own size
- * @typedef {{ type: 'refresh' }} RefreshMessage
  * @typedef {{ type: 'askEdit' }} AskEditMessage
  * @typedef {{ type: 'answer', viewer: string, allow: boolean }} AnswerMessage the owner's yes or no to a request
  * @typedef {{ type: 'stopSharing' }} StopSharingMessage
  * @typedef {{ type: 'stopEditing' }} StopEditingMessage
  * @typedef {{ type: 'recorder', action: 'start' | 'stop' }} RecorderMessage
- * @typedef {ActionMessage | TextMessage | PasteMessage | MacroMessage | ConnectMessage | DisconnectMessage | ModelMessage | OversizeMessage | RefreshMessage | AskEditMessage | AnswerMessage | StopSharingMessage | StopEditingMessage | RecorderMessage} ClientMessage
+ * @typedef {ActionMessage | TextMessage | PasteMessage | MacroMessage | ConnectMessage | DisconnectMessage | ModelMessage | OversizeMessage | AskEditMessage | AnswerMessage | StopSharingMessage | StopEditingMessage | RecorderMessage} ClientMessage
  *
  * @typedef {object} HelloMessage
  * @property {'hello'} type
- * @property {string} sessionId
  * @property {number} rows
  * @property {number} cols
  * @property {number} model
- * @property {string} codePage b3270's active host code-page name
- * @property {import('./indications.js').ModelInfo[]} models
+ * @property {string} codePage the emulator's host code page, by its canonical name
+ * @property {string} chart what each EBCDIC byte from 0x40 to 0xFF shows on that code page
  * @property {string} oversize `<cols>x<rows>`, or '' for the model's own size
  * @property {boolean} hostLocked
  * @property {'controller' | 'observer'} role
  * @property {boolean} owner
  * @property {string} pass comes back on the next connection, so a reload is let in without asking
- * @property {number} viewers
- * @property {number} idleTimeoutMs How long a viewerless session survives; 0 never reaps.
  *
  * Always sent immediately before the repaint that uses it, so no viewer writes
  * new-sized bytes into an old-sized terminal.
@@ -45,8 +44,6 @@ import { AppError, describeError } from "./errors.js";
  * @property {number} rows
  * @property {number} cols
  * @property {string} oversize `<cols>x<rows>`, or '' for the model's own size
- *
- * @typedef {{ type: 'codePage', name: string }} CodePageMessage
  *
  * @typedef {object} StatusMessage
  * @property {'status'} type
@@ -59,7 +56,6 @@ import { AppError, describeError } from "./errors.js";
  * @property {boolean} insert
  * @property {boolean} typeahead
  * @property {'controller' | 'observer'} role
- * @property {number} viewers
  * @property {boolean} owner
  * @property {number} guests viewers let in by an owner
  * @property {string | null} editor the guest who may edit, by name
@@ -128,12 +124,12 @@ import { AppError, describeError } from "./errors.js";
  *
  * @typedef {{ type: 'recorderStopped' }} RecorderStoppedMessage
  *
- * @typedef {HelloMessage | ScreenMessage | CodePageMessage | PaintMessage | StatusMessage | ErrorMessage | RecorderStepMessage | RecorderStoppedMessage | WaitingMessage | RefusedMessage} ServerMessage
+ * @typedef {HelloMessage | ScreenMessage | PaintMessage | StatusMessage | ErrorMessage | RecorderStepMessage | RecorderStoppedMessage | WaitingMessage | RefusedMessage} ServerMessage
  */
 
 /**
- * Allow-list: b3270 also accepts actions that read files and run programs.
- * `BackNewline` and `FieldStart` are ours alone; the session turns them into
+ * Allow-list: what a browser may run. Connecting, disconnecting and sizing
+ * have messages of their own, which the session checks first. `BackNewline` and `FieldStart` are ours alone; the session turns them into
  * cursor moves, as it turns `Undo` and `Redo` into a retype of the fields as
  * they were.
  *
@@ -326,8 +322,6 @@ function parseMessage(message) {
 
   if (type === "disconnect") return { type: "disconnect" };
 
-  if (type === "refresh") return { type: "refresh" };
-
   if (type === "askEdit") return { type: "askEdit" };
 
   if (type === "stopSharing") return { type: "stopSharing" };
@@ -373,7 +367,7 @@ function parseMessage(message) {
     return { type: "model", model };
   }
 
-  // b3270 checks the size against the model but not the buffer: 16383 cells is its ctlr.c limit.
+  // The emulator checks the size against the model but not the buffer.
   if (type === "oversize") {
     const value = message["value"];
     if (typeof value !== "string")
@@ -386,7 +380,7 @@ function parseMessage(message) {
         `oversize must be <cols>x<rows>, got "${value}"`,
       );
     const cells = Number(parts[1]) * Number(parts[2]);
-    if (cells > 16383)
+    if (cells > MAX_CELLS)
       throw new AppError("E4004", `oversize ${value} is ${cells} cells`);
     return { type: "oversize", value };
   }

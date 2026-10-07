@@ -1,8 +1,12 @@
 import { FONTS, MIN_FIT_FONT_SIZE, MAX_FIT_FONT_SIZE } from "./settings.js";
-import { CODE_PAGE_CHARTS } from "./codepages.js";
 
-/** @param {import('./panels.js').PanelView} view @param {string} codePage @param {string} [columnColor] */
-export function drawCodePageChart(view, codePage, columnColor = "turquoise") {
+/** @param {import('./panels.js').PanelView} view @param {string} codePage @param {string} chart @param {string} [columnColor] */
+export function drawCodePageChart(
+  view,
+  codePage,
+  chart,
+  columnColor = "turquoise",
+) {
   const number =
     codePage === "bracket"
       ? "037"
@@ -14,8 +18,7 @@ export function drawCodePageChart(view, codePage, columnColor = "turquoise") {
       ? codePage
       : `EBCDIC ${number}${codePage === "bracket" ? " (bracket)" : ""}`;
   view.say(1, 34, `Code page: ${label}`, "turquoise");
-  const chart = CODE_PAGE_CHARTS[codePage];
-  if (chart === undefined) {
+  if (chart === "") {
     view.say(4, 34, "No single-byte chart for this code page", "yellow");
     return;
   }
@@ -54,7 +57,7 @@ export const fontLayout = {
     );
     view.say(2, 23, "[Y/N]", "turquoise");
     view.say(4, 1, "S=Select", "turquoise");
-    drawCodePageChart(view, panel.deps.codePage());
+    drawCodePageChart(view, panel.deps.codePage(), panel.deps.chart());
   },
 
   /** @param {import('./panels.js').Panels} panel @returns {import('./panels.js').Item[]} */

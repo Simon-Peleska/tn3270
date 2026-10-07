@@ -37,6 +37,7 @@ import { charsLayout, printableCharacter } from "./panel-chars.js";
  * @property {import('./settings.js').Settings} settings
  * @property {() => string} revision
  * @property {() => string} codePage
+ * @property {() => string} chart
  * @property {import('./keymap.js').Keymap} keymap
  * @property {import('./macros.js').Macros} macros
  * @property {import('./recorder.js').Recorder} recorder
@@ -325,7 +326,7 @@ export class Panels {
 
   /** @param {number} byte @returns {boolean} */
   chooseCharacterByte(byte) {
-    const character = printableCharacter(this.deps.codePage(), byte);
+    const character = printableCharacter(this.deps.chart(), byte);
     if (character === null) {
       this.message = problem(
         "E5035",

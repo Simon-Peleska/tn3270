@@ -229,12 +229,12 @@ test("a cursor off the end of the screen is clamped onto it", async (t) => {
   const { screen } = fixture.session;
   await settle(fixture.session);
 
-  screen.cursor.row = screen.rows + 5;
-  screen.cursor.col = -3;
+  // Left behind by a screen that shrank under it.
+  screen.emulator.savedBaddr = (screen.rows + 5) * screen.cols + 3;
 
   assert.deepEqual(fullPaint(screen).cursor, {
     row: screen.rows - 1,
-    col: 0,
+    col: 3,
     on: screen.cursor.enabled,
   });
 });

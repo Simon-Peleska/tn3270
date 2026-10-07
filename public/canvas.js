@@ -13,15 +13,14 @@ import {
  * A 3270 screen is a fixed grid of single-width cells with no scrollback, no
  * reflow and no alternate screen, so this draws exactly that and nothing else.
  *
- * There is one canvas for the whole page, and the session is a `Pane` on it:
- * its grids, its fitted font and its cell size. `Screen.render()` clears the
- * canvas and draws it whole, every time. Making a frame whole is the only way
- * to be sure it is not half of the last one.
+ * There is one canvas for the whole page, and one session on it.
+ * `Screen.render()` clears the canvas and draws it whole, every time. Making a
+ * frame whole is the only way to be sure it is not half of the last one.
  *
- * The pane composites two grids: `host`, what the server painted, and
+ * The screen composites two grids: `host`, what the server painted, and
  * `overlay`, the chrome this page draws over it — panels, the status line, the
- * error bar. The overlay is why there is no `{type:"refresh"}` round trip for
- * closing a panel: the host grid never lost what was underneath.
+ * error bar. The overlay is why closing a panel needs nothing from the server:
+ * the host grid never lost what was underneath.
  *
  * @typedef {Record<string, string>} Theme keys as in settings.js's `colors`
  * @typedef {{ x: number, y: number, width: number, height: number }} Rect
@@ -51,27 +50,32 @@ const URL_PATTERN = /https?:\/\/[^\s<>"'`]+/gi;
 const URL_END_PUNCTUATION = /[.,;:!?)}\]]+$/;
 
 /**
- * The session's rectangle on the page's canvas: its cells, where they are and
- * how big they are. It holds no DOM and draws nothing — `Screen` does both, so
- * that there is exactly one place a frame can come from.
+ * The page's one canvas and the session's cells on it: their grids, where they
+ * sit and how big they are. Everything visible is drawn here, in one pass.
  */
-export class Pane {
+export class Screen {
   /**
-   * @param {number} cols
-   * @param {number} rows the host's screen, not counting the status row
+   * @param {{ canvas: HTMLCanvasElement, theme: Theme, fieldBackground: boolean, redraw?: () => void }} options
+   *   the canvas is the one in `index.html`; the page's markup is fixed.
+   *   `redraw` asks the page for a frame when a drag changes the selection.
    */
-  constructor(cols, rows) {
-    /** @type {number} */
-    this.cols = cols;
-    /** @type {number} */
-    this.rows = rows;
+  constructor(options) {
+    /** @type {Theme} */
+    this.theme = options.theme;
+    /** @type {boolean} false leaves a typeable field the background it would
+     * otherwise have had, so only its contents mark it out. */
+    this.fieldBackground = options.fieldBackground;
 
+    /** @type {number} 0 until the server has said how big the screen is */
+    this.cols = 0;
+    /** @type {number} the host's screen, not counting the status row */
+    this.rows = 0;
     /** @type {Grid} What the server painted. */
-    this.host = new Grid(rows, cols);
+    this.host = new Grid(0, 0);
     /** @type {Grid} Panels, bars, buttons and hints, drawn over the host. */
-    this.overlay = new Grid(this.displayRows, cols, null);
+    this.overlay = new Grid(0, 0, null);
     /** @type {(string | null)[]} */
-    this.links = Array(rows * cols).fill(null);
+    this.links = [];
 
     /** @type {string} */
     this.fontFamily = "";
@@ -79,18 +83,40 @@ export class Pane {
     this.fontSize = 15;
     /** @type {{ width: number, height: number, baseline: number }} */
     this.metrics = { width: 0, height: 0, baseline: 0 };
-    /** @type {Rect} where the cells sit on the page canvas, in CSS pixels */
+    /** @type {Rect} where the cells sit on the canvas, in CSS pixels */
     this.rect = { x: 0, y: 0, width: 0, height: 0 };
-    /** @type {Rect} the page this pane fills, before centring */
-    this.box = { x: 0, y: 0, width: 0, height: 0 };
+    /** @type {{ width: number, height: number }} the whole canvas, in CSS pixels */
+    this.page = { width: 0, height: 0 };
 
     /** @type {'block' | 'underline'} */
     this.cursorStyle = "block";
-
     /** @type {{ row: number, col: number } | null} */
     this.selectionStart = null;
     /** @type {{ row: number, col: number } | null} */
     this.selectionEnd = null;
+    /** @type {boolean} whether a drag is selecting, for as long as it lasts */
+    this.dragging = false;
+
+    /** @type {HTMLCanvasElement} */
+    this.canvas = options.canvas;
+    const ctx = this.canvas.getContext("2d", { alpha: false });
+    if (ctx === null) throw new Error("no 2D context on the screen canvas");
+    /** @type {CanvasRenderingContext2D} */
+    this.ctx = ctx;
+    /** @type {number} */
+    this.dpr = window.devicePixelRatio || 1;
+    /** @type {() => void} */
+    this.redraw = options.redraw ?? (() => this.render());
+
+    this.canvas.addEventListener("mousedown", (event) =>
+      this.beginSelection(event),
+    );
+    this.canvas.addEventListener("mousemove", (event) =>
+      this.extendSelection(event),
+    );
+    document.addEventListener("mouseup", () => {
+      this.dragging = false;
+    });
   }
 
   /** @returns {number} the host's rows plus the status row the page owns */
@@ -106,17 +132,16 @@ export class Pane {
   /**
    * @param {number} cols
    * @param {number} rows
-   * @returns {boolean} whether anything changed
+   * @returns {void}
    */
   resize(cols, rows) {
-    if (cols === this.cols && rows === this.rows) return false;
+    if (cols === this.cols && rows === this.rows) return;
     this.cols = cols;
     this.rows = rows;
     this.host.resize(rows, cols);
     this.overlay.resize(this.displayRows, cols);
     this.links = Array(rows * cols).fill(null);
     this.clearSelection();
-    return true;
   }
 
   /** @param {import('../server/protocol.js').PaintMessage} paint */
@@ -234,63 +259,6 @@ export class Pane {
   }
 
   /**
-   * @param {number} clientX
-   * @param {number} clientY
-   * @returns {{ row: number, col: number }} may be outside the grid
-   */
-  cellAt(clientX, clientY) {
-    return {
-      row: Math.floor((clientY - this.rect.y) / this.metrics.height),
-      col: Math.floor((clientX - this.rect.x) / this.metrics.width),
-    };
-  }
-}
-
-/**
- * The page's one canvas. Everything visible is drawn here, in one pass, from
- * the pane it was given.
- */
-export class Screen {
-  /**
-   * @param {{ canvas: HTMLCanvasElement, theme: Theme, fieldBackground: boolean }} options
-   *   the canvas is the one in `index.html`; the page's markup is fixed.
-   */
-  constructor(options) {
-    /** @type {Theme} */
-    this.theme = options.theme;
-    /** @type {boolean} false leaves a typeable field the background it would
-     * otherwise have had, so only its contents mark it out. */
-    this.fieldBackground = options.fieldBackground;
-
-    /** @type {Pane | null} */
-    this.pane = null;
-    /** @type {boolean} whether a drag is selecting, for as long as it lasts */
-    this.dragging = false;
-
-    /** @type {HTMLCanvasElement} */
-    this.canvas = options.canvas;
-    const ctx = this.canvas.getContext("2d", { alpha: false });
-    if (ctx === null) throw new Error("no 2D context on the screen canvas");
-    /** @type {CanvasRenderingContext2D} */
-    this.ctx = ctx;
-
-    /** @type {number} */
-    this.dpr = window.devicePixelRatio || 1;
-    /** @type {Rect} the whole canvas, in CSS pixels */
-    this.rect = { x: 0, y: 0, width: 0, height: 0 };
-    /** @type {number | null} */
-    this.frame = null;
-
-    this.canvas.addEventListener("mousedown", (event) =>
-      this.beginSelection(event),
-    );
-    this.canvas.addEventListener("mousemove", (event) =>
-      this.extendSelection(event),
-    );
-    document.addEventListener("mouseup", () => this.endSelection());
-  }
-
-  /**
    * `fontBoundingBoxAscent`/`Descent` describe the face, so every glyph sits on
    * the same baseline. `actualBoundingBox*` describes the sample string, which
    * moves the baseline whenever the sample changes.
@@ -312,24 +280,22 @@ export class Screen {
   }
 
   /**
-   * Give the pane the whole page and the largest font that fits its cells
-   * inside it, then size the backing store to the page.
+   * Size the backing store to the page, then pick the largest font that fits
+   * the cells inside it and centre them.
    *
    * The backing store is set here and nowhere else. Setting `width`/`height`
    * clears the canvas and resets the context, so anything that touches them
    * outside this method loses the frame — and, if it forgets the ratio, the
    * HiDPI sharpness with it.
    *
-   * @param {Pane | null} pane null before the server has said how big it is
    * @param {{ width: number, height: number }} box the page, in CSS pixels
    * @param {string} fontFamily
    * @param {number} [maxFontSize]
    * @returns {void}
    */
-  layout(pane, box, fontFamily, maxFontSize) {
-    this.pane = pane;
+  layout(box, fontFamily, maxFontSize) {
     this.dpr = window.devicePixelRatio || 1;
-    this.rect = { x: 0, y: 0, width: box.width, height: box.height };
+    this.page = { width: box.width, height: box.height };
 
     this.canvas.width = Math.round(box.width * this.dpr);
     this.canvas.height = Math.round(box.height * this.dpr);
@@ -337,22 +303,21 @@ export class Screen {
     this.canvas.style.height = `${box.height}px`;
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     this.ctx.textBaseline = "alphabetic";
-    if (pane === null) return;
+    if (this.cols === 0) return;
 
-    pane.box = { x: 0, y: 0, width: box.width, height: box.height };
-    pane.fontFamily = fontFamily;
-    pane.fontSize = chooseFontSize({
+    this.fontFamily = fontFamily;
+    this.fontSize = chooseFontSize({
       measure: (probe) => this.measure(fontFamily, probe),
-      cols: pane.cols,
-      rows: pane.displayRows,
-      box: pane.box,
-      start: pane.fontSize,
+      cols: this.cols,
+      rows: this.displayRows,
+      box,
+      start: this.fontSize,
       max: maxFontSize,
     });
-    pane.metrics = this.measure(fontFamily, pane.fontSize);
-    const width = pane.cols * pane.metrics.width;
-    const height = pane.displayRows * pane.metrics.height;
-    pane.rect = {
+    this.metrics = this.measure(fontFamily, this.fontSize);
+    const width = this.cols * this.metrics.width;
+    const height = this.displayRows * this.metrics.height;
+    this.rect = {
       x: Math.floor((box.width - width) / 2),
       y: Math.floor((box.height - height) / 2),
       width,
@@ -374,11 +339,10 @@ export class Screen {
   }
 
   /**
-   * @param {Pane} pane
    * @param {import('./grid.js').Cell} cell
    * @returns {{ fg: string, bg: string, bold: boolean, underline: boolean }}
    */
-  styleOf(pane, cell) {
+  styleOf(cell) {
     const { bold, underline, reverse } = grFlags(cell.gr);
     const background = this.theme["background"] ?? "#000000";
 
@@ -388,13 +352,13 @@ export class Screen {
       // The page's own chrome names its colours outright, and means them.
       fg = cell.fg;
       bg = cell.bg ?? background;
-    } else if (!pane.host.color) {
+    } else if (!this.host.color) {
       // A 3278 reports no colour, so it is the green-on-black terminal it is.
       fg = MONO_FOREGROUND;
       bg = DEFAULT_BACKGROUND;
     } else {
-      fg = this.color(cell.fg ?? pane.host.defaultFg, DEFAULT_FOREGROUND_ANSI);
-      bg = this.color(cell.bg ?? pane.host.defaultBg, DEFAULT_BACKGROUND_ANSI);
+      fg = this.color(cell.fg ?? this.host.defaultFg, DEFAULT_FOREGROUND_ANSI);
+      bg = this.color(cell.bg ?? this.host.defaultBg, DEFAULT_BACKGROUND_ANSI);
     }
 
     // The tint that shows where a field may be typed into, but never over a
@@ -419,54 +383,39 @@ export class Screen {
     return Math.round(value * this.dpr) / this.dpr;
   }
 
-  /** @returns {void} Coalesces a burst of changes into one frame. */
-  requestRender() {
-    if (this.frame !== null) return;
-    this.frame = requestAnimationFrame(() => {
-      this.frame = null;
-      this.render();
-    });
-  }
-
   /** @returns {void} The whole page, every time. */
   render() {
-    this.ctx.fillStyle = this.theme["background"] ?? "#000000";
-    this.ctx.fillRect(0, 0, this.rect.width, this.rect.height);
-    if (this.pane !== null) this.renderPane(this.pane);
-  }
-
-  /**
-   * @param {Pane} pane
-   * @returns {void}
-   */
-  renderPane(pane) {
-    const { width, height, baseline } = pane.metrics;
-    if (width < 1 || height < 1) return;
-    const rows = pane.displayRows;
-
-    // Everything below is constant for the whole pane, and the loops run once
-    // per cell: a 3279 at 80x44 is 3600 of them, redrawn on every keystroke.
     const background = this.theme["background"] ?? "#000000";
+    this.ctx.fillStyle = background;
+    this.ctx.fillRect(0, 0, this.page.width, this.page.height);
+
+    const { width, height, baseline } = this.metrics;
+    if (this.cols === 0 || width < 1 || height < 1) return;
+    const cols = this.cols;
+    const rows = this.displayRows;
+
+    // Everything below is constant for the whole frame, and the loops run once
+    // per cell: a 3279 at 80x44 is 3600 of them, redrawn on every keystroke.
     const selectedFill = this.theme["selectionBackground"] ?? "#ffffff";
     const selectedInk = this.theme["selectionForeground"] ?? "#000000";
-    const regularFont = `${pane.fontSize}px ${pane.fontFamily}`;
+    const regularFont = `${this.fontSize}px ${this.fontFamily}`;
     const boldFont = `bold ${regularFont}`;
     const underlineThickness = Math.max(1, Math.round(height * 0.06));
-    const box = pane.selectionBox();
+    const box = this.selectionBox();
 
     // Every row shares one set of column edges, and every column one set of row
     // edges, so the snapping is done once here instead of four times per cell.
-    const colEdge = new Array(pane.cols + 1);
-    for (let col = 0; col <= pane.cols; col++)
-      colEdge[col] = this.snap(pane.rect.x + col * width);
+    const colEdge = new Array(cols + 1);
+    for (let col = 0; col <= cols; col++)
+      colEdge[col] = this.snap(this.rect.x + col * width);
     const rowEdge = new Array(rows + 1);
     for (let row = 0; row <= rows; row++)
-      rowEdge[row] = this.snap(pane.rect.y + row * height);
+      rowEdge[row] = this.snap(this.rect.y + row * height);
 
     /** @type {(import('./grid.js').Cell | null)[]} */
-    const cells = new Array(pane.cols);
+    const cells = new Array(cols);
     /** @type {({ fg: string, bg: string, bold: boolean, underline: boolean } | null)[]} */
-    const styles = new Array(pane.cols);
+    const styles = new Array(cols);
 
     for (let row = 0; row < rows; row++) {
       const top = rowEdge[row];
@@ -480,15 +429,15 @@ export class Screen {
 
       // Decoded once per row: the backgrounds and the glyphs want the same
       // answer for the same cell, and working it out is this loop's real cost.
-      for (let col = 0; col < pane.cols; col++) {
-        const cell = visibleCell(pane.host, pane.overlay, row, col);
+      for (let col = 0; col < cols; col++) {
+        const cell = visibleCell(this.host, this.overlay, row, col);
         cells[col] = cell;
-        const style = cell === null ? null : this.styleOf(pane, cell);
-        const at = row * pane.cols + col;
+        const style = cell === null ? null : this.styleOf(cell);
+        const at = row * cols + col;
         if (
           style !== null &&
-          pane.links[at] != null &&
-          pane.overlay.cells[at]?.ch === null
+          this.links[at] != null &&
+          this.overlay.cells[at]?.ch === null
         )
           style.underline = true;
         styles[col] = style;
@@ -502,14 +451,14 @@ export class Screen {
       // last closes whatever run is open.
       let runFill = "";
       let runStart = 0;
-      for (let col = 0; col <= pane.cols; col++) {
+      for (let col = 0; col <= cols; col++) {
         const style = styles[col];
         const selected =
           rowSelected && box !== null && col >= box.left && col <= box.right;
         let wanted = "";
         if (style !== undefined && style !== null)
           wanted = selected ? selectedFill : style.bg;
-        // The pane was cleared to the theme's background, so a cell asking for
+        // The page was cleared to the theme's background, so a cell asking for
         // it again is a cell with nothing to draw.
         if (!selected && wanted === background) wanted = "";
         if (wanted === runFill) continue;
@@ -529,7 +478,7 @@ export class Screen {
 
       let font = "";
       let fill = "";
-      for (let col = 0; col < pane.cols; col++) {
+      for (let col = 0; col < cols; col++) {
         const cell = cells[col];
         const style = styles[col];
         if (style === undefined || style === null) continue;
@@ -558,28 +507,25 @@ export class Screen {
       }
     }
 
-    this.renderCursor(pane);
+    this.renderCursor();
   }
 
-  /**
-   * @param {Pane} pane
-   * @returns {void}
-   */
-  renderCursor(pane) {
-    const cursor = visibleCursor(pane.host, pane.overlay);
+  /** @returns {void} */
+  renderCursor() {
+    const cursor = visibleCursor(this.host, this.overlay);
     if (cursor === null || !cursor.visible) return;
     const { row, col } = cursor;
-    if (row < 0 || row >= pane.displayRows || col < 0 || col >= pane.cols)
+    if (row < 0 || row >= this.displayRows || col < 0 || col >= this.cols)
       return;
 
-    const { width, height, baseline } = pane.metrics;
-    const left = this.snap(pane.rect.x + col * width);
-    const top = this.snap(pane.rect.y + row * height);
-    const right = this.snap(pane.rect.x + (col + 1) * width);
-    const bottom = this.snap(pane.rect.y + (row + 1) * height);
+    const { width, height, baseline } = this.metrics;
+    const left = this.snap(this.rect.x + col * width);
+    const top = this.snap(this.rect.y + row * height);
+    const right = this.snap(this.rect.x + (col + 1) * width);
+    const bottom = this.snap(this.rect.y + (row + 1) * height);
     this.ctx.fillStyle = this.theme["cursor"] ?? "#ffffff";
 
-    if (pane.cursorStyle === "underline") {
+    if (this.cursorStyle === "underline") {
       const thickness = Math.max(2, Math.floor(height * 0.15));
       const barTop = this.snap(bottom - thickness);
       this.ctx.fillRect(left, barTop, right - left, bottom - barTop);
@@ -590,11 +536,11 @@ export class Screen {
 
     // A block cursor that hides the character under it is a block cursor nobody
     // can type behind, so the glyph is redrawn in the accent.
-    const cell = visibleCell(pane.host, pane.overlay, row, col);
+    const cell = visibleCell(this.host, this.overlay, row, col);
     const ch = cell?.ch ?? null;
     if (ch === null || ch === " ") return;
-    const { bold } = this.styleOf(pane, cell ?? pane.host.blankCell());
-    this.ctx.font = `${bold ? "bold " : ""}${pane.fontSize}px ${pane.fontFamily}`;
+    const { bold } = this.styleOf(cell ?? this.host.blankCell());
+    this.ctx.font = `${bold ? "bold " : ""}${this.fontSize}px ${this.fontFamily}`;
     this.ctx.fillStyle = this.theme["cursorAccent"] ?? "#000000";
     this.ctx.fillText(ch, left, top + baseline);
   }
@@ -603,12 +549,19 @@ export class Screen {
    * @param {number} clientX
    * @param {number} clientY
    * @returns {{ row: number, col: number } | null} may be outside the grid;
-   *   null before there is a pane
+   *   null before the screen has a size
    */
   cellAt(clientX, clientY) {
-    if (this.pane === null) return null;
-    const rect = this.canvas.getBoundingClientRect();
-    return this.pane.cellAt(clientX - rect.left, clientY - rect.top);
+    if (this.cols === 0 || this.metrics.width < 1) return null;
+    const canvas = this.canvas.getBoundingClientRect();
+    return {
+      row: Math.floor(
+        (clientY - canvas.top - this.rect.y) / this.metrics.height,
+      ),
+      col: Math.floor(
+        (clientX - canvas.left - this.rect.x) / this.metrics.width,
+      ),
+    };
   }
 
   /**
@@ -616,16 +569,15 @@ export class Screen {
    * @returns {void}
    */
   beginSelection(event) {
-    const pane = this.pane;
-    if (event.button !== 0 || pane === null) return;
+    if (event.button !== 0) return;
     const hit = this.cellAt(event.clientX, event.clientY);
     if (hit === null) return;
-    const had = pane.hasSelection();
+    const had = this.hasSelection();
     this.dragging = true;
-    pane.selectionStart = { row: hit.row, col: hit.col };
-    pane.selectionEnd = { row: hit.row, col: hit.col };
+    this.selectionStart = hit;
+    this.selectionEnd = hit;
     // A press is not a selection yet; only a previous one has to come off.
-    if (had) this.requestRender();
+    if (had) this.redraw();
   }
 
   /**
@@ -633,24 +585,18 @@ export class Screen {
    * @returns {void}
    */
   extendSelection(event) {
-    const pane = this.pane;
-    if (!this.dragging || pane === null) return;
-    const rect = this.canvas.getBoundingClientRect();
-    const at = pane.cellAt(event.clientX - rect.left, event.clientY - rect.top);
-    const row = Math.min(Math.max(at.row, 0), pane.statusRow);
-    const col = Math.min(Math.max(at.col, 0), pane.cols - 1);
+    if (!this.dragging) return;
+    const at = this.cellAt(event.clientX, event.clientY);
+    if (at === null) return;
+    const row = Math.min(Math.max(at.row, 0), this.statusRow);
+    const col = Math.min(Math.max(at.col, 0), this.cols - 1);
 
     // A cell is ten pixels wide and mousemove fires at the refresh rate, so most
     // of a drag's events land where the last one did and change nothing.
-    const end = pane.selectionEnd;
+    const end = this.selectionEnd;
     if (end !== null && end.row === row && end.col === col) return;
 
-    pane.selectionEnd = { row, col };
-    this.requestRender();
-  }
-
-  /** @returns {void} */
-  endSelection() {
-    this.dragging = false;
+    this.selectionEnd = { row, col };
+    this.redraw();
   }
 }

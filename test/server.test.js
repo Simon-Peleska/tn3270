@@ -200,16 +200,24 @@ test("the server refuses an unknown session and a bad upgrade path", async (t) =
   const server = await startServer();
   t.after(() => server.stop());
 
+  // Over the socket, as a browser cannot read an upgrade's 404.
   const missing = new WebSocket(
     `ws://127.0.0.1:${server.port}/ws/${"0".repeat(8)}-0000-0000-0000-000000000000`,
   );
-  await assert.rejects(
-    new Promise((resolve, reject) => {
-      missing.once("open", resolve);
-      missing.once("error", reject);
-    }),
-    /404/,
+  /** @type {unknown[]} */
+  const said = [];
+  missing.on("message", (data) => said.push(JSON.parse(String(data))));
+  const reason = await new Promise((resolve) =>
+    missing.once("close", (_code, why) => resolve(String(why))),
   );
+  assert.equal(reason, "E3001");
+  assert.deepEqual(said, [
+    {
+      type: "error",
+      code: "E3001",
+      message: "Session not found: 00000000-0000-0000-0000-000000000000",
+    },
+  ]);
 
   const wrong = new WebSocket(`ws://127.0.0.1:${server.port}/ws/nonsense`);
   await assert.rejects(
@@ -428,11 +436,11 @@ test("a session starts at the size it is asked for", async (t) => {
   const sized = await create({ model: 2, oversize: "100x30" });
   assert.equal(sized.status, 201);
   const body = await sized.json();
-  assert.deepEqual([body.model, body.cols, body.rows], [2, 100, 30]);
+  assert.deepEqual([body.cols, body.rows], [100, 30]);
 
   // Smaller than model 4's 43 rows: the emulator would refuse it.
   const misfit = await (await create({ model: 4, oversize: "80x30" })).json();
-  assert.deepEqual([misfit.model, misfit.cols, misfit.rows], [4, 80, 43]);
+  assert.deepEqual([misfit.cols, misfit.rows], [80, 43]);
 
   const unasked = await (await create({})).json();
   assert.deepEqual([unasked.cols, unasked.rows], [80, 43]);
@@ -678,11 +686,18 @@ function putUserData(port, key, value, headers = {}) {
  * @returns {Promise<Record<string, unknown>>}
  */
 async function getUserData(port, headers = {}) {
-  const response = await fetch(`http://127.0.0.1:${port}/api/userdata`, {
-    headers,
-  });
-  assert.equal(response.status, 200);
-  return response.json();
+  /** @type {Record<string, unknown>} */
+  const data = {};
+  for (const key of ["settings", "macros", "keymap", "recordings"]) {
+    /** @type {Response} */
+    const response = await fetch(
+      `http://127.0.0.1:${port}/api/userdata/${key}`,
+      { headers },
+    );
+    assert.equal(response.status, 200);
+    data[key] = await response.json();
+  }
+  return data;
 }
 
 test("user data saved through one server is read back through it", async (t) => {
@@ -809,5 +824,8 @@ test("user data with an unknown key or a broken body is refused with its own cod
   assert.equal(tooBig.status, 413);
   assert.equal((await tooBig.json()).code, "E8005");
 
-  assert.equal((await getUserData(server.port))["settings"], null);
+  const recordings = await fetch(
+    `http://127.0.0.1:${server.port}/api/userdata/recordings`,
+  );
+  assert.equal(await recordings.json(), null);
 });

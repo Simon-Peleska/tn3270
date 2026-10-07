@@ -25,22 +25,6 @@ while connected"_ — because the model is negotiated during connection setup, s
 emulator's wording it parks the choice in `pendingModel`, disconnects, and
 applies it when the connection is gone, reopening the same host.
 
-## b3270 announces its geometry a few milliseconds after it starts
-
-`ScreenModel` is constructed at 24×80 and b3270 corrects it in the first
-`screen-mode`. Anything that reads the geometry (or the model list) before that
-gets the placeholder, and the placeholder is a plausible size, so nothing looks
-wrong. `session.ready` resolves on that first indication — wait on it, never on
-`rows > 0`.
-
-## b3270 starts in the model's alternate size, s3270 at 24×80
-
-Disconnected, `b3270 -model 4` reports `43 80` in the REST status line and
-`s3270 -model 4` reports `24 80`; they agree once a host has set the size, and
-they agree from the start on model 2, whose alternate size _is_ 24×80. The
-proxy's comparison test therefore runs both sides at model 2, so that a
-difference in the answer is a difference we caused.
-
 ## Building b3270 without X11
 
 `--enable-b3270` alone is not enough: suite3270's configure enables every
@@ -84,10 +68,9 @@ hang forever. `server/main.js` terminates the `wss.clients` and calls
 
 ## `settle()` does not mean the field map has arrived
 
-The field map is a `ReadBuffer` the session asks for from `flush()`, which is
-coalesced — so a `settle()` right after a screen change can submit its Reset
-_before_ that read is even sent, and come back with `screen.fieldsFormatted`
-still false. Anything to do with fields (Backspace's guard, paste, hints) then
+The field map is copied from the emulator in `flush()`, which runs on the next
+`setImmediate` — so a `settle()` right after a screen change can come back
+before it, with `screen.fieldsFormatted` still false. Anything to do with fields (Backspace's guard, paste, hints) then
 falls back to its unformatted behaviour and the test quietly checks nothing.
 Wait for `screen.fieldsFormatted` as well.
 
@@ -129,7 +112,7 @@ backgrounds, the selection wash, the cursor block, the underline under both text
 and cursor. One that does not is a seam.
 
 Snapping alone leaves the seam one rounding bug away, so the edges inside a run
-of one colour are not drawn at all: `renderPane` walks the row, holds the run
+of one colour are not drawn at all: `render` walks the row, holds the run
 open while the colour stays the same, and fills it as a single rectangle. Twenty
 cells of one field are one fill twenty cells wide, and the nineteen edges down
 the middle of it cannot show anything. Keep it that way — a change that goes

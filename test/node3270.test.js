@@ -1,4 +1,5 @@
 import test from "node:test";
+import { keyboardLocked } from "../public/oia.js";
 import assert from "node:assert/strict";
 import { Session } from "../server/session.js";
 import { FakeHost } from "./fakehost.js";
@@ -23,7 +24,6 @@ async function tlsConnectError(t, settings) {
     session.close();
     await host.close();
   });
-  await session.ready;
   const viewer = collectingViewer("viewer");
   session.attach(viewer);
   session.connect(`127.0.0.1:${host.port}`);
@@ -59,7 +59,10 @@ test("node3270 sends typing and an AID to the host, and holds input until it ans
 
   session.handleClientMessage(viewer, { type: "text", value: "abc" });
   session.handleClientMessage(viewer, { type: "action", action: "Enter" });
-  await waitUntil(() => session.oia.keyboardLocked, "the keyboard to lock");
+  await waitUntil(
+    () => keyboardLocked(session.oia.lock),
+    "the keyboard to lock",
+  );
   // Enter's AID, then "abc" in EBCDIC.
   await waitUntil(
     () => host.received.includes("7d") && host.received.includes("818283"),

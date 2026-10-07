@@ -93,16 +93,16 @@ export async function waitUntil(predicate, message, timeoutMs = 5000) {
 }
 
 /**
- * A run resolves after its run-result, and with it every indication before
- * it, has been applied to the model. Input the session has queued goes first,
- * or the Reset would overtake it.
+ * A run resolves after every indication before its result has been applied
+ * to the model. Input the session has queued goes first, or the Reset would
+ * overtake it.
  *
  * @param {import('../server/session.js').Session} session
  * @returns {Promise<void>}
  */
 export async function settle(session) {
   await waitUntil(
-    () => session.inputQueue.length === 0 && session.inputTag === null,
+    () => session.inputQueue.length === 0 && session.input === null,
     "the queued input to run",
   );
   await session.emulator.run([{ action: "Reset" }]);
@@ -115,8 +115,6 @@ export async function settle(session) {
 export async function startTracedSession(traceFile, options = {}) {
   const host = await FakeHost.listen(traceFile, 0, { tls: true });
   const session = new Session(testConfig(options.config));
-
-  await session.ready;
 
   session.connect(`127.0.0.1:${host.port}`);
   await host.waitForConnection();

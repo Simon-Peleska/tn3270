@@ -123,12 +123,14 @@ export function describeFit(oversize) {
 }
 
 /**
- * What the four 3270 models measure, for sizing a session before the server
- * has said which models it offers.
+ * What the four 3270 models measure.
  *
- * @type {import('../server/indications.js').ModelInfo[]}
+ * @type {{ model: number, rows: number, columns: number }[]}
  */
-const STANDARD_MODELS = [
+/** The most cells a 3270 buffer address reaches. */
+const MAX_CELLS = 16383;
+
+const MODELS = [
   { model: 2, rows: 24, columns: 80 },
   { model: 3, rows: 32, columns: 80 },
   { model: 4, rows: 43, columns: 80 },
@@ -146,8 +148,6 @@ export class Settings {
     this.model = 2;
     /** @type {string} `<cols>x<rows>`, or '' for the model's own size. */
     this.oversize = "";
-    /** @type {import('../server/indications.js').ModelInfo[]} */
-    this.models = [];
     /** @type {boolean} */
     this.connected = false;
     /** @type {string} */
@@ -231,37 +231,34 @@ export class Settings {
   }
 
   /**
-   * b3270 silently refuses an oversize below the model, and buffers 16383 cells.
+   * The emulator silently refuses an oversize below the model, and a buffer
+   * holds at most MAX_CELLS cells.
    *
    * @param {{ cols: number, rows: number }} fit
    * @param {number} model
    * @returns {string}
    */
   fitSize(fit, model) {
-    const info = (this.models.length > 0 ? this.models : STANDARD_MODELS).find(
-      (entry) => entry.model === model,
-    );
+    const info = MODELS.find((entry) => entry.model === model);
     const minCols = info?.columns ?? 80;
     const minRows = info?.rows ?? 24;
     let rows = Math.max(minRows, fit.rows);
     const cols = Math.max(
       minCols,
-      Math.min(fit.cols, Math.floor(16383 / rows)),
+      Math.min(fit.cols, Math.floor(MAX_CELLS / rows)),
     );
 
     // A window too narrow for the model shrinks the text, which buys more rows.
     if (cols > fit.cols) {
       rows = Math.round(((fit.rows + 1) * cols) / fit.cols) - 1;
-      rows = Math.max(minRows, Math.min(rows, Math.floor(16383 / cols)));
+      rows = Math.max(minRows, Math.min(rows, Math.floor(MAX_CELLS / cols)));
     }
     return `${cols}x${rows}`;
   }
 
-  /** @returns {number[]} the models the server offers, or the usual four */
+  /** @returns {number[]} */
   modelChoices() {
-    return (this.models.length > 0 ? this.models : STANDARD_MODELS).map(
-      (info) => info.model,
-    );
+    return MODELS.map((info) => info.model);
   }
 
   /** @returns {string} the screen size in force */
@@ -277,7 +274,7 @@ export class Settings {
    * @returns {string}
    */
   describeModel(model) {
-    const info = this.models.find((entry) => entry.model === model);
+    const info = MODELS.find((entry) => entry.model === model);
     return info
       ? `Model ${model} - ${info.rows}x${info.columns}`
       : `Model ${model}`;

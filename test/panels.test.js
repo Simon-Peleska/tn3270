@@ -8,6 +8,8 @@ import { Grid } from "../public/grid.js";
 import { Keymap } from "../public/keymap.js";
 import { keyAt, placeKeys } from "../public/screen-keyboard.js";
 import { adminLayout } from "../public/panel-admin.js";
+import { codePageChart } from "../server/session.js";
+import { codePage as emulatorCodePage } from "../3270/src/charset.js";
 
 /**
  * The real panels over the real state, with only the page's side recorded:
@@ -15,6 +17,7 @@ import { adminLayout } from "../public/panel-admin.js";
  */
 function fixture() {
   let codePage = "bracket";
+  let chart = codePageChart(emulatorCodePage(codePage));
   let revision = "unknown";
   const calls = {
     /** @type {string[]} */ themes: [],
@@ -37,12 +40,6 @@ function fixture() {
       [],
   };
   const settings = new Settings((values) => calls.saved.push(values));
-  settings.models = [
-    { model: 2, rows: 24, columns: 80 },
-    { model: 3, rows: 32, columns: 80 },
-    { model: 4, rows: 43, columns: 80 },
-    { model: 5, rows: 27, columns: 132 },
-  ];
   settings.connected = true;
   const keymap = new Keymap(() => {});
   const macros = new Macros({
@@ -61,6 +58,7 @@ function fixture() {
     settings,
     revision: () => revision,
     codePage: () => codePage,
+    chart: () => chart,
     keymap,
     macros,
     recorder,
@@ -105,8 +103,13 @@ function fixture() {
     keymap,
     macros,
     recorder,
-    setCodePage: (/** @type {string} */ value) => {
+    /** @param {string} value @param {string} [valueChart] what the hello would carry */
+    setCodePage: (
+      value,
+      valueChart = codePageChart(emulatorCodePage(value)),
+    ) => {
       codePage = value;
+      chart = valueChart;
     },
     setRevision: (/** @type {string} */ value) => {
       revision = value;
@@ -306,7 +309,7 @@ test("the character picker rejects invalid codes and keeps panel typing on retur
 
 test("the character picker rejects an unavailable code page and permits hex 40 space", () => {
   const { panels, calls, setCodePage } = fixture();
-  setCodePage("cp999");
+  setCodePage("cp999", "");
   panels.openChars();
   assert.match(screenOf(panels).join("\n"), /No single-byte chart/);
   assert.equal(panels.chooseCharacterByte(0xc1), false);
@@ -547,7 +550,7 @@ test("font chart follows the active code page and marks unsupported pages", () =
   setCodePage("cp273");
   assert.match(screenOf(panels)[1], /Code page: EBCDIC 273/);
   assert.equal(glyphAt(4, 42), "{");
-  setCodePage("cp930");
+  setCodePage("cp930", "");
   assert.match(screenOf(panels)[4], /No single-byte chart/);
 });
 

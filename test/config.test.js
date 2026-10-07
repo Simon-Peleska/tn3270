@@ -270,9 +270,6 @@ test("well-formed client messages are parsed", () => {
       host: "mainframe:23",
     },
   );
-  assert.deepEqual(parseClientMessage('{"type":"refresh"}'), {
-    type: "refresh",
-  });
   // A page whose host is locked in the config cannot name it.
   assert.deepEqual(parseClientMessage('{"type":"connect"}'), {
     type: "connect",

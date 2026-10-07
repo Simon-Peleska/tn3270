@@ -6,7 +6,7 @@ import { OiaModel } from "./oia.js";
 import { fullPaint, paintDelta } from "./paint.js";
 import { pasteSegments } from "../public/paste.js";
 import { AppError, describeError } from "./errors.js";
-import { isHostAllowed } from "./protocol.js";
+import { MAX_CELLS, isHostAllowed } from "./protocol.js";
 import { logger, logsDebug } from "./log.js";
 
 /**
@@ -51,22 +51,50 @@ const AID_ACTIONS = new Set([
 const INTERRUPT_ACTIONS = new Set(["Reset", "Attn", "SysReq"]);
 
 /**
- * The emulator refuses to start with an oversize smaller than its model, so
- * one that does not fit starts at the model's own size instead.
+ * The emulator refuses an oversize smaller than its model.
  *
  * @param {string} oversize `<cols>x<rows>`, or ''
  * @param {number} model
- * @returns {string}
+ * @returns {boolean}
  */
-function startingOversize(oversize, model) {
+function oversizeFits(oversize, model) {
   const asked = /^(\d+)x(\d+)$/.exec(oversize);
-  if (asked === null) return "";
-  const [rows, cols] = MODEL_SIZES[/** @type {2 | 3 | 4 | 5} */ (model)];
-  const fits =
+  if (asked === null) return false;
+  const [rows, cols] = modelSize(model);
+  return (
     Number(asked[1]) >= cols &&
     Number(asked[2]) >= rows &&
-    Number(asked[1]) * Number(asked[2]) <= 16383;
-  return fits ? oversize : "";
+    Number(asked[1]) * Number(asked[2]) <= MAX_CELLS
+  );
+}
+
+/** @param {number} model @returns {number[]} rows and columns */
+function modelSize(model) {
+  return MODEL_SIZES[/** @type {2 | 3 | 4 | 5} */ (model)];
+}
+
+/**
+ * @param {{ row: number, col: number }} at 0-based
+ * @returns {{ action: string, args: string[] }}
+ */
+function moveCursor({ row, col }) {
+  return { action: "MoveCursor1", args: [String(row + 1), String(col + 1)] };
+}
+
+/**
+ * What the character picker offers: blank where a byte shows nothing that can
+ * be typed back, like 0xFF, which the emulator draws as a dot.
+ *
+ * @param {{ base: Uint32Array }} page
+ * @returns {string} one character for each EBCDIC byte from 0x40 to 0xFF
+ */
+export function codePageChart(page) {
+  let chart = "";
+  for (let byte = 0x40; byte < 0xff; byte += 1) {
+    const glyph = String.fromCodePoint(page.base[byte] ?? 0);
+    chart += /\p{C}/u.test(glyph) ? " " : glyph;
+  }
+  return `${chart} `;
 }
 
 export class Session {
@@ -88,12 +116,6 @@ export class Session {
     this.oia = new OiaModel();
     /** @type {number} the emulator confirms this in screen-mode. */
     this.model = size.model ?? config.emulator.model;
-    /** @type {string} */
-    this.codePage = "bracket";
-    /** @type {Map<string, string>} */
-    this.codePageNames = new Map();
-    /** @type {import('./indications.js').ModelInfo[]} */
-    this.models = [];
     /** @type {Set<Viewer>} */
     this.viewers = new Set();
 
@@ -105,16 +127,14 @@ export class Session {
     this.ownerPass = randomUUID();
     /** @type {Set<string>} Handed to each guest let in, so a reload need not ask again. */
     this.guestPasses = new Set();
-    /** @type {boolean} Whether REST calls over the proxy may drive this session. */
     /** @type {boolean} Any viewer's input sets this, and it is never cleared. */
     this.touched = false;
     /** @type {number | null} A model waiting for the connection to go away. */
     this.pendingModel = null;
     /** @type {string} `<cols>x<rows>`, or '' for the model's own size. */
-    this.oversize = startingOversize(
-      size.oversize ?? String(config.emulator.settings["oversize"] ?? ""),
-      this.model,
-    );
+    this.oversize =
+      size.oversize ?? String(config.emulator.settings["oversize"] ?? "");
+    if (!oversizeFits(this.oversize, this.model)) this.oversize = "";
     /** @type {boolean} Whether an oversize is waiting for the connection to go
      * away. The size itself is already in `oversize`. */
     this.pendingOversize = false;
@@ -129,8 +149,6 @@ export class Session {
     this.idleTimer = null;
     /** @type {(() => void) | null} */
     this.onClosed = null;
-    /** @type {boolean} The host redrew since the field map was read. */
-    this.fieldsStale = false;
     /** @type {boolean} The keyboard's state changed since viewers were told. */
     this.statusStale = false;
     /** @type {{ steps: import('./protocol.js').RecorderStep[] } | null} */
@@ -144,23 +162,14 @@ export class Session {
     this.undoStack = [];
     /** @type {import('./history.js').Snapshot[]} States undone, to redo forward. */
     this.redoStack = [];
-    /** @type {string | null} The r-tag of a restore in flight. Its erases and
-     * retypes pass over states that were never the user's, so they are not
-     * history. */
-    this.historyTag = null;
+    /** @type {Promise<void> | null} The edit in flight. Its erases and retypes
+     * pass over states that were never the user's, so they are not history. */
+    this.edit = null;
 
     /** @type {import('./protocol.js').ClientMessage[]} Input not sent to the emulator yet. */
     this.inputQueue = [];
-    /** @type {string | null} The r-tag of the input the emulator is working on. */
-    this.inputTag = null;
-
-    /** @type {() => void} */
-    this.markReady = () => {};
-    /** @type {Promise<void>} the emulator reports its geometry and model list a few ms
-     * after it starts; describing the session earlier hands out a placeholder 24x80. */
-    this.ready = new Promise((resolve) => {
-      this.markReady = resolve;
-    });
+    /** @type {Promise<void> | null} The input the emulator is working on. */
+    this.input = null;
 
     const options = {
       ...config.emulator.settings,
@@ -171,12 +180,10 @@ export class Session {
     this.emulator = new Emulator(options, this.log);
     /** @type {ScreenModel} */
     this.screen = new ScreenModel(this.emulator.s);
-    this.emulator.on("quit", () => this.close());
-    /** @type {number} */
-    this.nextTag = 1;
-    // Nothing may wait forever on an emulator that never speaks.
-    this.readyTimer = setTimeout(() => this.markReady(), 5000);
-    this.readyTimer.unref();
+    /** @type {string} */
+    this.codePage = this.emulator.s.codePage.name;
+    /** @type {string} */
+    this.chart = codePageChart(this.emulator.s.codePage);
 
     this.startIdleTimer();
 
@@ -184,21 +191,30 @@ export class Session {
     this.emulator.indications((indication) => {
       if (!this.closed) this.handleIndication(indication);
     });
+    /** @type {string} the size the viewers were last told, rows x cols */
+    this.announcedSize = this.screenSize();
   }
 
   /**
    * @param {Array<{ action: string, args?: string[] }>} actions
-   * @returns {string} the r-tag its run-result indication comes back with
+   * @returns {Promise<void>} settles once the emulator has finished them, and
+   *   everything they changed has been applied; never rejects
    */
-  runActions(actions) {
-    const tag = `t${this.nextTag++}`;
+  async runActions(actions) {
     if (logsDebug())
-      this.log.debug("run", { tag, actions: JSON.stringify(actions) });
-    this.emulator.run(actions, tag).catch(
-      /** @param {unknown} cause */
-      (cause) => this.reportError(new AppError("E2005", tag, cause)),
-    );
-    return tag;
+      this.log.debug("run", { actions: JSON.stringify(actions) });
+    try {
+      const { success, text } = await this.emulator.run(actions);
+      if (success) return;
+      this.log.warn("action failed", { text: text.join(" ") });
+      this.sendToAll({
+        type: "error",
+        code: "E2005",
+        message: text.join(" ") || "action failed",
+      });
+    } catch (cause) {
+      this.reportError(new AppError("E2005", JSON.stringify(actions), cause));
+    }
   }
 
   /**
@@ -211,8 +227,8 @@ export class Session {
       return;
     }
     this.log.info("connecting", { host });
-    // b3270 reports the host back without its port, so reopening from what it
-    // says would silently land on telnet 23.
+    // The connection indication names the host without its port, so reopening
+    // from it would silently land on telnet 23.
     this.lastHost = host;
     this.runActions([{ action: "Open", args: [this.openTarget(host)] }]);
   }
@@ -233,7 +249,7 @@ export class Session {
   }
 
   /**
-   * b3270 refuses to change the model while connected, so drop, set, reopen.
+   * The emulator refuses to change the model while connected, so drop, set, reopen.
    *
    * @param {number} model
    * @returns {void}
@@ -256,7 +272,7 @@ export class Session {
   }
 
   /**
-   * An oversize is what makes b3270 negotiate as IBM-DYNAMIC; like the model,
+   * An oversize is what makes the emulator negotiate as IBM-DYNAMIC; like the model,
    * it only changes while disconnected.
    *
    * @param {string} value `<cols>x<rows>`, or '' for the model's own size
@@ -282,26 +298,16 @@ export class Session {
   /**
    * Model and oversize go in one `Set()`: an oversize is only legal against the
    * model it was measured for. Clearing it asks for the model's own size because
-   * b3270 4.5 drops the resource without resizing the screen.
+   * the emulator, like b3270, drops the resource without resizing the screen.
    *
    * @param {number} model
    * @returns {Array<{ action: string, args?: string[] }>}
    */
   sizeActions(model) {
-    const info = this.models.find((entry) => entry.model === model);
-    const asked = /^(\d+)x(\d+)$/.exec(this.oversize);
-    const fits =
-      asked !== null &&
-      info !== undefined &&
-      Number(asked[1]) >= info.columns &&
-      Number(asked[2]) >= info.rows;
-
     let oversize = this.oversize;
-    if (!fits) {
-      oversize =
-        this.emulatorOversize === "" || info === undefined
-          ? ""
-          : `${info.columns}x${info.rows}`;
+    if (!oversizeFits(oversize, model)) {
+      const [rows, cols] = modelSize(model);
+      oversize = this.emulatorOversize === "" ? "" : `${cols}x${rows}`;
       this.oversize = "";
     }
 
@@ -321,67 +327,24 @@ export class Session {
   handleIndication(indication) {
     const { kind, body } = indication;
 
-    if (kind === "code-pages" && Array.isArray(body)) {
-      for (const entry of body) {
-        if (typeof entry?.name !== "string") continue;
-        this.codePageNames.set(entry.name, entry.name);
-        if (Array.isArray(entry.aliases)) {
-          for (const alias of entry.aliases) {
-            if (typeof alias === "string")
-              this.codePageNames.set(alias, entry.name);
-          }
-        }
-      }
-      return;
-    }
-    if (kind === "setting") {
-      const setting = /** @type {{ name?: string, value?: unknown }} */ (body);
-      if (setting.name === "codePage" && typeof setting.value === "string") {
-        this.codePage = this.codePageNames.get(setting.value) ?? setting.value;
-        this.log.info("code page changed", { codePage: this.codePage });
-        this.sendToAll({ type: "codePage", name: this.codePage });
-      }
-      return;
-    }
-
     if (kind === "screen") {
       const update =
         /** @type {import('./indications.js').ScreenIndication} */ (body);
-      this.screen.applyScreen(update);
-      // An indication carrying only a cursor move — an arrow key, Tab, a click —
-      // cannot have moved a field boundary.
-      if ((update.rows ?? []).length > 0) this.fieldsStale = true;
+      this.screen.markRows(update.rows ?? []);
       this.scheduleFlush();
       return;
     }
     if (kind === "erase") {
-      // Erase carries the size for hosts that never use the alternate screen.
-      const before = this.screenSize();
-      this.screen.applyErase(
-        /** @type {import('./indications.js').EraseIndication} */ (body),
-      );
-      this.announceResize(before);
-      this.fieldsStale = true;
+      this.screen.markAllDirty();
       this.scheduleFlush();
       return;
     }
     if (kind === "screen-mode") {
       const mode =
         /** @type {import('./indications.js').ScreenModeIndication} */ (body);
-      const before = this.screenSize();
       this.model = mode.model;
-      this.screen.applyScreenMode(mode);
-      this.announceResize(before);
-      this.markReady();
+      this.screen.markAllDirty();
       this.scheduleFlush();
-      return;
-    }
-    if (kind === "models") {
-      if (Array.isArray(body)) {
-        this.models = /** @type {import('./indications.js').ModelInfo[]} */ (
-          body
-        );
-      }
       return;
     }
     if (kind === "oia") {
@@ -446,34 +409,6 @@ export class Session {
       const uiError =
         /** @type {import('./indications.js').UiErrorIndication} */ (body);
       this.reportError(new AppError("E2004", uiError.text ?? "protocol error"));
-      return;
-    }
-    if (kind === "run-result") {
-      const result =
-        /** @type {import('./indications.js').RunResultIndication} */ (body);
-      const tag = result["r-tag"];
-
-      // The edit has settled, so the state it reached is a step to undo back to.
-      if (tag !== undefined && tag === this.historyTag) {
-        this.historyTag = null;
-        this.scheduleFlush();
-      }
-
-      if (tag !== undefined && tag === this.inputTag) {
-        this.inputTag = null;
-        this.runQueuedInput();
-      }
-
-      if (!result.success) {
-        const text = (result.text ?? []).join(" ");
-        this.log.warn("action failed", { tag: result["r-tag"] ?? "", text });
-        this.sendToAll({
-          type: "error",
-          code: "E2005",
-          message: text || "action failed",
-        });
-      }
-      return;
     }
   }
 
@@ -494,18 +429,15 @@ export class Session {
   flush() {
     if (this.closed) return;
 
-    // Screen indications carry no field boundaries, so the field map comes
-    // from the emulator's own buffer.
-    if (this.fieldsStale) {
-      this.fieldsStale = false;
-      const { fa, rows, cols } = this.emulator.s;
-      this.screen.applyFieldAttributes(fa.subarray(0, rows * cols));
-      this.runQueuedInput();
-    }
-
+    this.syncFields();
     this.recordHistory();
 
     if (this.statusStale) this.broadcastStatus();
+
+    if (this.screenSize() !== this.announcedSize) {
+      this.announceResize();
+      return;
+    }
 
     const dirtyRows = this.screen.takeDirtyRows();
     // A cursor move touches no row, and it is the whole of what a Left or a Tab
@@ -517,19 +449,36 @@ export class Session {
   }
 
   /**
+   * Screen indications carry no field boundaries, so the field map comes from
+   * the emulator's own buffer. Cheap when nothing changed.
+   *
+   * @returns {void}
+   */
+  syncFields() {
+    const { fa, rows, cols } = this.emulator.s;
+    this.screen.applyFieldAttributes(fa.subarray(0, rows * cols));
+  }
+
+  /**
    * Every edit the user makes goes through here, so that one thing the
-   * user did is one undo step: b3270 reports a batch in pieces, and the states
-   * in the middle of it were never anyone's.
+   * user did is one undo step: the emulator reports a batch in pieces, and the
+   * states in the middle of it were never anyone's.
    *
    * @param {{ action: string, args?: string[] }[]} actions
-   * @returns {string} the r-tag
+   * @returns {Promise<void>}
    */
   runEdit(actions) {
     // The state the edit starts from is the step to undo back to, even when no
     // flush has recorded it yet.
     this.recordHistory();
-    this.historyTag = this.runActions(actions);
-    return this.historyTag;
+    const edit = this.runActions(actions);
+    this.edit = edit;
+    return edit.then(() => {
+      if (this.edit !== edit) return;
+      // Settled, so the state it reached is a step to undo back to.
+      this.edit = null;
+      this.scheduleFlush();
+    });
   }
 
   /**
@@ -539,7 +488,7 @@ export class Session {
    * @returns {void}
    */
   recordHistory() {
-    if (this.historyTag !== null) return;
+    if (this.edit !== null) return;
     if (this.snapshot !== null && this.screen.version === this.snapshotVersion)
       return;
     this.snapshotVersion = this.screen.version;
@@ -592,7 +541,7 @@ export class Session {
    * and retyping only the runs that differ, then returning the cursor.
    *
    * @param {boolean} back true undoes, false redoes
-   * @returns {string | null} the r-tag, or null for nothing to step to
+   * @returns {Promise<void> | null} null for nothing to step to
    */
   stepHistory(back) {
     this.recordHistory();
@@ -615,10 +564,7 @@ export class Session {
     /** @type {{ action: string, args: string[] }[]} */
     const actions = [];
     for (const run of runs) {
-      actions.push({
-        action: "MoveCursor1",
-        args: [String(run.row + 1), String(run.col + 1)],
-      });
+      actions.push(moveCursor(run));
       actions.push({ action: "EraseEOF", args: [] });
       const text = run.text.replace(/ +$/, "");
       if (text !== "")
@@ -627,14 +573,11 @@ export class Session {
           args: [Buffer.from(text, "utf8").toString("hex")],
         });
     }
-    actions.push({
-      action: "MoveCursor1",
-      args: [String(target.cursor.row + 1), String(target.cursor.col + 1)],
-    });
+    actions.push(moveCursor(target.cursor));
 
-    const tag = this.runEdit(actions);
+    const edit = this.runEdit(actions);
     this.snapshot = target;
-    return tag;
+    return edit;
   }
 
   /** @returns {string} `<rows>x<cols>` */
@@ -688,12 +631,9 @@ export class Session {
     this.pushRecorderStep({ screen: this.screenLines(), password: true });
   }
 
-  /**
-   * @param {string} before
-   * @returns {void}
-   */
-  announceResize(before) {
-    if (this.screenSize() === before) return;
+  /** @returns {void} */
+  announceResize() {
+    this.announcedSize = this.screenSize();
     this.log.info("screen size changed", {
       model: this.model,
       rows: this.screen.rows,
@@ -787,19 +727,16 @@ export class Session {
 
     viewer.sendMessage({
       type: "hello",
-      sessionId: this.id,
       rows: this.screen.rows,
       cols: this.screen.cols,
       model: this.model,
       codePage: this.codePage,
-      models: this.models,
+      chart: this.chart,
       oversize: this.oversize,
       hostLocked: this.config.emulator.defaultHost !== null,
       role: viewer.role,
       owner: viewer.owner === true,
       pass: viewer.pass,
-      viewers: this.viewers.size,
-      idleTimeoutMs: this.config.sessions.idleTimeoutMs,
     });
 
     this.repaint(viewer);
@@ -864,18 +801,12 @@ export class Session {
    * @returns {void}
    */
   handleClientMessage(viewer, message) {
-    // Not let in yet: it may not even ask for a repaint of what it cannot see.
+    // Not let in yet: it may not even ask to edit what it cannot see.
     if (!this.viewers.has(viewer)) {
       this.log.debug("message from a viewer not let in", {
         viewer: viewer.id,
         type: message.type,
       });
-      return;
-    }
-
-    // An observer may ask for this one: it changes only this viewer's own picture.
-    if (message.type === "refresh") {
-      this.repaint(viewer);
       return;
     }
 
@@ -1046,8 +977,8 @@ export class Session {
   }
 
   /**
-   * Input goes to b3270 one message at a time, each once b3270 has finished the
-   * last. b3270 already holds an action back while the host has the keyboard,
+   * Input goes to the emulator one message at a time, each once it has finished
+   * the last. The emulator already holds an action back while the host has the keyboard,
    * but several held at once come out of that wait in the wrong order, and
    * Backspace, the typing nudge and a paste read a screen the last input must
    * have settled. Reset, Attn and SysReq are how a user gets out of a wait, so
@@ -1076,7 +1007,7 @@ export class Session {
             dropped,
           });
         this.inputQueue = recorderCommands;
-        this.inputTag = null;
+        this.input = null;
       }
       this.runInput(message);
       return;
@@ -1084,7 +1015,7 @@ export class Session {
     if (
       (message.type === "action" || message.type === "macro") &&
       message.repeat === true &&
-      (this.inputTag !== null || this.inputQueue.length > 0)
+      (this.input !== null || this.inputQueue.length > 0)
     ) {
       this.log.debug("held key repeats faster than the host answers", {
         action: message.type === "action" ? message.action : "macro",
@@ -1104,22 +1035,16 @@ export class Session {
       return;
     }
     this.inputQueue.push(message);
-    if (this.inputTag !== null)
+    if (this.input !== null)
       this.log.debug("input waits for the one before", {
         queued: this.inputQueue.length,
       });
     this.runQueuedInput();
   }
 
-  /**
-   * The field map trails the screen until the next flush, and a paste, Backspace
-   * or the typing nudge read it, so queued input also waits for that:
-   * a macro's next step must see the screen the Enter before it brought.
-   *
-   * @returns {void}
-   */
+  /** @returns {void} */
   runQueuedInput() {
-    while (this.inputTag === null && !this.fieldsStale) {
+    while (this.input === null) {
       const next = this.inputQueue.shift();
       if (next === undefined) return;
       // Unpacked only now, so a Reset typed during it still drops what is left.
@@ -1128,15 +1053,26 @@ export class Session {
         this.inputQueue.unshift(...next.steps);
         continue;
       }
-      this.inputTag = this.runInput(next);
+      const input = this.runInput(next);
+      if (input === null) continue;
+      this.input = input;
+      input.then(() => {
+        if (this.input !== input) return;
+        this.input = null;
+        this.runQueuedInput();
+      });
     }
   }
 
   /**
    * @param {import('./protocol.js').ClientMessage} message
-   * @returns {string | null} the r-tag, or null when there was nothing to send
+   * @returns {Promise<void> | null} null when there was nothing to send
    */
   runInput(message) {
+    // A paste, Backspace and the typing nudge read the field map, which must
+    // be the one the input before them left: a macro's next step must see the
+    // screen the Enter before it brought.
+    this.syncFields();
     switch (message.type) {
       case "recorder":
         if (message.action === "start") this.recording = { steps: [] };
@@ -1156,13 +1092,13 @@ export class Session {
         if (AID_ACTIONS.has(message.action)) this.clearHistory(message.action);
         // Control keys carry no field content, so they are always safe to record.
         this.record(message.action, message.args ?? []);
-        // b3270's Backspace only moves left, as real 3270 hardware does; a PC
+        // The emulator's Backspace only moves left, as real 3270 hardware does; a PC
         // keyboard expects a delete, and the field map says if there is room.
         if (message.action === "Backspace") {
           if (!this.canBackspace()) return null;
           return this.runEdit([{ action: "Left" }, { action: "Delete" }]);
         }
-        // b3270 has no upward Newline and no start-of-field move; the cached
+        // The emulator has no upward Newline and no start-of-field move; the
         // field map answers both here.
         if (
           message.action === "BackNewline" ||
@@ -1172,12 +1108,7 @@ export class Session {
             message.action === "BackNewline"
               ? this.backNewlineTarget()
               : this.fieldStartTarget();
-          return this.runActions([
-            {
-              action: "MoveCursor1",
-              args: [String(target.row + 1), String(target.col + 1)],
-            },
-          ]);
+          return this.runActions([moveCursor(target)]);
         }
         return this.runEdit([
           { action: message.action, args: message.args ?? [] },
@@ -1190,13 +1121,7 @@ export class Session {
         const actions =
           nudge === null
             ? [{ action: "String", args: [message.value] }]
-            : [
-                {
-                  action: "MoveCursor1",
-                  args: [String(nudge.row + 1), String(nudge.col + 1)],
-                },
-                { action: "String", args: [message.value] },
-              ];
+            : [moveCursor(nudge), { action: "String", args: [message.value] }];
         return this.runEdit(actions);
       }
       case "paste": {
@@ -1214,11 +1139,11 @@ export class Session {
           message.text,
         );
         // Batched, so nothing else can be typed between the segments.
-        const actions = segments.flatMap(({ row, col, text }) => [
-          { action: "MoveCursor1", args: [String(row + 1), String(col + 1)] },
+        const actions = segments.flatMap((segment) => [
+          moveCursor(segment),
           {
             action: "PasteString",
-            args: [Buffer.from(text, "utf8").toString("hex")],
+            args: [Buffer.from(segment.text, "utf8").toString("hex")],
           },
         ]);
         if (actions.length === 0) return null;
@@ -1328,7 +1253,6 @@ export class Session {
         insert: this.oia.insert,
         typeahead: this.oia.typeahead,
         role: viewer.role,
-        viewers: this.viewers.size,
         owner: viewer.owner === true,
         guests,
         editor: editor === undefined ? null : nameOf(editor),
@@ -1380,8 +1304,6 @@ export class Session {
   close() {
     if (this.closed) return;
     this.closed = true;
-    clearTimeout(this.readyTimer);
-    this.markReady();
     this.stopIdleTimer();
     this.log.info("closing", { viewers: this.viewers.size });
     this.inputQueue = [];

@@ -1,4 +1,5 @@
 import test from "node:test";
+import { keyboardLocked } from "../public/oia.js";
 import assert from "node:assert/strict";
 import { Session } from "../server/session.js";
 import { RecordingHost } from "./recordinghost.js";
@@ -47,7 +48,6 @@ async function startRecordedSession(steps) {
       emulator: { model: host.script.model, settings: { codePage: "german" } },
     }),
   );
-  await session.ready;
   session.connect(`127.0.0.1:${host.port}`);
   const viewer = collectingViewer("viewer");
   session.attach(viewer);
@@ -105,7 +105,7 @@ test("a recording's host answers the recorded AID key with the next screen", asy
     "the screen Enter brought",
   );
   await settle(session);
-  assert.equal(session.oia.keyboardLocked, false);
+  assert.equal(keyboardLocked(session.oia.lock), false);
 });
 
 test("a recording's host answers any other AID key with the same screen", async (t) => {
@@ -127,7 +127,7 @@ test("a recording's host answers any other AID key with the same screen", async 
     "the host to answer PF3",
   );
   await settle(session);
-  assert.equal(session.oia.keyboardLocked, false);
+  assert.equal(keyboardLocked(session.oia.lock), false);
   assert.equal(session.screen.rowText(2).slice(0, 8), " Ort:   ");
 
   session.handleClientMessage(viewer, { type: "action", action: "Enter" });

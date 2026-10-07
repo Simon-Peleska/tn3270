@@ -24,12 +24,12 @@ One page holds one session, filling the page; another session is another tab.
 The page keeps its WebSocket open even while the tab is hidden, or the idle
 timeout below would reap the session.
 
-| Event                                | Behaviour                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Page opened with no `#fragment`      | A session is created; its id goes into the URL fragment                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| Page opened with `#<id>`             | The session is joined if it still exists; one that is gone is reported with `E3001` and a new session is created                                                                                                                                                                                                                                                                                                                                                                                                           |
-| Browser reloads or the network drops | The session is untouched. The page shows the disconnect and retries with exponential backoff and jitter, asking `/api/sessions` before each attempt. It keeps waiting while the server does not answer. Once the server answers, it reattaches if the session still exists, or creates a new one if the server has reaped it (`E5014` if that fails). The reconnected page reloads itself, so a server that came back with newer page code is picked up; the fragment still names the same session, so it reattaches to it |
-| Last viewer detaches                 | The session is kept alive for `sessions.idleTimeoutMs`, then closed. A viewer attaching inside that window cancels the reaping                                                                                                                                                                                                                                                                                                                                                                                             |
+| Event                                | Behaviour                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Page opened with no `#fragment`      | A session is created; its id goes into the URL fragment                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Page opened with `#<id>`             | The session is joined if it still exists; one that is gone is reported with `E3001` and a new session is created                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Browser reloads or the network drops | The session is untouched. The page shows the disconnect and retries the socket with exponential backoff and jitter. It keeps waiting while the server does not answer. Once the server answers, it reattaches if the session still exists; one the server has reaped is refused with `E3001` and the page creates a new one (`E5014` if that fails). The reconnected page reloads itself, so a server that came back with newer page code is picked up; the fragment still names the same session, so it reattaches to it |
+| Last viewer detaches                 | The session is kept alive for `sessions.idleTimeoutMs`, then closed. A viewer attaching inside that window cancels the reaping                                                                                                                                                                                                                                                                                                                                                                                            |
 
 Sharing the URL is how a session is shared: there is no invite step. But nobody gets in on the URL
 alone — the owner is asked first (§3).
@@ -394,20 +394,26 @@ action outside it is refused with `E4002` and never reaches the emulator.
 
 ## 6. Wire protocol
 
-One WebSocket at `/ws/<session-id>`.
+One WebSocket at `/ws/<session-id>`. A session that does not exist is refused
+over the socket, with an `E3001` error and the close reason `E3001`, because a
+browser never sees the status of a refused upgrade.
 
 **Server → browser.** Text frames only, each an object with a `type`, or an
 array of them when one moment produced several (a paint and the status with it):
 
 ```jsonc
-{"type":"hello","sessionId":"…","rows":43,"cols":80,"model":4,"oversize":"","models":[{"model":2,"rows":24,"columns":80}],"role":"controller","owner":true,"pass":"…","viewers":1,"idleTimeoutMs":300000}
+{"type":"hello","rows":43,"cols":80,"model":4,"codePage":"bracket","chart":"  âäàáãåçñ[.<(+!…","oversize":"","hostLocked":false,"role":"controller","owner":true,"pass":"…"}
 {"type":"screen","model":2,"rows":24,"cols":80,"oversize":""}
 {"type":"paint","full":false,"color":true,"rows":[{"row":1,"runs":[{"col":3,"text":"____","fg":"red","gr":"underline","editable":true}]}],"cursor":{"row":1,"col":8,"on":true}}
-{"type":"status","connection":"connected-tn3270e","host":"mainframe:23","lock":"system","insert":false,"typeahead":false,"role":"controller","viewers":2,"owner":true,"guests":1,"editor":null,"requests":[{"viewer":"ab12cd34","name":"alice","kind":"watch"}],"editRequested":false}
+{"type":"status","connection":"connected-tn3270e","host":"mainframe:23","lock":"system","insert":false,"typeahead":false,"role":"controller","owner":true,"guests":1,"editor":null,"requests":[{"viewer":"ab12cd34","name":"alice","kind":"watch"}],"editRequested":false}
 {"type":"waiting"}
 {"type":"refused","code":"E3008","message":"bob did not let you in."}
 {"type":"error","code":"E3006","message":"This session is being controlled by someone else."}
 ```
+
+`hello`'s `chart` holds one character for each EBCDIC byte from 0x40 to 0xFF on
+the session's code page, taken from the emulator's own table, for the character
+chart; a byte that shows nothing typeable is a blank.
 
 `paint` carries only the rows that changed, unless `full`, which also clears
 every cell it does not mention and carries `defaultFg`/`defaultBg`. Colours are
@@ -425,10 +431,6 @@ repaint that assumes the new size. `oversize` is the fitted screen in force,
 `<cols>x<rows>`, or empty when the model is at its own size. One ordered
 WebSocket keeps them in that order, which is what stops a viewer applying a
 paint to a grid of the wrong size.
-
-`hello` carries `idleTimeoutMs`, the server's own hold time for a viewer-less
-session (`0` when reaping is off), so a page whose socket drops knows how long
-reconnecting to it is worth trying.
 
 **Browser → server.** Text frames only:
 
@@ -451,16 +453,15 @@ reconnecting to it is worth trying.
 
 ### HTTP
 
-| Method   | Path                  | Result                                                                                                                                                                                                                                                                               |
-| -------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `POST`   | `/api/sessions`       | Creates a session → `201 {id, rows, cols, model}`, after the emulator has reported its real geometry; an optional body `{model, oversize}` sets the size it starts at, `400 E3017` if either is invalid. An oversize that does not fit the model is dropped for the model's own size |
-| `GET`    | `/api/sessions`       | Lists sessions → `{sessions:[{id, viewers, connection, host}], defaultHost}`                                                                                                                                                                                                         |
-| `DELETE` | `/api/sessions/<id>`  | Ends the session with its owner's `x-session-pass` → `204`; otherwise `403 E3014`                                                                                                                                                                                                    |
-| `GET`    | `/api/userdata`       | This user's saved data → `{settings, macros, keymap, recordings}`, `null` for any never saved                                                                                                                                                                                        |
-| `GET`    | `/api/userdata/<key>` | One of those four, `null` if never saved; `404 E8007` for any other key                                                                                                                                                                                                              |
-| `PUT`    | `/api/userdata/<key>` | Replaces one of those four with the JSON body → `204`; `404 E8004`, `400 E8006`, `413 E8005`                                                                                                                                                                                         |
-| `GET`    | `/`, `/index.html`    | The page, with this user's font preload, theme background and `{data:{settings, macros, keymap}}` (or `{error:{code, message}}`) written into it; never cached                                                                                                                       |
-| `GET`    | anything else         | Static files from `public/`, brotli or gzip compressed when the browser accepts it, revalidated by ETag; fonts are immutable for a year                                                                                                                                              |
+| Method   | Path                  | Result                                                                                                                                                                                                                     |
+| -------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST`   | `/api/sessions`       | Creates a session → `201 {id, rows, cols}`; an optional body `{model, oversize}` sets the size it starts at, `400 E3017` if either is invalid. An oversize that does not fit the model is dropped for the model's own size |
+| `GET`    | `/api/sessions`       | Lists sessions → `{sessions:[{id, startedAt, startedBy}]}`                                                                                                                                                                 |
+| `DELETE` | `/api/sessions/<id>`  | Ends the session with its owner's `x-session-pass` → `204`; otherwise `403 E3014`                                                                                                                                          |
+| `GET`    | `/api/userdata/<key>` | One of those four, `null` if never saved; `404 E8007` for any other key                                                                                                                                                    |
+| `PUT`    | `/api/userdata/<key>` | Replaces one of those four with the JSON body → `204`; `404 E8004`, `400 E8006`, `413 E8005`                                                                                                                               |
+| `GET`    | `/`, `/index.html`    | The page, with this user's font preload, theme background and `{data:{settings, macros, keymap}}` (or `{error:{code, message}}`) written into it; never cached                                                             |
+| `GET`    | anything else         | Static files from `public/`, brotli or gzip compressed when the browser accepts it, revalidated by ETag; fonts are immutable for a year                                                                                    |
 
 Errors are JSON: `{"code":"E6001","message":"…"}` with a matching status.
 

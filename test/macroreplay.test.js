@@ -1,4 +1,5 @@
 import test from "node:test";
+import { keyboardLocked } from "../public/oia.js";
 import assert from "node:assert/strict";
 import { Session } from "../server/session.js";
 import { Macros } from "../public/macros.js";
@@ -68,7 +69,6 @@ async function startSession(host) {
   const session = new Session(
     testConfig({ emulator: { model: host.script.model } }),
   );
-  await session.ready;
   const viewer = collectingViewer("viewer");
   session.attach(viewer);
   session.connect(`127.0.0.1:${host.port}`);
@@ -85,9 +85,8 @@ async function startSession(host) {
 function idle(session) {
   return (
     session.inputQueue.length === 0 &&
-    session.inputTag === null &&
-    session.historyTag === null &&
-    !session.fieldsStale &&
+    session.input === null &&
+    session.edit === null &&
     session.screen.fieldsFormatted &&
     !["twait", "syswait", "not-connected", "connecting"].includes(
       session.oia.lock,
@@ -320,7 +319,7 @@ async function recordByHand(session, viewer, inputs) {
   for (const input of inputs) {
     send(input);
     await waitUntil(() => idle(session), `${JSON.stringify(input)} to settle`);
-    if (session.oia.keyboardLocked) {
+    if (keyboardLocked(session.oia.lock)) {
       send({ type: "action", action: "Reset" });
       await waitUntil(() => idle(session), "the Reset to settle");
     }
