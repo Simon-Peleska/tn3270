@@ -8,6 +8,7 @@ import { pasteSegments } from "../public/paste.js";
 import { AppError, describeError } from "./errors.js";
 import { MAX_CELLS, isHostAllowed } from "./protocol.js";
 import { logger, logsDebug } from "./log.js";
+import { requestPassTicket } from "./dcas.js";
 
 /**
  * @typedef {object} Viewer
@@ -73,6 +74,11 @@ function modelSize(model) {
   return MODEL_SIZES[/** @type {2 | 3 | 4 | 5} */ (model)];
 }
 
+/** @param {string} text @returns {string} what PasteString takes */
+function hex(text) {
+  return Buffer.from(text, "utf8").toString("hex");
+}
+
 /**
  * @param {{ row: number, col: number }} at 0-based
  * @returns {{ action: string, args: string[] }}
@@ -108,6 +114,8 @@ export class Session {
     this.id = randomUUID();
     this.startedAt = new Date().toISOString();
     this.startedBy = "";
+    /** @type {string} The name the proxy vouched for, which single sign-on logs on as. */
+    this.remoteUser = "";
     /** @type {import('./config.js').Config} */
     this.config = config;
     this.log = logger("session", { session: this.id });
@@ -153,6 +161,14 @@ export class Session {
     this.statusStale = false;
     /** @type {{ steps: import('./protocol.js').RecorderStep[] } | null} */
     this.recording = null;
+
+    /** @type {boolean} Viewers see nothing of the host while this is set. */
+    this.loggingOn = false;
+    /** @type {{ text: string, settle: (err: AppError | null) => void } | null} */
+    this.screenWait = null;
+    /** @type {{ code: string, message: string } | null} Why single sign-on
+     * failed, kept for an owner who has not attached yet. */
+    this.logonFailure = null;
 
     /** @type {import('./history.js').Snapshot | null} What the fields hold now. */
     this.snapshot = null;
@@ -371,9 +387,16 @@ export class Session {
         state: connection.state,
         host: connection.host ?? "",
       });
+      const wasConnected = this.oia.connected;
       this.oia.applyConnection(connection);
       this.broadcastStatus();
       this.scheduleFlush();
+      if (!this.oia.connected)
+        this.screenWait?.settle(
+          new AppError("E3022", "the connection dropped"),
+        );
+      if (!wasConnected && this.oia.connected && this.config.logon.sso)
+        this.signOn();
       if (
         connection.state === "not-connected" &&
         (this.pendingModel !== null || this.pendingOversize)
@@ -433,6 +456,11 @@ export class Session {
     this.recordHistory();
 
     if (this.statusStale) this.broadcastStatus();
+
+    if (this.loggingOn) {
+      this.checkScreenWait();
+      return;
+    }
 
     if (this.screenSize() !== this.announcedSize) {
       this.announceResize();
@@ -570,7 +598,7 @@ export class Session {
       if (text !== "")
         actions.push({
           action: "PasteString",
-          args: [Buffer.from(text, "utf8").toString("hex")],
+          args: [hex(text)],
         });
     }
     actions.push(moveCursor(target.cursor));
@@ -631,6 +659,137 @@ export class Session {
     this.pushRecorderStep({ screen: this.screenLines(), password: true });
   }
 
+  /**
+   * Single sign-on, as the user the proxy named, with a PassTicket from DCAS.
+   * Any failure hands the owner the logon dialog instead.
+   *
+   * @returns {Promise<void>}
+   */
+  async signOn() {
+    const { dcas, timeoutMs } = this.config.logon;
+    // RACF user IDs are upper case, and the PassTicket is made for exactly that.
+    const user = this.remoteUser.toUpperCase();
+    try {
+      if (user === "") throw new AppError("E3023", this.id);
+      await this.logon(user, () => requestPassTicket(dcas, user, timeoutMs));
+      this.logonFailure = null;
+    } catch (err) {
+      this.log.error(err, { user });
+      const { code, summary } = describeError(err);
+      const owners = [...this.viewers].filter((viewer) => viewer.owner);
+      for (const owner of owners)
+        owner.sendMessage({ type: "logon", code, message: summary });
+      this.logonFailure =
+        owners.length === 0 ? { code, message: summary } : null;
+    }
+  }
+
+  /**
+   * The owner's logon, from the dialog.
+   *
+   * @param {string} pass the owner's
+   * @param {string} user
+   * @param {string} password
+   * @returns {Promise<void>}
+   */
+  async logonByHand(pass, user, password) {
+    if (pass !== this.ownerPass) throw new AppError("E3019", this.id);
+    await this.logon(user, async () => password);
+    this.logonFailure = null;
+  }
+
+  /**
+   * Waits for the logon screen, types the user, Newline, the password and
+   * Enter, then waits for the screen a logon lands on. Viewers are shown none
+   * of the host until it has finished or failed. The password goes straight to
+   * the emulator: never to the log, the recorder or the undo history.
+   *
+   * @param {string} user
+   * @param {() => Promise<string>} password asked for only once the logon
+   *   screen is up, as a PassTicket is short-lived
+   * @returns {Promise<void>}
+   */
+  async logon(user, password) {
+    const { readyText, doneText } = this.config.logon;
+    if (readyText === "" || doneText === "") throw new AppError("E3024");
+    if (this.loggingOn) throw new AppError("E3026", this.id);
+    this.loggingOn = true;
+    this.log.info("logon starts", { user });
+    try {
+      await this.waitForScreen(readyText, "E3020");
+      const secret = await password();
+      this.log.info("logon typing", { user });
+      // The run settles only once the host unlocks the keyboard after the
+      // Enter, so the wait for the next screen, and its timeout, start first.
+      const landed = this.waitForScreen(doneText, "E3021");
+      const wait = this.screenWait;
+      /** @param {AppError} err */
+      const fail = (err) => {
+        if (wait !== null && this.screenWait === wait) wait.settle(err);
+      };
+      this.emulator
+        .run([
+          { action: "PasteString", args: [hex(user)] },
+          { action: "Newline" },
+          { action: "PasteString", args: [hex(secret)] },
+          { action: "Enter" },
+        ])
+        .then(
+          ({ success, text }) => {
+            if (!success) fail(new AppError("E3027", text.join(" ")));
+          },
+          (cause) => fail(new AppError("E3027", user, cause)),
+        );
+      await landed;
+      this.log.info("logon finished", { user });
+    } finally {
+      this.loggingOn = false;
+      this.clearHistory("logon");
+      if (!this.closed) this.releaseScreen();
+    }
+  }
+
+  /**
+   * @param {string} text
+   * @param {'E3020' | 'E3021'} timeoutCode
+   * @returns {Promise<void>}
+   */
+  waitForScreen(text, timeoutCode) {
+    if (!this.oia.connected)
+      return Promise.reject(new AppError("E3022", this.lastHost ?? ""));
+    const timeoutMs = this.config.logon.timeoutMs;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.screenWait?.settle(
+          new AppError(timeoutCode, `"${text}" after ${timeoutMs} ms`),
+        );
+      }, timeoutMs);
+      this.screenWait = {
+        text,
+        settle: (err) => {
+          clearTimeout(timer);
+          this.screenWait = null;
+          if (err === null) resolve();
+          else reject(err);
+        },
+      };
+      this.checkScreenWait();
+    });
+  }
+
+  /** @returns {void} */
+  checkScreenWait() {
+    if (this.screenWait === null) return;
+    if (this.screenLines().join("\n").includes(this.screenWait.text))
+      this.screenWait.settle(null);
+  }
+
+  /** @returns {void} */
+  releaseScreen() {
+    if (this.screenSize() !== this.announcedSize) this.announceResize();
+    else this.repaintAll();
+  }
+
   /** @returns {void} */
   announceResize() {
     this.announcedSize = this.screenSize();
@@ -662,6 +821,7 @@ export class Session {
    * @returns {void}
    */
   repaint(viewer) {
+    if (this.loggingOn) return;
     viewer.sendMessage(fullPaint(this.screen));
   }
 
@@ -741,6 +901,10 @@ export class Session {
 
     this.repaint(viewer);
     this.broadcastStatus();
+    if (viewer.owner === true && this.logonFailure !== null) {
+      viewer.sendMessage({ type: "logon", ...this.logonFailure });
+      this.logonFailure = null;
+    }
   }
 
   /**
@@ -992,6 +1156,14 @@ export class Session {
    * @returns {void}
    */
   queueInput(viewer, message) {
+    if (this.loggingOn) {
+      viewer.sendMessage({
+        type: "error",
+        code: "E3018",
+        message: "The keyboard is yours once the logon has finished.",
+      });
+      return;
+    }
     if (message.type === "recorder") {
       this.runInput(message);
       return;
@@ -1143,7 +1315,7 @@ export class Session {
           moveCursor(segment),
           {
             action: "PasteString",
-            args: [Buffer.from(segment.text, "utf8").toString("hex")],
+            args: [hex(segment.text)],
           },
         ]);
         if (actions.length === 0) return null;
@@ -1307,6 +1479,7 @@ export class Session {
     this.stopIdleTimer();
     this.log.info("closing", { viewers: this.viewers.size });
     this.inputQueue = [];
+    this.screenWait?.settle(new AppError("E3028", this.id));
     this.emulator.close();
     this.viewers.clear();
     this.waiting.clear();

@@ -1,6 +1,6 @@
 // A code is an identity: append only, never renumber, never reuse. E1xxx config,
 // E2xxx emulator, E3xxx session, E4xxx client, E5xxx browser, E6xxx transport,
-// E8xxx user data.
+// E8xxx user data, E9xxx single sign-on.
 export const ERRORS = Object.freeze({
   E1001: "Config file could not be read",
   E1002: "Config file is not valid JSONC",
@@ -10,6 +10,7 @@ export const ERRORS = Object.freeze({
   E1006: "Code page is in the wrong config section",
   E1007: "Config section was renamed",
   E1008: "Vendored ws does not match package-lock.json",
+  E1009: "Single sign-on is off: its config is incomplete",
 
   // E2001-E2003 and E2006 were the b3270 child process's, which is gone. Retired, not free.
   E2004: "Emulator reported a protocol error",
@@ -33,6 +34,17 @@ export const ERRORS = Object.freeze({
   E3015: "Session terminated by its owner",
   // E3016 was the session worker threads', which are gone. Retired, not free.
   E3017: "Session size asked for is not valid",
+  E3018: "Input waits until the logon has finished",
+  E3019: "Only the session's owner may log on",
+  E3020: "Logon screen did not appear in time",
+  E3021: "Logon did not finish in time",
+  E3022: "Not connected to the host for the logon",
+  E3023: "No user name to sign on with: the proxy sent none",
+  E3024: "Logon is not configured",
+  E3025: "Logon request is not valid",
+  E3026: "A logon is already running",
+  E3027: "Logon could not be typed",
+  E3028: "Session closed during the logon",
 
   E4001: "WebSocket message was not valid JSON",
   E4002: "WebSocket message had an unknown type",
@@ -83,6 +95,8 @@ export const ERRORS = Object.freeze({
   E5041: "No macro has the number given on the command line",
   // E5042 is spent.
   E5043: "Page carries no saved settings from the server",
+  E5044: "Logon could not be sent to the server",
+  E5045: "Logon needs a user name and a password",
 
   E6001: "Static file not found",
   E6002: "WebSocket upgrade path is not a session",
@@ -103,6 +117,12 @@ export const ERRORS = Object.freeze({
   E8005: "User data is too large to save",
   E8006: "User data to save is not valid JSON",
   E8007: "User data key to read is not one the server keeps",
+
+  E9001: "DCAS could not be reached",
+  E9002: "DCAS did not answer in time",
+  E9003: "DCAS refused the PassTicket request",
+  E9004: "DCAS answer was not understood",
+  E9005: "DCAS certificate files could not be read",
 });
 
 /** @typedef {keyof typeof ERRORS} ErrorCode */

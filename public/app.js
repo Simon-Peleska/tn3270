@@ -31,6 +31,7 @@ import {
   createSessionRequest,
   listSessions,
   terminateSession,
+  logonRequest,
 } from "./session-api.js";
 import { HintPrefix, computeHints } from "./hints.js";
 
@@ -596,6 +597,13 @@ const panels = new Panels({
     sessionStorage.getItem(`tn3270.pass.${id}`) !== null,
   terminateSession: (id) =>
     terminateSession(id, sessionStorage.getItem(`tn3270.pass.${id}`) ?? ""),
+  logon: (user, password) =>
+    logonRequest(
+      session.id,
+      sessionStorage.getItem(`tn3270.pass.${session.id}`) ?? "",
+      user,
+      password,
+    ),
   insertCharacter: (character) => {
     deliver({ type: "text", value: character });
   },
@@ -945,6 +953,11 @@ function handleServerMessage(message) {
       history.replaceState(null, "", url.href);
       if (message.role === "observer") sendUnrecorded({ type: "askEdit" });
     }
+    return;
+  }
+  if (message.type === "logon") {
+    console.error(`[${message.code}] ${message.message}`);
+    panels.openLogon(`[${message.code}] ${message.message}`);
     return;
   }
   if (message.type === "recorderStep") {

@@ -51,6 +51,30 @@
     "trustProxyHeaders": false,
   },
 
+  // Types a user and password into the host's sign-on screen. A logon waits for a
+  // screen containing readyText, types user, Newline, password, Enter, and waits for
+  // doneText; the page shows the host only once it has finished or failed.
+  // Without dcas, the owner logs on by hand from the logon dialog.
+  "logon": {
+    "readyText": "",
+    "doneText": "",
+    "timeoutMs": 30000,
+
+    // Single sign-on: types the X-Remote-User name and a PassTicket from z/OS DCAS.
+    // With sso on, it runs only when readyText, doneText, every dcas key but port and
+    // caFile, and security.trustProxyHeaders are set; otherwise the start logs E1009
+    // and what is missing.
+    "sso": false,
+    // "dcas": {
+    //   "host": "zos.example.com",
+    //   "port": 8990,
+    //   "applid": "TSO",
+    //   "certFile": "/etc/tn3270/dcas-client.crt",
+    //   "keyFile": "/etc/tn3270/dcas-client.key",
+    //   "caFile": "/etc/tn3270/dcas-ca.crt",
+    // },
+  },
+
   // "debug" logs every action run and the emulator's own debug lines. Very noisy.
   "logLevel": "info",
 

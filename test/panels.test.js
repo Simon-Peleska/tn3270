@@ -35,6 +35,7 @@ function fixture() {
     /** @type {string[]} */ joinedForEdit: [],
     /** @type {Set<string>} */ owners: new Set(),
     /** @type {string[]} */ terminated: [],
+    /** @type {{ user: string, password: string }[]} */ logons: [],
     /** @type {string[]} */ characters: [],
     /** @type {import('../public/recorder.js').Recording[][]} */ savedRecordings:
       [],
@@ -88,6 +89,9 @@ function fixture() {
     ownsSession: (id) => calls.owners.has(id),
     terminateSession: async (id) => {
       calls.terminated.push(id);
+    },
+    logon: async (user, password) => {
+      calls.logons.push({ user, password });
     },
     insertCharacter: (character) => {
       calls.characters.push(character);
@@ -1332,4 +1336,39 @@ test("layout output stays within the terminal grid", () => {
     for (const item of texts) assert.ok(item.col + item.text.length <= 80, id);
     for (const item of fields) assert.ok(item.col + item.width <= 80, id);
   }
+});
+
+test("the logon dialog hides the password and closes once logged on", async () => {
+  const { panels, calls } = fixture();
+  panels.openLogon("[E9003] DCAS refused the PassTicket request");
+  assert.match(screenOf(panels).join("\n"), /\[E9003\] DCAS refused/);
+
+  press(panels, "MoveCursor1", ["5", "17"]);
+  type(panels, "simon");
+  press(panels, "MoveCursor1", ["6", "17"]);
+  type(panels, "hunter2");
+  assert.doesNotMatch(screenOf(panels).join("\n"), /hunter2/);
+  press(panels, "Enter");
+  await Promise.resolve();
+
+  assert.deepEqual(calls.logons, [{ user: "simon", password: "hunter2" }]);
+  assert.equal(panels.isOpen(), false);
+});
+
+test("the logon dialog asks for both fields and shows the server's refusal", async () => {
+  const { panels, calls } = fixture();
+  panels.openLogon("");
+  press(panels, "MoveCursor1", ["5", "17"]);
+  type(panels, "simon");
+  press(panels, "Enter");
+  assert.match(screenOf(panels).join("\n"), /\[E5045\]/);
+  assert.deepEqual(calls.logons, []);
+
+  panels.deps.logon = async () => {
+    throw new Error("[E3021] Logon did not finish in time");
+  };
+  await panels.logon("simon", "wrong");
+  assert.match(screenOf(panels).join("\n"), /\[E3021\] Logon did not finish/);
+  assert.match(screenOf(panels)[4] ?? "", /simon/, "the user name stays");
+  assert.equal(panels.isOpen(), true);
 });

@@ -785,7 +785,8 @@ export class Session extends EventEmitter {
     s.runSeq++;
     for (const { action, args = [] } of actions) {
       s.runAction = `${action}(${args.map((a) => JSON.stringify(String(a))).join(",")})`;
-      this.log.debug(`run ${s.runAction}`);
+      // Only the name: the arguments can be a typed password.
+      this.log.debug(`run ${action}`);
       const name = ACTION_NAMES.get(action.toLowerCase());
       if (name === "Open" || name === "Connect") {
         const errors = await this.open(String(args[0] ?? ""));

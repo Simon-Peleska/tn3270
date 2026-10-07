@@ -29,3 +29,22 @@ export async function terminateSession(id, pass) {
   });
   if (!response.ok) throw await responseError(response);
 }
+
+/**
+ * @param {string} id
+ * @param {string} pass the owner's
+ * @param {string} user
+ * @param {string} password
+ * @returns {Promise<void>} once the host shows the screen a logon lands on
+ */
+export async function logonRequest(id, pass, user, password) {
+  const response = await fetch(
+    `./api/sessions/${encodeURIComponent(id)}/logon`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-session-pass": pass },
+      body: JSON.stringify({ user, password }),
+    },
+  );
+  if (!response.ok) throw await responseError(response);
+}

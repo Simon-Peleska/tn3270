@@ -2,7 +2,7 @@
 // session, each message back is serialized and handed to the socket.
 import { randomUUID } from "node:crypto";
 import { Session } from "./session.js";
-import { parseClientMessage } from "./protocol.js";
+import { parseClientMessage, parseLogon } from "./protocol.js";
 import { AppError, describeError } from "./errors.js";
 import { logger } from "./log.js";
 
@@ -33,6 +33,7 @@ export class SessionRegistry {
       throw new AppError("E3002", `${open} sessions are already open`);
     const session = new Session(this.config, size);
     session.startedBy = client.user || client.ip || "Unknown";
+    session.remoteUser = client.user;
     session.onClosed = () => {
       this.sessions.delete(session.id);
       this.log.info("session removed", {
@@ -67,6 +68,18 @@ export class SessionRegistry {
   /** @param {string} id @param {string} pass @returns {void} */
   terminate(id, pass) {
     this.get(id).terminate(pass);
+  }
+
+  /**
+   * @param {string} id
+   * @param {string} pass the owner's
+   * @param {string} body JSON `{ user, password }`
+   * @returns {Promise<void>}
+   */
+  logon(id, pass, body) {
+    const session = this.get(id);
+    const { user, password } = parseLogon(body);
+    return session.logonByHand(pass, user, password);
   }
 
   /** @returns {Array<{ id: string, startedAt: string, startedBy: string }>} */

@@ -15,6 +15,10 @@ const IAC_WONT_TIMING_MARK = "fffc06";
 export const FAKEHOST_CA = fileURLToPath(
   new URL("tls/fakehost.crt", import.meta.url),
 );
+/** Its private key. */
+export const FAKEHOST_KEY = fileURLToPath(
+  new URL("tls/fakehost.key", import.meta.url),
+);
 
 /**
  * @param {string} file
@@ -82,7 +86,7 @@ export class FakeHost {
     this.server = tls
       ? createTlsServer(
           {
-            key: readFileSync(new URL("tls/fakehost.key", import.meta.url)),
+            key: readFileSync(FAKEHOST_KEY),
             cert: readFileSync(FAKEHOST_CA),
           },
           onConnection,

@@ -409,7 +409,11 @@ array of them when one moment produced several (a paint and the status with it):
 {"type":"waiting"}
 {"type":"refused","code":"E3008","message":"bob did not let you in."}
 {"type":"error","code":"E3006","message":"This session is being controlled by someone else."}
+{"type":"logon","code":"E9003","message":"DCAS refused the PassTicket request: …"}
 ```
+
+`logon` goes to the owner when single sign-on failed, and opens the logon
+dialog with the error in it. An owner who attaches later still gets it, once.
 
 `hello`'s `chart` holds one character for each EBCDIC byte from 0x40 to 0xFF on
 the session's code page, taken from the emulator's own table, for the character
@@ -453,15 +457,16 @@ paint to a grid of the wrong size.
 
 ### HTTP
 
-| Method   | Path                  | Result                                                                                                                                                                                                                     |
-| -------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST`   | `/api/sessions`       | Creates a session → `201 {id, rows, cols}`; an optional body `{model, oversize}` sets the size it starts at, `400 E3017` if either is invalid. An oversize that does not fit the model is dropped for the model's own size |
-| `GET`    | `/api/sessions`       | Lists sessions → `{sessions:[{id, startedAt, startedBy}]}`                                                                                                                                                                 |
-| `DELETE` | `/api/sessions/<id>`  | Ends the session with its owner's `x-session-pass` → `204`; otherwise `403 E3014`                                                                                                                                          |
-| `GET`    | `/api/userdata/<key>` | One of those four, `null` if never saved; `404 E8007` for any other key                                                                                                                                                    |
-| `PUT`    | `/api/userdata/<key>` | Replaces one of those four with the JSON body → `204`; `404 E8004`, `400 E8006`, `413 E8005`                                                                                                                               |
-| `GET`    | `/`, `/index.html`    | The page, with this user's font preload, theme background and `{data:{settings, macros, keymap}}` (or `{error:{code, message}}`) written into it; never cached                                                             |
-| `GET`    | anything else         | Static files from `public/`, brotli or gzip compressed when the browser accepts it, revalidated by ETag; fonts are immutable for a year                                                                                    |
+| Method   | Path                       | Result                                                                                                                                                                                                                                    |
+| -------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST`   | `/api/sessions`            | Creates a session → `201 {id, rows, cols}`; an optional body `{model, oversize}` sets the size it starts at, `400 E3017` if either is invalid. An oversize that does not fit the model is dropped for the model's own size                |
+| `GET`    | `/api/sessions`            | Lists sessions → `{sessions:[{id, startedAt, startedBy}]}`                                                                                                                                                                                |
+| `DELETE` | `/api/sessions/<id>`       | Ends the session with its owner's `x-session-pass` → `204`; otherwise `403 E3014`                                                                                                                                                         |
+| `POST`   | `/api/sessions/<id>/logon` | Logs on by hand with the owner's `x-session-pass` and a body `{user, password}` → `204` once the host shows `logon.doneText`; `403 E3019`, `400 E3025`, `404 E3024` when no logon is configured, `409 E3026`/`E3022`, `504 E3020`/`E3021` |
+| `GET`    | `/api/userdata/<key>`      | One of those four, `null` if never saved; `404 E8007` for any other key                                                                                                                                                                   |
+| `PUT`    | `/api/userdata/<key>`      | Replaces one of those four with the JSON body → `204`; `404 E8004`, `400 E8006`, `413 E8005`                                                                                                                                              |
+| `GET`    | `/`, `/index.html`         | The page, with this user's font preload, theme background and `{data:{settings, macros, keymap}}` (or `{error:{code, message}}`) written into it; never cached                                                                            |
+| `GET`    | anything else              | Static files from `public/`, brotli or gzip compressed when the browser accepts it, revalidated by ETag; fonts are immutable for a year                                                                                                   |
 
 Errors are JSON: `{"code":"E6001","message":"…"}` with a matching status.
 
@@ -487,6 +492,11 @@ for a key, the page sends what an older version saved in the browser.
 | `sessions.idleTimeoutMs`        | `300000`                               | Viewer-less session lifetime; `0` disables reaping                                                                                                                                                                                                                                                                                                                             |
 | `security.allowedHosts`         | `[]`                                   | Empty = any host. An entry with a port matches exactly; without one, any port on that host                                                                                                                                                                                                                                                                                     |
 | `security.trustProxyHeaders`    | `false`                                | Take the client's address from `X-Forwarded-For` and their name from `X-Remote-User`. Only with a reverse proxy in front that sets both                                                                                                                                                                                                                                        |
+| `logon.readyText`               | `""`                                   | Text on the host's sign-on screen; a logon waits for it before typing user, Newline, password, Enter                                                                                                                                                                                                                                                                           |
+| `logon.doneText`                | `""`                                   | Text on the screen a finished logon lands on. Until it shows, or the logon fails, viewers see no host screen and input is refused with `E3018`                                                                                                                                                                                                                                 |
+| `logon.timeoutMs`               | `30000`                                | How long each of those two waits, and the DCAS exchange, may take                                                                                                                                                                                                                                                                                                              |
+| `logon.sso`                     | `false`                                | Turns single sign-on on. Off, `logon.dcas` is ignored and only the logon by hand remains                                                                                                                                                                                                                                                                                       |
+| `logon.dcas`                    | `null`                                 | Single sign-on on connect: `{host, port (8990), applid, certFile, keyFile, caFile}`. The `X-Remote-User` name, upper-cased, is typed with a PassTicket from z/OS DCAS. Only used with `logon.sso` on, and only when this, both texts and `security.trustProxyHeaders` are complete; otherwise `E1009` names what is missing. Any failure gives the owner the logon dialog      |
 | `logLevel`                      | `info`                                 | `debug` logs every action run and the emulator's own debug lines                                                                                                                                                                                                                                                                                                               |
 | `logFile`                       | `../tn3270-data/log/tn3270-{port}.log` | Kept as well as stderr, and rolled over to `<logFile>.1`; `""` is stderr only. `{port}` becomes `server.port`, so two instances never roll over one file                                                                                                                                                                                                                       |
 | `logMaxBytes`                   | `10485760`                             | Size at which the log rolls over, so the pair is never more than twice this                                                                                                                                                                                                                                                                                                    |
@@ -498,7 +508,7 @@ Every code is fixed for the lifetime of the project and appears both in the log
 and in the page. The blocks are subsystems, and a code belongs to the subsystem
 that decides it is an error rather than to the file that throws it: `E1xxx`
 config, `E2xxx` the emulator, `E3xxx` session, `E4xxx` client messages, `E5xxx`
-browser, `E6xxx` server transport. Retired codes — `E2001`–`E2003` and `E2006`
+browser, `E6xxx` server transport, `E8xxx` user data, `E9xxx` single sign-on. Retired codes — `E2001`–`E2003` and `E2006`
 of the old b3270 child process, `E2007` of the old emulator thread pool, `E3016` of the old session worker threads, `E5006` of the old several sessions in one page, `E7xxx` of the old REST proxy — are not reused.
 
 | Code    | Meaning                                                |
@@ -510,6 +520,7 @@ of the old b3270 child process, `E2007` of the old emulator thread pool, `E3016`
 | `E1005` | Config setting is not an emulator setting              |
 | `E1006` | Code page is in the wrong config section               |
 | `E1007` | Config section was renamed (`b3270` is now `emulator`) |
+| `E1009` | Single sign-on is off: its config is incomplete        |
 | `E2004` | Emulator reported a protocol error                     |
 | `E2005` | Emulator action failed                                 |
 | `E3001` | Session not found                                      |
@@ -527,6 +538,17 @@ of the old b3270 child process, `E2007` of the old emulator thread pool, `E3016`
 | `E3014` | Only the session's owner may terminate it              |
 | `E3015` | Session terminated by its owner                        |
 | `E3017` | Session size asked for is not valid                    |
+| `E3018` | Input waits until the logon has finished               |
+| `E3019` | Only the session's owner may log on                    |
+| `E3020` | Logon screen did not appear in time                    |
+| `E3021` | Logon did not finish in time                           |
+| `E3022` | Not connected to the host for the logon                |
+| `E3023` | No user name to sign on with: the proxy sent none      |
+| `E3024` | Logon is not configured                                |
+| `E3025` | Logon request is not valid                             |
+| `E3026` | A logon is already running                             |
+| `E3027` | Logon could not be typed                               |
+| `E3028` | Session closed during the logon                        |
 | `E4001` | WebSocket message was not valid JSON                   |
 | `E4002` | WebSocket message had an unknown type                  |
 | `E4003` | Pasted text is too large to type into a screen         |
@@ -570,6 +592,8 @@ of the old b3270 child process, `E2007` of the old emulator thread pool, `E3016`
 | `E5040` | No saved recording is available to repeat              |
 | `E5041` | No macro has the number given on the command line      |
 | `E5043` | Page carries no saved settings from the server         |
+| `E5044` | Logon could not be sent to the server                  |
+| `E5045` | Logon needs a user name and a password                 |
 | `E6001` | Static file not found                                  |
 | `E6002` | WebSocket upgrade path is not a session                |
 | `E6003` | WebSocket closed unexpectedly                          |
@@ -585,6 +609,11 @@ of the old b3270 child process, `E2007` of the old emulator thread pool, `E3016`
 | `E8005` | User data is too large to save                         |
 | `E8006` | User data to save is not valid JSON                    |
 | `E8007` | User data key to read is not one the server keeps      |
+| `E9001` | DCAS could not be reached                              |
+| `E9002` | DCAS did not answer in time                            |
+| `E9003` | DCAS refused the PassTicket request                    |
+| `E9004` | DCAS answer was not understood                         |
+| `E9005` | DCAS certificate files could not be read               |
 | `E0000` | An error with no code of its own; see the log          |
 
 Errors are shown as a dismissible bar at the top of the page. The page is never

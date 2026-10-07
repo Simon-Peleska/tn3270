@@ -72,6 +72,7 @@ export const MAX_CELLS = 16383;
  *
  * The connection closes right after; the browser must not come back on its own.
  * @typedef {{ type: 'refused', code: string, message: string }} RefusedMessage
+ * @typedef {{ type: 'logon', code: string, message: string }} LogonMessage single sign-on failed: the owner logs on by hand
  *
  * A run of cells sharing one style. Colours are b3270's own names — `red`,
  * `deepBlue`, `neutralWhite` — and `gr` is its own comma-separated rendition
@@ -124,7 +125,7 @@ export const MAX_CELLS = 16383;
  *
  * @typedef {{ type: 'recorderStopped' }} RecorderStoppedMessage
  *
- * @typedef {HelloMessage | ScreenMessage | PaintMessage | StatusMessage | ErrorMessage | RecorderStepMessage | RecorderStoppedMessage | WaitingMessage | RefusedMessage} ServerMessage
+ * @typedef {HelloMessage | ScreenMessage | PaintMessage | StatusMessage | ErrorMessage | RecorderStepMessage | RecorderStoppedMessage | WaitingMessage | RefusedMessage | LogonMessage} ServerMessage
  */
 
 /**
@@ -230,6 +231,30 @@ export function parseSessionSize(body) {
     throw new AppError("E3017", describeError(cause).summary, cause);
   }
   return size;
+}
+
+/**
+ * The body is never quoted back: it holds a password.
+ *
+ * @param {string} body JSON `{ user, password }`
+ * @returns {{ user: string, password: string }}
+ */
+export function parseLogon(body) {
+  /** @type {unknown} */
+  let parsed;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    throw new AppError("E3025", "not JSON");
+  }
+  const raw = /** @type {Record<string, unknown> | null} */ (parsed);
+  const user = raw?.["user"];
+  const password = raw?.["password"];
+  if (typeof user !== "string" || user === "" || user.length > 64)
+    throw new AppError("E3025", "user must be 1 to 64 characters");
+  if (typeof password !== "string" || password === "" || password.length > 256)
+    throw new AppError("E3025", "password must be 1 to 256 characters");
+  return { user, password };
 }
 
 /**

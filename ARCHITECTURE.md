@@ -119,6 +119,25 @@ Indications arrive in bursts; `scheduleFlush()` coalesces a burst with
 `setImmediate` so viewers never see a half-applied screen and the wire stays
 quiet.
 
+### Logon
+
+A logon (`Session.logon`) waits for a screen holding `logon.readyText`, types
+user, Newline, password, Enter, and waits for `logon.doneText`. While it runs,
+`loggingOn` holds every paint back and refuses input, so nobody sees the sign-on
+screen or types into it; when it ends, for good or ill, the whole screen is
+painted at once. The done-wait starts before the typing, because a run with
+Enter only returns once the host unlocks the keyboard, and a host that never
+does must still hit the timeout. The typed input is kept out of undo history
+and the debug log.
+
+Single sign-on starts it on connect, with the `X-Remote-User` name and a
+PassTicket from z/OS DCAS (`server/dcas.js`, IBM's Format 2 over mutual TLS).
+Any failure — config, DCAS, timeouts — sends the owner a `logon` message, and
+the page opens the logon dialog, which posts to `/api/sessions/<id>/logon` and
+runs the same `logon` with what the owner typed. A wrong password is not
+recognised as such: the host simply never shows `doneText`, and it ends as
+`E3021`.
+
 ### The multi-viewer seam
 
 Extra viewers come in only on the owner's yes, as observers, and at most one of

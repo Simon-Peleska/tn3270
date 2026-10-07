@@ -14,12 +14,14 @@ import { DEFAULT_SETTINGS, FONTS, THEMES } from "../public/settings.js";
  * @param {'debug' | 'info' | 'warn' | 'error'} [logLevel]
  * @param {boolean} [trustProxyHeaders]
  * @param {string} [userDataFile] pass the same one to two servers to share it
+ * @param {Record<string, unknown>} [overrides] more config
  * @returns {Promise<{ port: number, logFile: string, stop: () => Promise<void> }>}
  */
 async function startServer(
   logLevel = "warn",
   trustProxyHeaders = false,
   userDataFile = ":memory:",
+  overrides = {},
 ) {
   const port = await freePort();
   const configFile = `test/.tmp-config-${port}.jsonc`;
@@ -35,6 +37,7 @@ async function startServer(
         logLevel,
         logFile,
         userDataFile,
+        ...overrides,
       }),
     ),
   );
@@ -640,6 +643,75 @@ test("only a session owner can terminate it", async (t) => {
     ),
     false,
   );
+});
+
+test("the owner logs on by hand through the logon endpoint, and the password is never logged", async (t) => {
+  const host = await FakeHost.listen("test/traces/login.trc", 0, {
+    tls: true,
+  });
+  const server = await startServer("debug", false, ":memory:", {
+    emulator: { defaultHost: `127.0.0.1:${host.port}` },
+    logon: { readyText: "Uzivatel (User)", doneText: "READY", timeoutMs: 5000 },
+  });
+  t.after(async () => {
+    await host.close();
+    await server.stop();
+  });
+
+  const base = `http://127.0.0.1:${server.port}`;
+  const created = await (
+    await fetch(`${base}/api/sessions`, { method: "POST" })
+  ).json();
+  const owner = await openViewer(
+    `ws://127.0.0.1:${server.port}/ws/${created.id}`,
+  );
+  t.after(() => owner.socket.close());
+  await waitUntil(
+    () => owner.messages.some((message) => message.type === "hello"),
+    "the owner's hello",
+  );
+  const ownerPass = String(
+    owner.messages.find((message) => message.type === "hello")?.pass,
+  );
+  await host.waitForConnection();
+  await host.sendRecords(1);
+
+  const url = `${base}/api/sessions/${created.id}/logon`;
+  /** @param {string} pass @param {string} body */
+  const post = (pass, body) =>
+    fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-session-pass": pass },
+      body,
+    });
+
+  let response = await post("not-the-owner", '{"user":"SIMON","password":"x"}');
+  assert.equal(response.status, 403);
+  assert.equal((await response.json()).code, "E3019");
+  response = await post(ownerPass, '{"user":"SIMON"}');
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).code, "E3025");
+
+  const logon = post(ownerPass, '{"user":"SIMON","password":"hunter2"}');
+  // "SIMON" and "hunter2" in EBCDIC.
+  await host.waitUntil(
+    () =>
+      host.received.includes("e2c9d4d6d5") &&
+      host.received.includes("88a495a38599f2"),
+    5000,
+    "the user and password to be typed",
+  );
+  host.socket?.write(Buffer.from("f5c3114040d9c5c1c4e8ffef", "hex"));
+  response = await logon;
+  assert.equal(response.status, 204);
+  await waitUntil(
+    () => owner.grid.rowText(0).startsWith("READY"),
+    "the logged-on screen",
+  );
+
+  const log = readFileSync(server.logFile, "utf8");
+  assert.match(log, /logon finished/);
+  assert.doesNotMatch(log, /hunter2|68756e74657232|88a495a38599f2/);
 });
 
 test("an upgrade to a path that is not a session is refused with its own code", async (t) => {

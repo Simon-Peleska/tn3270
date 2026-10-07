@@ -12,6 +12,27 @@ import { AppError } from "./errors.js";
  * @property {string} logFile Empty is stderr only.
  * @property {number} logMaxBytes Size at which the log rolls to `<logFile>.1`.
  * @property {string} userDataFile SQLite file the settings are kept in, shared by every server pointed at it.
+ * @property {LogonConfig} logon
+ */
+
+/**
+ * @typedef {object} LogonConfig
+ * @property {string} readyText on the host's logon screen; '' is no logon at all
+ * @property {string} doneText on the screen the logon lands on
+ * @property {number} timeoutMs for each wait: for either screen, and for DCAS
+ * @property {boolean} sso on only when asked for and every key it needs is set
+ * @property {DcasConfig} dcas
+ * @property {string[]} ssoMissing what single sign-on still needs, when it is asked for
+ */
+
+/**
+ * @typedef {object} DcasConfig
+ * @property {string} host
+ * @property {number} port
+ * @property {string} applid the application the PassTicket is for
+ * @property {string} certFile this server's client certificate, PEM
+ * @property {string} keyFile its private key, PEM
+ * @property {string} caFile what DCAS's certificate is checked against, PEM; '' for the system's
  */
 
 /** Emulator settings by their node3270 name. @typedef {Record<string, string | number | boolean | null>} Settings */
@@ -120,7 +141,74 @@ const DEFAULTS = {
   logFile: "../tn3270-data/log/tn3270-{port}.log",
   logMaxBytes: 10 * 1024 * 1024,
   userDataFile: "../tn3270-data/userdata.sqlite",
+  logon: {
+    readyText: "",
+    doneText: "",
+    timeoutMs: 30000,
+    sso: false,
+    dcas: {
+      host: "",
+      port: 8990,
+      applid: "",
+      certFile: "",
+      keyFile: "",
+      caFile: "",
+    },
+    ssoMissing: [],
+  },
 };
+
+/**
+ * Single sign-on only runs when asked for and with everything it needs;
+ * anything less leaves it off, and the keys still missing are logged at start.
+ *
+ * @param {Record<string, unknown>} root
+ * @param {boolean} trustProxyHeaders the user name comes from the proxy
+ * @returns {LogonConfig}
+ */
+function logon(root, trustProxyHeaders) {
+  const logonSection = section(root, "logon");
+  const readyText = str(logonSection, "logon", "readyText", "");
+  const doneText = str(logonSection, "logon", "doneText", "");
+  const timeoutMs = num(
+    logonSection,
+    "logon",
+    "timeoutMs",
+    DEFAULTS.logon.timeoutMs,
+    100,
+    600000,
+  );
+  const asked = bool(logonSection, "logon", "sso", DEFAULTS.logon.sso);
+  const dcasSection = section(logonSection, "dcas");
+  const dcas = {
+    host: str(dcasSection, "logon.dcas", "host", ""),
+    port: num(
+      dcasSection,
+      "logon.dcas",
+      "port",
+      DEFAULTS.logon.dcas.port,
+      1,
+      65535,
+    ),
+    applid: str(dcasSection, "logon.dcas", "applid", ""),
+    certFile: str(dcasSection, "logon.dcas", "certFile", ""),
+    keyFile: str(dcasSection, "logon.dcas", "keyFile", ""),
+    caFile: str(dcasSection, "logon.dcas", "caFile", ""),
+  };
+  const ssoMissing = !asked
+    ? []
+    : [
+        readyText === "" ? "logon.readyText" : "",
+        doneText === "" ? "logon.doneText" : "",
+        dcas.host === "" ? "logon.dcas.host" : "",
+        dcas.applid === "" ? "logon.dcas.applid" : "",
+        dcas.certFile === "" ? "logon.dcas.certFile" : "",
+        dcas.keyFile === "" ? "logon.dcas.keyFile" : "",
+        trustProxyHeaders ? "" : "security.trustProxyHeaders",
+      ].filter((key) => key !== "");
+  const sso = asked && ssoMissing.length === 0;
+  return { readyText, doneText, timeoutMs, sso, dcas, ssoMissing };
+}
 
 /**
  * @param {Record<string, unknown>} source
@@ -327,6 +415,13 @@ export function validateConfig(raw) {
     );
   }
 
+  const trustProxyHeaders = bool(
+    securitySection,
+    "security",
+    "trustProxyHeaders",
+    DEFAULTS.security.trustProxyHeaders,
+  );
+
   const logLevel = str(root, "", "logLevel", DEFAULTS.logLevel);
   if (
     logLevel !== "debug" &&
@@ -387,12 +482,7 @@ export function validateConfig(raw) {
         "allowedHosts",
         DEFAULTS.security.allowedHosts,
       ),
-      trustProxyHeaders: bool(
-        securitySection,
-        "security",
-        "trustProxyHeaders",
-        DEFAULTS.security.trustProxyHeaders,
-      ),
+      trustProxyHeaders,
     },
     logLevel,
     // Rolling over renames the file, which two processes cannot share safely.
@@ -409,6 +499,7 @@ export function validateConfig(raw) {
       1024 * 1024 * 1024,
     ),
     userDataFile: str(root, "", "userDataFile", DEFAULTS.userDataFile),
+    logon: logon(root, trustProxyHeaders),
   };
 }
 

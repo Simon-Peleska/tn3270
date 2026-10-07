@@ -28,6 +28,7 @@ import { pasteSegments } from "./paste.js";
  * @property {number} width
  * @property {string} value what the application puts in it
  * @property {string[]} [fgByPosition] foreground colors for individual cells
+ * @property {boolean} [hidden] typed into but never shown, like a password
  *
  * @typedef {object} HostScreen
  * @property {Text[]} texts
@@ -345,7 +346,10 @@ export class LocalHost {
         editable: text.editable,
       });
     for (const field of screen.fields) {
-      grid.put(field.row, field.col, this.chars(field).join(""), FIELD_STYLE);
+      const shown = field.hidden
+        ? "".padEnd(field.width)
+        : this.chars(field).join("");
+      grid.put(field.row, field.col, shown, FIELD_STYLE);
       if (field.fgByPosition === undefined) continue;
       for (
         let index = 0;

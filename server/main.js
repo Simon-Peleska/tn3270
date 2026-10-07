@@ -18,6 +18,15 @@ setLogLevel(config.logLevel);
 if (config.logFile !== "") setLogFile(config.logFile, config.logMaxBytes);
 const log = logger("http");
 
+if (config.logon.ssoMissing.length > 0)
+  log.warn("[E1009] Single sign-on is off: its config is incomplete", {
+    missing: config.logon.ssoMissing.join(","),
+  });
+log.info("logon", {
+  sso: config.logon.sso,
+  manual: config.logon.readyText !== "" && config.logon.doneText !== "",
+});
+
 try {
   checkVendoredWs();
 } catch (err) {
@@ -107,6 +116,13 @@ const ERROR_STATUS = Object.freeze({
   E3001: 404,
   E3014: 403,
   E3017: 400,
+  E3019: 403,
+  E3020: 504,
+  E3021: 504,
+  E3022: 409,
+  E3024: 404,
+  E3025: 400,
+  E3026: 409,
   E6001: 404,
   E8004: 404,
   E8007: 404,
@@ -418,6 +434,18 @@ async function handleRequest(req, res) {
     registry.terminate(
       String(terminateMatch[1]),
       header(req, "x-session-pass"),
+    );
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  const logonMatch = /^\/api\/sessions\/([0-9a-fA-F-]{36})\/logon$/.exec(path);
+  if (logonMatch !== null && req.method === "POST") {
+    await registry.logon(
+      String(logonMatch[1]),
+      header(req, "x-session-pass"),
+      await readBody(req, 1024, "E3025"),
     );
     res.writeHead(204);
     res.end();

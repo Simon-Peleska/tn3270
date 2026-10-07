@@ -406,3 +406,52 @@ test("an empty allowedHosts list means any host, a populated one means only thos
   assert.equal(isHostAllowed("mainframe:992", ["mainframe:992"]), true);
   assert.equal(isHostAllowed("elsewhere:23", ["mainframe"]), false);
 });
+
+test("single sign-on is on only when asked for and with every key it needs, and says which are missing", () => {
+  const dcas = {
+    host: "zos.example.com",
+    applid: "TSO",
+    certFile: "client.crt",
+    keyFile: "client.key",
+  };
+  const logon = { readyText: "USERID", doneText: "READY", sso: true, dcas };
+
+  const complete = validateConfig({
+    security: { trustProxyHeaders: true },
+    logon,
+  }).logon;
+  assert.equal(complete.sso, true);
+  assert.deepEqual(complete.dcas, { ...dcas, port: 8990, caFile: "" });
+  assert.deepEqual(complete.ssoMissing, []);
+
+  const partial = validateConfig({
+    logon: {
+      readyText: "USERID",
+      sso: true,
+      dcas: { host: "zos.example.com" },
+    },
+  }).logon;
+  assert.equal(partial.sso, false);
+  assert.deepEqual(partial.ssoMissing, [
+    "logon.doneText",
+    "logon.dcas.applid",
+    "logon.dcas.certFile",
+    "logon.dcas.keyFile",
+    "security.trustProxyHeaders",
+  ]);
+
+  const switchedOff = validateConfig({
+    security: { trustProxyHeaders: true },
+    logon: { ...logon, sso: false },
+  }).logon;
+  assert.equal(switchedOff.sso, false, "a complete dcas stays unused");
+  assert.deepEqual(switchedOff.ssoMissing, []);
+
+  const asked = validateConfig({ logon: { sso: true } }).logon;
+  assert.ok(asked.ssoMissing.includes("logon.dcas.host"));
+
+  const none = validateConfig({}).logon;
+  assert.equal(none.sso, false);
+  assert.deepEqual(none.ssoMissing, [], "nothing set is nothing to warn about");
+  assert.equal(none.readyText, "");
+});

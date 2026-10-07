@@ -12,6 +12,7 @@ import { computeHints } from "./hints.js";
 import { sizeMode } from "./settings.js";
 import { comboLabel } from "./keymap.js";
 import { settingsLayout } from "./panel-settings.js";
+import { logonLayout } from "./panel-logon.js";
 import { themeLayout } from "./panel-theme.js";
 import { fontLayout } from "./panel-font.js";
 import { sizeLayout } from "./panel-size.js";
@@ -54,6 +55,7 @@ import { charsLayout, printableCharacter } from "./panel-chars.js";
  * @property {(id: string, requestEdit?: boolean) => void} joinSession
  * @property {(id: string) => boolean} ownsSession
  * @property {(id: string) => Promise<void>} terminateSession
+ * @property {(user: string, password: string) => Promise<void>} logon
  * @property {(character: string) => void} insertCharacter
  *
  * @typedef {object} Edit an input field in place of the line's value
@@ -87,6 +89,7 @@ import { charsLayout, printableCharacter } from "./panel-chars.js";
  * @property {number} cols
  * @property {(row: number, col: number, text: string, fg: string, gr?: string) => void} say
  * @property {(name: string, row: number, col: number, width: number, value: string, fgByPosition?: string[]) => void} field
+ * @property {(name: string, row: number, col: number, width: number) => void} secret a field that never shows what is typed
  * @typedef {object} PanelLayout
  * @property {string | ((panel: Panels, id: string) => string)} [title]
  * @property {number} [listTop]
@@ -114,6 +117,7 @@ const LAYOUTS = {
   keymap: keysLayout,
   admin: adminLayout,
   chars: charsLayout,
+  logon: logonLayout,
 };
 
 /** @param {string} id @returns {PanelLayout} */
@@ -167,6 +171,48 @@ export class Panels {
     this.adminLoading = false;
     /** @type {{ typed: Map<string, string[]>, cursor: { row: number, col: number }, fresh: boolean } | null} */
     this.pickerReturn = null;
+    /** @type {string} kept for the next try, unlike the password */
+    this.logonUser = "";
+  }
+
+  /**
+   * Single sign-on failed: the owner logs on by hand.
+   *
+   * @param {string} why the server's error, code first
+   * @returns {void}
+   */
+  openLogon(why) {
+    this.open("logon");
+    this.message = why;
+    this.deps.redraw();
+  }
+
+  /**
+   * @param {string} user
+   * @param {string} password
+   * @returns {Promise<void>}
+   */
+  async logon(user, password) {
+    this.logonUser = user;
+    if (user === "" || password === "") {
+      this.message = problem("E5045", "Type a user name and a password");
+      this.deps.redraw();
+      return;
+    }
+    this.message = "Logging on...";
+    this.deps.redraw();
+    try {
+      await this.deps.logon(user, password);
+      console.info("logon by hand finished", { user });
+      if (this.stack.at(-1)?.id === "logon") this.close();
+    } catch (cause) {
+      console.error("[E5044] logon failed", cause);
+      const text = cause instanceof Error ? cause.message : String(cause);
+      this.message = text.startsWith("[E")
+        ? text
+        : problem("E5044", "The logon could not be sent to the server");
+      this.deps.redraw();
+    }
   }
 
   /** @returns {boolean} */
@@ -634,7 +680,19 @@ export class Panels {
           fgByPosition,
         });
     };
-    layout.render?.(this, { rows, cols, say, field });
+    /** @type {PanelView['secret']} */
+    const secret = (name, row, col, width) => {
+      if (width > 0 && col < cols)
+        fields.push({
+          name,
+          row,
+          col,
+          width: Math.min(width, cols - col),
+          value: "",
+          hidden: true,
+        });
+    };
+    layout.render?.(this, { rows, cols, say, field, secret });
     say(
       rows - (layout.messageBottomOffset ?? 3),
       2,

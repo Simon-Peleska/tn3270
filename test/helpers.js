@@ -110,11 +110,13 @@ export async function settle(session) {
 
 /**
  * @param {string} traceFile
- * @param {{ records?: number, config?: Record<string, unknown> }} [options]
+ * @param {{ records?: number, config?: Record<string, unknown>, prepare?: (session: import('../server/session.js').Session) => void }} [options]
+ *   prepare runs before the session connects
  */
 export async function startTracedSession(traceFile, options = {}) {
   const host = await FakeHost.listen(traceFile, 0, { tls: true });
   const session = new Session(testConfig(options.config));
+  options.prepare?.(session);
 
   session.connect(`127.0.0.1:${host.port}`);
   await host.waitForConnection();
