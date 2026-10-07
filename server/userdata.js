@@ -56,8 +56,8 @@ export function openUserData(file) {
   }
   log.info("opened", { file });
 
-  const selectAll = db.prepare(
-    "SELECT key, value FROM userdata WHERE owner = ?",
+  const selectOne = db.prepare(
+    "SELECT value FROM userdata WHERE owner = ? AND key = ?",
   );
   const upsert =
     db.prepare(`INSERT INTO userdata (owner, key, value, updated_at)
@@ -68,23 +68,22 @@ export function openUserData(file) {
   return {
     /**
      * @param {string} owner
-     * @returns {Record<UserDataKey, unknown>} null for a key never saved
+     * @param {readonly UserDataKey[]} [keys]
+     * @returns {Partial<Record<UserDataKey, unknown>>} null for a key never saved
      */
-    load(owner) {
-      /** @type {Record<string, unknown>} */
-      const data = {
-        settings: null,
-        macros: null,
-        keymap: null,
-        recordings: null,
-      };
+    load(owner, keys = USER_DATA_KEYS) {
+      /** @type {Partial<Record<UserDataKey, unknown>>} */
+      const data = {};
       try {
-        for (const row of selectAll.all(owner))
-          data[String(row["key"])] = JSON.parse(String(row["value"]));
+        for (const key of keys) {
+          const row = selectOne.get(owner, key);
+          data[key] =
+            row === undefined ? null : JSON.parse(String(row["value"]));
+        }
       } catch (cause) {
         throw new AppError("E8002", owner, cause);
       }
-      return /** @type {Record<UserDataKey, unknown>} */ (data);
+      return data;
     },
 
     /**

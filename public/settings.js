@@ -4,18 +4,57 @@ export { THEMES } from "./themes.js";
 
 /**
  * All but the last are vendored in `public/fonts/`; the last is the machine's.
- * @type {readonly { name: string, family: string }[]}
+ * The server preloads the chosen one's file into the page.
+ *
+ * @typedef {{ name: string, family: string, file?: string }} Font
+ * @type {readonly Font[]}
  */
 export const FONTS = Object.freeze([
-  { name: "Fira Mono", family: '"Fira Mono", monospace' },
-  { name: "IBM 3270", family: '"IBM 3270", monospace' },
-  { name: "IBM Plex Mono", family: '"IBM Plex Mono", monospace' },
-  { name: "European Teletext", family: '"European Teletext", monospace' },
-  { name: "DejaVu Sans Mono", family: '"DejaVu Sans Mono", monospace' },
-  { name: "Liberation Mono", family: '"Liberation Mono", monospace' },
-  { name: "JetBrains Mono", family: '"JetBrains Mono", monospace' },
-  { name: "Inconsolata", family: '"Inconsolata", monospace' },
-  { name: "Courier Prime", family: '"Courier Prime", monospace' },
+  {
+    name: "Fira Mono",
+    family: '"Fira Mono", monospace',
+    file: "FiraMono-Regular.woff2",
+  },
+  {
+    name: "IBM 3270",
+    family: '"IBM 3270", monospace',
+    file: "3270-Regular.woff2",
+  },
+  {
+    name: "IBM Plex Mono",
+    family: '"IBM Plex Mono", monospace',
+    file: "IBMPlexMono-Regular.woff2",
+  },
+  {
+    name: "European Teletext",
+    family: '"European Teletext", monospace',
+    file: "EuropeanTeletext.woff2",
+  },
+  {
+    name: "DejaVu Sans Mono",
+    family: '"DejaVu Sans Mono", monospace',
+    file: "DejaVuSansMono.woff2",
+  },
+  {
+    name: "Liberation Mono",
+    family: '"Liberation Mono", monospace',
+    file: "LiberationMono-Regular.woff2",
+  },
+  {
+    name: "JetBrains Mono",
+    family: '"JetBrains Mono", monospace',
+    file: "JetBrainsMono-Regular.woff2",
+  },
+  {
+    name: "Inconsolata",
+    family: '"Inconsolata", monospace',
+    file: "Inconsolata-Regular.woff2",
+  },
+  {
+    name: "Courier Prime",
+    family: '"Courier Prime", monospace',
+    file: "CourierPrime-Regular.woff2",
+  },
   {
     name: "System monospace",
     family: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
@@ -83,6 +122,19 @@ export function describeFit(oversize) {
   return `Fit to window - ${rows}x${cols}`;
 }
 
+/**
+ * What the four 3270 models measure, for sizing a session before the server
+ * has said which models it offers.
+ *
+ * @type {import('../server/indications.js').ModelInfo[]}
+ */
+const STANDARD_MODELS = [
+  { model: 2, rows: 24, columns: 80 },
+  { model: 3, rows: 32, columns: 80 },
+  { model: 4, rows: 43, columns: 80 },
+  { model: 5, rows: 27, columns: 132 },
+];
+
 export class Settings {
   /** @param {(changed: Partial<import('./store.js').StoredSettings>) => void} persist */
   constructor(persist) {
@@ -111,7 +163,7 @@ export class Settings {
     );
   }
 
-  /** @returns {{ name: string, family: string }} */
+  /** @returns {Font} */
   font() {
     return FONTS.find((entry) => entry.name === this.values.font) ?? FONTS[0];
   }
@@ -186,7 +238,9 @@ export class Settings {
    * @returns {string}
    */
   fitSize(fit, model) {
-    const info = this.models.find((entry) => entry.model === model);
+    const info = (this.models.length > 0 ? this.models : STANDARD_MODELS).find(
+      (entry) => entry.model === model,
+    );
     const minCols = info?.columns ?? 80;
     const minRows = info?.rows ?? 24;
     let rows = Math.max(minRows, fit.rows);
@@ -205,9 +259,9 @@ export class Settings {
 
   /** @returns {number[]} the models the server offers, or the usual four */
   modelChoices() {
-    return this.models.length > 0
-      ? this.models.map((info) => info.model)
-      : [2, 3, 4, 5];
+    return (this.models.length > 0 ? this.models : STANDARD_MODELS).map(
+      (info) => info.model,
+    );
   }
 
   /** @returns {string} the screen size in force */

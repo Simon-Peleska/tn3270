@@ -178,9 +178,12 @@ Settings, the keymap, macros and recordings live on the server, in the SQLite
 file `userDataFile` names, one row per owner and key holding the JSON the page
 sent. The owner is `user:<X-Remote-User>` when a proxy names one and
 `ip:<address>` otherwise, so without one everybody behind a NAT shares a set.
-`GET /api/userdata` returns all four keys in one round trip, which matters
-because the page cannot fit its first screen until it knows the font;
-`PUT /api/userdata/<key>` replaces one.
+The page cannot fit its first screen until it knows the font, so the server
+writes settings, macros and keymap into `index.html` itself and the first
+screen waits on no request. Recordings can run to megabytes and only matter
+once the user replays one, so the page fetches them from
+`GET /api/userdata/recordings` after it has started. `PUT /api/userdata/<key>`
+replaces one key.
 
 The file is shared on purpose. A blue/green deploy runs both servers against
 it at once, which is why it is SQLite and not a JSON file: WAL lets one
@@ -229,25 +232,32 @@ ones a browser gets opening `index.html` off disk. What a bundle would have
 bought is bought in `index.html` and `sendFile()` (`server/main.js`) instead,
 without anything standing between the source and what runs.
 
-- **Everything is preloaded**, by a list written out in `index.html`: a
-  `modulepreload` per module and a `preload` per font. Without it a browser
-  discovers the modules one import layer at a time, a round trip each; with it
-  they all start at once. The fonts go in the same wave because the fit cannot
-  start until one has loaded, and which font is wanted is a stored setting the
-  static page cannot know. The list is in the file rather than generated, so the page
-  is what it says it is; `test/server.test.js` walks the real import graph and
-  fails if one is missing.
+- **Every module is preloaded**, by a `modulepreload` list written out in
+  `index.html`. Without it a browser discovers the modules one import layer at
+  a time, a round trip each; with it they all start at once. The list is in
+  the file rather than generated, so the page is what it says it is;
+  `test/server.test.js` walks the real import graph and fails if one is
+  missing.
+- **The page is written per user** (`sendPage()`): at a marker comment in
+  `index.html` the server puts a `preload` for the one font this user has
+  chosen, their theme's background, so a dark theme never flashes black or
+  white, and their settings as JSON. The fit waits on the font, so it goes in
+  the first wave; the other eight are fetched only if chosen. The page is
+  `no-store`, since it changes whenever a setting does.
+- **A session starts at its saved size.** The page measures its screen and
+  asks for the model and oversize in `POST /api/sessions`, so the emulator is
+  created at that size and never has to drop the host to resize. A pane split
+  off later is created before it has a box to measure, so its fit is still
+  sent after `hello`.
 - **Fonts are immutable** for a year. They are vendored and never edited, they
   are three quarters of the page's weight, and they are the one thing a
   reconnect should never fetch twice.
-- **Everything else is read from disk on every request**, with no compression
-  and no validators: neither made a noticeable difference, and both were code
-  to keep right. A deploy that only touches `public/` is a copy, not a
-  restart, and the sessions a restart would end carry on. Open pages keep
-  their old code until their next reload.
-
-A cold browser fetches about 830 KB in one wave, 610 KB of it fonts; a
-reconnect's reload fetches the 230 KB of page code again and no fonts.
+- **Everything else is compressed once and revalidated.** A file is read,
+  brotli- and gzip-compressed at their highest levels, and kept in memory
+  until its size or modification time changes, so a deploy that only touches
+  `public/` is still a copy, not a restart. It goes out `no-cache` with an
+  ETag: a reload asks about each file and gets a bodyless `304` for what has
+  not changed. Open pages keep their old code until their next reload.
 
 ## Layout
 

@@ -7,7 +7,7 @@ import { waitUntil } from "./helpers.js";
  *
  * @param {import('node:test').TestContext} t
  * @param {Record<string, unknown>} stored
- * @param {{ failFirstGet?: boolean, holdPuts?: Promise<void> }} [options]
+ * @param {{ failGets?: boolean, holdPuts?: Promise<void> }} [options]
  */
 function fakeServer(t, stored, options = {}) {
   const original = globalThis.fetch;
@@ -15,33 +15,50 @@ function fakeServer(t, stored, options = {}) {
     globalThis.fetch = original;
   });
   const calls = /** @type {string[]} */ ([]);
-  let gets = 0;
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
+    const key = url.slice(url.lastIndexOf("/") + 1);
     calls.push(`${method} ${url}`);
     if (method === "GET") {
-      gets++;
-      if (options.failFirstGet && gets === 1)
+      if (options.failGets)
         return Response.json(
           { code: "E8002", message: "locked" },
           { status: 500 },
         );
-      return Response.json({
-        settings: null,
-        macros: null,
-        keymap: null,
-        recordings: null,
-        ...structuredClone(stored),
-      });
+      return Response.json(structuredClone(stored[key] ?? null));
     }
     await options.holdPuts;
-    stored[url.slice(url.lastIndexOf("/") + 1)] = JSON.parse(
-      String(init?.body),
-    );
+    stored[key] = JSON.parse(String(init?.body));
     return new Response(null, { status: 204 });
   };
   return calls;
+}
+
+/**
+ * The page as server/main.js sends it, with what it wrote in for this user.
+ *
+ * @param {import('node:test').TestContext} t
+ * @param {unknown} inline undefined for a page without it
+ */
+function pageWith(t, inline) {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "document");
+  t.after(() => {
+    if (original !== undefined)
+      Object.defineProperty(globalThis, "document", original);
+    else Reflect.deleteProperty(globalThis, "document");
+  });
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: {
+      /** @param {string} id */
+      getElementById(id) {
+        return id === "userdata" && inline !== undefined
+          ? { textContent: JSON.stringify(inline) }
+          : null;
+      },
+    },
+  });
 }
 
 /**
@@ -97,7 +114,7 @@ function legacyBrowserDatabase(t, records) {
 }
 
 /**
- * The store caches its one GET, so every test needs a module of its own.
+ * The store keeps what it read from the page, so every test needs a module of its own.
  *
  * @param {string} name
  * @returns {Promise<typeof import('../public/store.js')>}
@@ -106,12 +123,14 @@ function freshStore(name) {
   return import(`../public/store.js?${name}`);
 }
 
-test("all four are loaded from the server in one request", async (t) => {
-  const calls = fakeServer(t, {
-    settings: { theme: "Mainframe" },
-    macros: [{ name: "logon" }],
-    keymap: { F1: "PF(1)" },
-    recordings: [],
+test("settings, macros and keymap come with the page, recordings from the server", async (t) => {
+  const calls = fakeServer(t, { recordings: [{ name: "logon" }] });
+  pageWith(t, {
+    data: {
+      settings: { theme: "Mainframe" },
+      macros: [{ name: "logon" }],
+      keymap: { F1: "PF(1)" },
+    },
   });
   legacyBrowserDatabase(t, {});
   const store = await freshStore("all-four");
@@ -126,14 +145,17 @@ test("all four are loaded from the server in one request", async (t) => {
   assert.deepEqual(settings, { theme: "Mainframe" });
   assert.deepEqual(macros, [{ name: "logon" }]);
   assert.deepEqual(keymap, { F1: "PF(1)" });
-  assert.deepEqual(recordings, []);
-  assert.deepEqual(calls, ["GET ./api/userdata"]);
+  assert.deepEqual(recordings, [{ name: "logon" }]);
+  assert.deepEqual(calls, ["GET ./api/userdata/recordings"]);
 });
 
 test("what an older version kept in this browser is moved to the server", async (t) => {
   /** @type {Record<string, unknown>} */
   const stored = { settings: { font: "IBM 3270" } };
   const calls = fakeServer(t, stored);
+  pageWith(t, {
+    data: { settings: { font: "IBM 3270" }, macros: null, keymap: null },
+  });
   legacyBrowserDatabase(t, {
     ui: { font: "Inconsolata" },
     macros: [{ name: "from the browser" }],
@@ -147,16 +169,34 @@ test("what an older version kept in this browser is moved to the server", async 
   assert.deepEqual(stored["macros"], [{ name: "from the browser" }]);
   assert.deepEqual(stored["settings"], { font: "IBM 3270" });
   assert.equal(stored["keymap"], undefined);
-  assert.deepEqual(calls, ["GET ./api/userdata", "PUT ./api/userdata/macros"]);
+  assert.deepEqual(calls, ["PUT ./api/userdata/macros"]);
 });
 
-test("a failed load reports the server's code and can be retried", async (t) => {
-  fakeServer(t, { keymap: { F2: "PF(2)" } }, { failFirstGet: true });
+test("a page the server could not read the settings into reports its code", async (t) => {
+  fakeServer(t, {});
+  pageWith(t, { error: { code: "E8002", message: "locked" } });
   legacyBrowserDatabase(t, {});
-  const store = await freshStore("retry");
+  const store = await freshStore("page-error");
 
+  await assert.rejects(store.loadSettings(), /\[E8002\] locked/);
   await assert.rejects(store.loadKeymap(), /\[E8002\] locked/);
-  assert.deepEqual(await store.loadKeymap(), { F2: "PF(2)" });
+});
+
+test("a page without the user data in it is reported with its own code", async (t) => {
+  fakeServer(t, {});
+  pageWith(t, undefined);
+  const store = await freshStore("no-page-data");
+
+  await assert.rejects(store.loadSettings(), /\[E5043\]/);
+});
+
+test("recordings that could not be read report the server's code", async (t) => {
+  fakeServer(t, {}, { failGets: true });
+  pageWith(t, { data: {} });
+  legacyBrowserDatabase(t, {});
+  const store = await freshStore("recordings-error");
+
+  await assert.rejects(store.loadRecordings(), /\[E8002\] locked/);
 });
 
 test("saves of one key reach the server in the order they were made", async (t) => {

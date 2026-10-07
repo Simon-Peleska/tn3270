@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>TN3270 Terminal</title>
 
-    <!-- Every module and every font, asked for before anything runs so they
-         arrive in one wave instead of a round trip per import layer. A new
+    <!-- Every module, asked for before anything runs so they arrive in one
+         wave instead of a round trip per import layer. A new
          module belongs on this list; test/server.test.js holds it against the
          real import graph, so a forgotten one fails the suite rather than
          quietly costing a round trip. -->
@@ -41,72 +41,6 @@
     <link rel="modulepreload" href="./settings.js" />
     <link rel="modulepreload" href="./themes.js" />
     <link rel="modulepreload" href="./store.js" />
-
-    <!-- Which font is wanted is a stored setting, so all of them are asked
-         for: the fit cannot start until one has loaded. -->
-    <link
-      rel="preload"
-      href="./fonts/FiraMono-Regular.woff2"
-      as="font"
-      type="font/woff2"
-      crossorigin
-    />
-    <link
-      rel="preload"
-      href="./fonts/3270-Regular.woff2"
-      as="font"
-      type="font/woff2"
-      crossorigin
-    />
-    <link
-      rel="preload"
-      href="./fonts/IBMPlexMono-Regular.woff2"
-      as="font"
-      type="font/woff2"
-      crossorigin
-    />
-    <link
-      rel="preload"
-      href="./fonts/EuropeanTeletext.woff2"
-      as="font"
-      type="font/woff2"
-      crossorigin
-    />
-    <link
-      rel="preload"
-      href="./fonts/DejaVuSansMono.woff2"
-      as="font"
-      type="font/woff2"
-      crossorigin
-    />
-    <link
-      rel="preload"
-      href="./fonts/LiberationMono-Regular.woff2"
-      as="font"
-      type="font/woff2"
-      crossorigin
-    />
-    <link
-      rel="preload"
-      href="./fonts/JetBrainsMono-Regular.woff2"
-      as="font"
-      type="font/woff2"
-      crossorigin
-    />
-    <link
-      rel="preload"
-      href="./fonts/Inconsolata-Regular.woff2"
-      as="font"
-      type="font/woff2"
-      crossorigin
-    />
-    <link
-      rel="preload"
-      href="./fonts/CourierPrime-Regular.woff2"
-      as="font"
-      type="font/woff2"
-      crossorigin
-    />
 
     <style>
       /* Vendored so any browser gets them. See public/fonts/NOTICE. */
@@ -174,6 +108,7 @@
         display: block;
       }
     </style>
+    <!-- user's font, theme and settings -->
   </head>
   <body>
     <!-- Errors show in place on the status line; a redirect would drop the session. -->

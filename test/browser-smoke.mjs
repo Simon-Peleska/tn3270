@@ -450,6 +450,32 @@ test("sessions can be switched and restored after reload", async (t) => {
   assert.deepEqual(browser.exceptions, []);
 });
 
+test("a fresh page starts its session at the saved size, without resizing it", async (t) => {
+  const browser = await startBrowser(t);
+  for (const screenSize of ["model", "fit"]) {
+    await fetch(`${browser.base}/api/userdata/settings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: 3, screenSize }),
+    });
+    const hello = browser.frame("Network.webSocketFrameReceived", "hello");
+    const sentBefore = browser.sentFrames.length;
+    await browser.command("Page.navigate", { url: `${browser.base}/` });
+    const started = await hello;
+
+    // The page answers hello with any resize it wants before this returns.
+    await browser.command("Runtime.evaluate", { expression: "0" });
+
+    assert.equal(started.model, 3, screenSize);
+    assert.ok(started.rows >= 32, `${screenSize}: ${started.rows} rows`);
+    const resizes = browser.sentFrames
+      .slice(sentBefore)
+      .filter((sent) => sent.type === "model" || sent.type === "oversize");
+    assert.deepEqual(resizes, [], `${screenSize} asked for no resize`);
+  }
+  assert.deepEqual(browser.exceptions, []);
+});
+
 test("every vendored font loads in a real browser", async (t) => {
   const browser = await startBrowser(t);
   const loaded = await browser.command("Runtime.evaluate", {

@@ -32,6 +32,7 @@ export const ERRORS = Object.freeze({
   E3014: "Only the session's owner may terminate it",
   E3015: "Session terminated by its owner",
   // E3016 was the session worker threads', which are gone. Retired, not free.
+  E3017: "Session size asked for is not valid",
 
   E4001: "WebSocket message was not valid JSON",
   E4002: "WebSocket message had an unknown type",
@@ -81,6 +82,7 @@ export const ERRORS = Object.freeze({
   E5040: "No saved recording is available to repeat",
   E5041: "No macro has the number given on the command line",
   // E5042 is spent.
+  E5043: "Page carries no saved settings from the server",
 
   E6001: "Static file not found",
   E6002: "WebSocket upgrade path is not a session",
@@ -90,6 +92,7 @@ export const ERRORS = Object.freeze({
   E6006: "Log file could not be written or rolled over",
   // E6007-E6009 were the page inliner's, which is gone. Retired, not free.
   E6010: "Viewer is too slow to receive the screen",
+  E6011: "Page has no place for the user's settings",
 
   // E7001-E7004 were the REST proxy's, which is gone. Retired, not free.
 
@@ -99,6 +102,7 @@ export const ERRORS = Object.freeze({
   E8004: "User data key is not one the server keeps",
   E8005: "User data is too large to save",
   E8006: "User data to save is not valid JSON",
+  E8007: "User data key to read is not one the server keeps",
 });
 
 /** @typedef {keyof typeof ERRORS} ErrorCode */

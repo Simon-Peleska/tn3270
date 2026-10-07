@@ -27,9 +27,13 @@ export class Recorder {
     this.recordings = [];
   }
 
-  /** @param {Recording[]} saved */
+  /**
+   * Arrives after the page is up, so one made in the meantime is kept.
+   *
+   * @param {Recording[]} saved
+   */
   load(saved) {
-    this.recordings = saved;
+    this.recordings = [...saved, ...this.recordings];
     console.info("recordings loaded", { count: saved.length });
   }
 

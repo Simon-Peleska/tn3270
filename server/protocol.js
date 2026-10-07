@@ -1,4 +1,4 @@
-import { AppError } from "./errors.js";
+import { AppError, describeError } from "./errors.js";
 
 /**
  * Wire format: one ordered channel of JSON messages, screen paints among them.
@@ -193,6 +193,47 @@ export function parseClientMessage(raw) {
     throw new AppError("E4001", "expected a JSON object");
   }
   return parseMessage(/** @type {Record<string, unknown>} */ (parsed));
+}
+
+/**
+ * The size a new session starts at, checked as the model and oversize messages
+ * are. Starting there is what keeps a page from seeing a 24x80 screen first,
+ * and a host connection from being dropped to resize it.
+ *
+ * @param {string} body JSON, or empty for the server's own size
+ * @returns {{ model?: number, oversize?: string }}
+ */
+export function parseSessionSize(body) {
+  if (body === "") return {};
+  /** @type {unknown} */
+  let parsed;
+  try {
+    parsed = JSON.parse(body);
+  } catch (cause) {
+    throw new AppError("E3017", body.slice(0, 120), cause);
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+    throw new AppError("E3017", "expected a JSON object");
+  const raw = /** @type {Record<string, unknown>} */ (parsed);
+
+  /** @type {{ model?: number, oversize?: string }} */
+  const size = {};
+  try {
+    if (raw["model"] !== undefined) {
+      const message = parseMessage({ type: "model", model: raw["model"] });
+      if (message.type === "model") size.model = message.model;
+    }
+    if (raw["oversize"] !== undefined) {
+      const message = parseMessage({
+        type: "oversize",
+        value: raw["oversize"],
+      });
+      if (message.type === "oversize") size.oversize = message.value;
+    }
+  } catch (cause) {
+    throw new AppError("E3017", describeError(cause).summary, cause);
+  }
+  return size;
 }
 
 /**

@@ -38,22 +38,32 @@ async function responseError(response) {
     : new Error(`HTTP ${response.status}`);
 }
 
-/** @type {Promise<Record<string, unknown>> | null} */
-let fetching = null;
+/** @type {{ data?: Record<string, unknown>, error?: { code: string, message: string } } | null} */
+let inlined = null;
 
-/** @returns {Promise<Record<string, unknown>>} every key, null where never saved */
-function fetchAll() {
-  if (fetching !== null) return fetching;
-  fetching = fetch("./api/userdata")
-    .then(async (response) => {
-      if (!response.ok) throw await responseError(response);
-      return response.json();
-    })
-    .catch((error) => {
-      fetching = null;
-      throw error;
-    });
-  return fetching;
+/**
+ * The server writes settings, macros and keymap into the page, so the first
+ * screen never waits on a request for them.
+ *
+ * @param {Key} key
+ * @returns {unknown} null where never saved
+ */
+function inlinedValue(key) {
+  if (inlined === null) {
+    const text = document.getElementById("userdata")?.textContent;
+    if (text == null) throw new Error("[E5043] the page carries no user data");
+    inlined = JSON.parse(text);
+  }
+  const error = inlined?.error;
+  if (error !== undefined) throw new Error(`[${error.code}] ${error.message}`);
+  return inlined?.data?.[key] ?? null;
+}
+
+/** @param {Key} key @returns {Promise<unknown>} null where never saved */
+async function fetchValue(key) {
+  const response = await fetch(`./api/userdata/${key}`);
+  if (!response.ok) throw await responseError(response);
+  return response.json();
 }
 
 /** @type {Map<Key, Promise<void>>} */
@@ -102,7 +112,8 @@ function readLegacy(key) {
 
 /** @param {Key} key @returns {Promise<unknown>} */
 async function read(key) {
-  const value = (await fetchAll())[key];
+  const value =
+    key === "recordings" ? await fetchValue(key) : inlinedValue(key);
   if (value !== null && value !== undefined) return value;
 
   /** @type {unknown} */

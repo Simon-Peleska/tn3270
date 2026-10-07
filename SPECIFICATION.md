@@ -484,14 +484,16 @@ reconnecting to it is worth trying.
 
 ### HTTP
 
-| Method   | Path                  | Result                                                                                               |
-| -------- | --------------------- | ---------------------------------------------------------------------------------------------------- |
-| `POST`   | `/api/sessions`       | Creates a session → `201 {id, rows, cols, model}`, after the emulator has reported its real geometry |
-| `GET`    | `/api/sessions`       | Lists sessions → `{sessions:[{id, viewers, connection, host}], defaultHost}`                         |
-| `DELETE` | `/api/sessions/<id>`  | Ends the session with its owner's `x-session-pass` → `204`; otherwise `403 E3014`                    |
-| `GET`    | `/api/userdata`       | This user's saved data → `{settings, macros, keymap, recordings}`, `null` for any never saved        |
-| `PUT`    | `/api/userdata/<key>` | Replaces one of those four with the JSON body → `204`; `404 E8004`, `400 E8006`, `413 E8005`         |
-| `GET`    | anything else         | Static files from `public/`                                                                          |
+| Method   | Path                  | Result                                                                                                                                                                                                                                                                               |
+| -------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `POST`   | `/api/sessions`       | Creates a session → `201 {id, rows, cols, model}`, after the emulator has reported its real geometry; an optional body `{model, oversize}` sets the size it starts at, `400 E3017` if either is invalid. An oversize that does not fit the model is dropped for the model's own size |
+| `GET`    | `/api/sessions`       | Lists sessions → `{sessions:[{id, viewers, connection, host}], defaultHost}`                                                                                                                                                                                                         |
+| `DELETE` | `/api/sessions/<id>`  | Ends the session with its owner's `x-session-pass` → `204`; otherwise `403 E3014`                                                                                                                                                                                                    |
+| `GET`    | `/api/userdata`       | This user's saved data → `{settings, macros, keymap, recordings}`, `null` for any never saved                                                                                                                                                                                        |
+| `GET`    | `/api/userdata/<key>` | One of those four, `null` if never saved; `404 E8007` for any other key                                                                                                                                                                                                              |
+| `PUT`    | `/api/userdata/<key>` | Replaces one of those four with the JSON body → `204`; `404 E8004`, `400 E8006`, `413 E8005`                                                                                                                                                                                         |
+| `GET`    | `/`, `/index.html`    | The page, with this user's font preload, theme background and `{data:{settings, macros, keymap}}` (or `{error:{code, message}}`) written into it; never cached                                                                                                                       |
+| `GET`    | anything else         | Static files from `public/`, brotli or gzip compressed when the browser accepts it, revalidated by ETag; fonts are immutable for a year                                                                                                                                              |
 
 Errors are JSON: `{"code":"E6001","message":"…"}` with a matching status.
 
@@ -556,6 +558,7 @@ of the old b3270 child process, `E2007` of the old emulator thread pool, `E3016`
 | `E3013` | Session input queue is full                            |
 | `E3014` | Only the session's owner may terminate it              |
 | `E3015` | Session terminated by its owner                        |
+| `E3017` | Session size asked for is not valid                    |
 | `E4001` | WebSocket message was not valid JSON                   |
 | `E4002` | WebSocket message had an unknown type                  |
 | `E4003` | Pasted text is too large to type into a screen         |
@@ -599,6 +602,7 @@ of the old b3270 child process, `E2007` of the old emulator thread pool, `E3016`
 | `E5039` | Session could not be terminated                        |
 | `E5040` | No saved recording is available to repeat              |
 | `E5041` | No macro has the number given on the command line      |
+| `E5043` | Page carries no saved settings from the server         |
 | `E6001` | Static file not found                                  |
 | `E6002` | WebSocket upgrade path is not a session                |
 | `E6003` | WebSocket closed unexpectedly                          |
@@ -606,12 +610,14 @@ of the old b3270 child process, `E2007` of the old emulator thread pool, `E3016`
 | `E6005` | Log file could not be opened                           |
 | `E6006` | Log file could not be written or rolled over           |
 | `E6010` | Viewer is too slow to receive the screen               |
+| `E6011` | Page has no place for the user's settings              |
 | `E8001` | User data database could not be opened                 |
 | `E8002` | User data could not be read                            |
 | `E8003` | User data could not be saved                           |
 | `E8004` | User data key is not one the server keeps              |
 | `E8005` | User data is too large to save                         |
 | `E8006` | User data to save is not valid JSON                    |
+| `E8007` | User data key to read is not one the server keeps      |
 | `E0000` | An error with no code of its own; see the log          |
 
 Errors are shown as a dismissible bar at the top of the page. The page is never

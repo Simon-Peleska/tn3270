@@ -25,13 +25,14 @@ export class SessionRegistry {
 
   /**
    * @param {{ ip: string, user: string }} [client]
+   * @param {{ model?: number, oversize?: string }} [size]
    * @returns {Promise<{ id: string, rows: number, cols: number, model: number }>}
    */
-  async create(client = { ip: "", user: "" }) {
+  async create(client = { ip: "", user: "" }, size = {}) {
     const open = this.sessions.size + this.creating;
     if (open >= this.config.sessions.maxSessions)
       throw new AppError("E3002", `${open} sessions are already open`);
-    const session = new Session(this.config);
+    const session = new Session(this.config, size);
     session.startedBy = client.user || client.ip || "Unknown";
     session.onClosed = () => {
       this.sessions.delete(session.id);
@@ -52,6 +53,8 @@ export class SessionRegistry {
     this.log.info("session created", {
       session: session.id,
       ...client,
+      model: session.model,
+      oversize: session.oversize,
       total: this.sessions.size,
     });
     return {

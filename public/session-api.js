@@ -1,6 +1,13 @@
-/** @returns {Promise<{ id: string, rows: number, cols: number }>} */
-export async function createSessionRequest() {
-  const response = await fetch("./api/sessions", { method: "POST" });
+/**
+ * @param {{ model?: number, oversize?: string }} [size] what to start at
+ * @returns {Promise<{ id: string, rows: number, cols: number }>}
+ */
+export async function createSessionRequest(size = {}) {
+  const response = await fetch("./api/sessions", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(size),
+  });
   const body = await response.json();
   if (!response.ok)
     throw new Error(

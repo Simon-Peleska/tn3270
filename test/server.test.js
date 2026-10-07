@@ -8,6 +8,7 @@ import { WebSocket } from "../vendor/ws.mjs";
 import { FakeHost } from "./fakehost.js";
 import { freePort, testConfig, waitUntil } from "./helpers.js";
 import { Grid } from "../public/grid.js";
+import { DEFAULT_SETTINGS, FONTS, THEMES } from "../public/settings.js";
 
 /**
  * @param {'debug' | 'info' | 'warn' | 'error'} [logLevel]
@@ -252,14 +253,22 @@ test("the version endpoint names the commit the server runs", async (t) => {
   assert.deepEqual(await response.json(), { revision: head });
 });
 
-test("fonts are cached forever, and the page's own code never", async (t) => {
+test("fonts are cached forever, and the page's own code is asked about on every load", async (t) => {
   const server = await startServer();
   t.after(() => server.stop());
   const base = `http://127.0.0.1:${server.port}`;
 
   const code = await fetch(`${base}/app.js`);
   assert.equal(code.status, 200);
-  assert.equal(code.headers.get("cache-control"), null);
+  assert.equal(code.headers.get("cache-control"), "no-cache");
+  const etag = code.headers.get("etag");
+  assert.ok(etag !== null, "app.js has an etag to be asked about by");
+
+  const unchanged = await fetch(`${base}/app.js`, {
+    headers: { "if-none-match": etag },
+  });
+  assert.equal(unchanged.status, 304);
+  assert.equal(await unchanged.text(), "");
 
   const font = await fetch(`${base}/fonts/3270-Regular.woff2`);
   assert.equal(font.status, 200);
@@ -269,7 +278,32 @@ test("fonts are cached forever, and the page's own code never", async (t) => {
   );
 });
 
-test("the page preloads every module it imports, and every font", async (t) => {
+test("the page's code goes compressed to a browser that takes it", async (t) => {
+  const server = await startServer();
+  t.after(() => server.stop());
+  const source = readFileSync("public/app.js", "utf8");
+
+  for (const encoding of ["br", "gzip"]) {
+    const response = await fetch(`http://127.0.0.1:${server.port}/app.js`, {
+      headers: { "accept-encoding": encoding },
+    });
+    assert.equal(response.headers.get("content-encoding"), encoding);
+    assert.ok(
+      Number(response.headers.get("content-length")) < source.length / 2,
+      `${encoding} at least halves app.js`,
+    );
+    // fetch undoes the encoding, so this is what the browser ends up running.
+    assert.equal(await response.text(), source);
+  }
+
+  const font = await fetch(
+    `http://127.0.0.1:${server.port}/fonts/3270-Regular.woff2`,
+    { headers: { "accept-encoding": "br" } },
+  );
+  assert.equal(font.headers.get("content-encoding"), null);
+});
+
+test("the page preloads every module it imports", async (t) => {
   const server = await startServer();
   t.after(() => server.stop());
   const html = await (await fetch(`http://127.0.0.1:${server.port}/`)).text();
@@ -291,14 +325,123 @@ test("the page preloads every module it imports, and every font", async (t) => {
       html.includes(`<link rel="modulepreload" href="./${file}" />`),
       `${file} is imported but never preloaded — add it to public/index.html`,
     );
+});
 
-  for (const font of readdirSync("public/fonts").filter((f) =>
+test("every font offered is served and has a face the page can load", async () => {
+  const html = readFileSync("public/index.html", "utf8");
+  const served = readdirSync("public/fonts").filter((f) =>
     f.endsWith(".woff2"),
-  ))
+  );
+  const offered = FONTS.flatMap((font) =>
+    font.file === undefined ? [] : [font.file],
+  );
+
+  assert.deepEqual([...offered].sort(), [...served].sort());
+  for (const file of offered)
     assert.ok(
-      html.includes(`href="./fonts/${font}"`),
-      `${font} is served but never preloaded`,
+      html.includes(`url("./fonts/${file}")`),
+      `${file} is offered but has no @font-face in public/index.html`,
     );
+});
+
+/**
+ * What the server wrote into the page for this user.
+ *
+ * @param {string} html
+ * @returns {unknown}
+ */
+function pageUserData(html) {
+  const match =
+    /<script type="application\/json" id="userdata">(.*?)<\/script>/s.exec(
+      html,
+    );
+  assert.ok(match !== null, "the page carries the user's data");
+  return JSON.parse(String(match[1]));
+}
+
+test("the page comes with the user's font, theme and settings in it", async (t) => {
+  const server = await startServer();
+  t.after(() => server.stop());
+  const base = `http://127.0.0.1:${server.port}`;
+
+  const first = await (await fetch(`${base}/`)).text();
+  assert.match(first, /href="\.\/fonts\/FiraMono-Regular\.woff2"/);
+  assert.deepEqual(pageUserData(first), {
+    data: { settings: null, macros: null, keymap: null },
+  });
+
+  const theme = THEMES.find((entry) => entry.name !== DEFAULT_SETTINGS.theme);
+  assert.ok(theme !== undefined);
+  const settings = { font: "IBM 3270", theme: theme.name, model: 3 };
+  await putUserData(server.port, "settings", settings);
+  await putUserData(server.port, "keymap", { F1: "PF(1)" });
+  await putUserData(server.port, "recordings", [{ name: "big" }]);
+
+  const response = await fetch(`${base}/`);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  const html = await response.text();
+  const fonts = [...html.matchAll(/<link rel="preload" href="([^"]+)"/g)];
+  assert.deepEqual(
+    fonts.map((match) => match[1]),
+    ["./fonts/3270-Regular.woff2"],
+    "only the font in use is fetched before the page starts",
+  );
+  assert.ok(
+    html.includes(
+      `<style>body { background: ${theme.colors.background}; }</style>`,
+    ),
+  );
+  // Recordings can be megabytes, so they are left to a request of their own.
+  assert.deepEqual(pageUserData(html), {
+    data: { settings, macros: null, keymap: { F1: "PF(1)" } },
+  });
+  const recordings = await fetch(`${base}/api/userdata/recordings`);
+  assert.deepEqual(await recordings.json(), [{ name: "big" }]);
+});
+
+test("a macro cannot end the script element its page carries it in", async (t) => {
+  const server = await startServer();
+  t.after(() => server.stop());
+  const macros = [{ name: "</script><script>alert(1)</script>", steps: [] }];
+  await putUserData(server.port, "macros", macros);
+
+  const html = await (await fetch(`http://127.0.0.1:${server.port}/`)).text();
+  assert.ok(!html.includes("<script>alert(1)"));
+  assert.deepEqual(
+    /** @type {{ data: { macros: unknown } }} */ (pageUserData(html)).data
+      .macros,
+    macros,
+  );
+});
+
+test("a session starts at the size it is asked for", async (t) => {
+  const server = await startServer();
+  t.after(() => server.stop());
+  /** @param {unknown} body */
+  const create = (body) =>
+    fetch(`http://127.0.0.1:${server.port}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  const sized = await create({ model: 2, oversize: "100x30" });
+  assert.equal(sized.status, 201);
+  const body = await sized.json();
+  assert.deepEqual([body.model, body.cols, body.rows], [2, 100, 30]);
+
+  // Smaller than model 4's 43 rows: the emulator would refuse it.
+  const misfit = await (await create({ model: 4, oversize: "80x30" })).json();
+  assert.deepEqual([misfit.model, misfit.cols, misfit.rows], [4, 80, 43]);
+
+  const unasked = await (await create({})).json();
+  assert.deepEqual([unasked.cols, unasked.rows], [80, 43]);
+
+  for (const bad of [{ model: 9 }, { oversize: "huge" }, [2]]) {
+    const refused = await create(bad);
+    assert.equal(refused.status, 400, JSON.stringify(bad));
+    assert.equal((await refused.json()).code, "E3017");
+  }
 });
 
 test("a static file replaced by a deploy is served new, without a restart", async (t) => {
@@ -641,6 +784,12 @@ test("user data with an unknown key or a broken body is refused with its own cod
   const unknown = await putUserData(server.port, "passwords", {});
   assert.equal(unknown.status, 404);
   assert.equal((await unknown.json()).code, "E8004");
+
+  const unread = await fetch(
+    `http://127.0.0.1:${server.port}/api/userdata/passwords`,
+  );
+  assert.equal(unread.status, 404);
+  assert.equal((await unread.json()).code, "E8007");
 
   const broken = await fetch(
     `http://127.0.0.1:${server.port}/api/userdata/settings`,

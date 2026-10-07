@@ -449,9 +449,13 @@ function clearError() {
   redraw();
 }
 
-/** @returns {Promise<{ id: string, rows: number, cols: number }>} */
-async function createSession() {
-  const body = await createSessionRequest();
+/**
+ * @param {{ width: number, height: number } | null} [box] the pane it will
+ *   fill, when that is known before it exists, so a fit can be asked for up front
+ * @returns {Promise<{ id: string, rows: number, cols: number }>}
+ */
+async function createSession(box = null) {
+  const body = await createSessionRequest(startingSize(box));
   // This tab opened it, so the size saved here is its to ask for; one attached
   // to by id belongs to whoever is in it. Kept past a reload, which comes
   // before the hello that asks when the server was restarted.
@@ -785,10 +789,15 @@ async function applyFont(font) {
  * @returns {{ cols: number, rows: number } | null}
  */
 function paneFit(slot, fontSize) {
-  const pane = slot.pane;
-  if (pane === null) return null;
+  return slot.pane === null ? null : boxFit(slot.pane.box, fontSize);
+}
 
-  const box = pane.box;
+/**
+ * @param {{ width: number, height: number }} box
+ * @param {number} fontSize
+ * @returns {{ cols: number, rows: number } | null}
+ */
+function boxFit(box, fontSize) {
   if (box.width < 1 || box.height < 1) return null;
 
   // Never scale from the drawn size: a cell rounds up to whole pixels, so
@@ -818,8 +827,35 @@ function fitSession(slot, model = slot.model) {
 }
 
 /**
- * A new tab starts its own sessions at the server's default size, so the size
- * this browser saved has to be asked for again each time one says hello.
+ * What a session this tab opens should start at. Asked for in the request that
+ * creates it, so the first screen is already the right size and the host is
+ * never dropped to resize it. A fit needs the pane's box; without one it is
+ * left to `applySavedSize`.
+ *
+ * @param {{ width: number, height: number } | null} box
+ * @returns {{ model?: number, oversize?: string }}
+ */
+function startingSize(box) {
+  /** @type {{ model?: number, oversize?: string }} */
+  const size = {};
+  const model = settings.values.model;
+  if (model !== null) size.model = model;
+  if (settings.values.screenSize === null) return size;
+
+  const oversize = modeOversize(settings.values.screenSize);
+  if (oversize !== null) {
+    size.oversize = oversize;
+    return size;
+  }
+  const fit = box === null ? null : boxFit(box, settings.values.fitFontSize);
+  if (fit !== null)
+    size.oversize = settings.fitSize(fit, model ?? settings.model);
+  return size;
+}
+
+/**
+ * Catches what `startingSize` could not settle up front: a fit for a session
+ * created without a pane box to measure.
  *
  * @param {SessionSlot} slot
  * @returns {void}
@@ -1708,14 +1744,13 @@ function canvasClicked(event) {
 }
 
 // The font has to be loaded before the first canvas, or the first screen is
-// measured in the wrong face and fitted to the wrong size.
-const [saved, savedMacros, savedKeymap, savedRecordings] =
-  await Promise.allSettled([
-    loadSettings(),
-    loadMacros(),
-    loadKeymap(),
-    loadRecordings(),
-  ]);
+// measured in the wrong face and fitted to the wrong size. Recordings are not
+// needed for it, and can be megabytes, so they arrive while it is drawn.
+const [saved, savedMacros, savedKeymap] = await Promise.allSettled([
+  loadSettings(),
+  loadMacros(),
+  loadKeymap(),
+]);
 if (saved.status === "fulfilled") settings.restoreSaved(saved.value);
 else
   showError(
@@ -1737,15 +1772,15 @@ else
     `Saved keymap could not be read; using the defaults: ${String(savedKeymap.reason)}`,
     savedKeymap.reason,
   );
-if (savedRecordings.status === "fulfilled")
-  recorder.load(savedRecordings.value);
-else {
-  showError(
-    "E5029",
-    `Saved recordings could not be read: ${String(savedRecordings.reason)}`,
-    savedRecordings.reason,
-  );
-}
+loadRecordings().then(
+  (value) => recorder.load(value),
+  (reason) =>
+    showError(
+      "E5029",
+      `Saved recordings could not be read: ${String(reason)}`,
+      reason,
+    ),
+);
 
 try {
   await document.fonts.load(`16px ${settings.font().family}`);
@@ -1805,7 +1840,10 @@ if (wanted.some((id) => id !== null)) {
 let startupFailed = false;
 if (!sessions.some((slot) => slot !== null)) {
   try {
-    const created = await createSession();
+    const created = await createSession({
+      width: screenEl.clientWidth,
+      height: screenEl.clientHeight,
+    });
     sessions[0] = newSlot(created.id, created.cols, created.rows);
   } catch (cause) {
     startupFailed = true;

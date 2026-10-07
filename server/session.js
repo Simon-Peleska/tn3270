@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Session as Emulator } from "../3270/src/index.js";
+import { MODEL_SIZES, Session as Emulator } from "../3270/src/index.js";
 import { editableSnapshot, changedRuns } from "./history.js";
 import { ScreenModel } from "./screen.js";
 import { OiaModel } from "./oia.js";
@@ -50,9 +50,32 @@ const AID_ACTIONS = new Set([
 /** How a user gets out of a wait for the host, so they never wait in line. */
 const INTERRUPT_ACTIONS = new Set(["Reset", "Attn", "SysReq"]);
 
+/**
+ * The emulator refuses to start with an oversize smaller than its model, so
+ * one that does not fit starts at the model's own size instead.
+ *
+ * @param {string} oversize `<cols>x<rows>`, or ''
+ * @param {number} model
+ * @returns {string}
+ */
+function startingOversize(oversize, model) {
+  const asked = /^(\d+)x(\d+)$/.exec(oversize);
+  if (asked === null) return "";
+  const [rows, cols] = MODEL_SIZES[/** @type {2 | 3 | 4 | 5} */ (model)];
+  const fits =
+    Number(asked[1]) >= cols &&
+    Number(asked[2]) >= rows &&
+    Number(asked[1]) * Number(asked[2]) <= 16383;
+  return fits ? oversize : "";
+}
+
 export class Session {
-  /** @param {import('./config.js').Config} config */
-  constructor(config) {
+  /**
+   * @param {import('./config.js').Config} config
+   * @param {{ model?: number, oversize?: string }} [size] what to start at
+   *   instead of the configured size, so nothing has to be resized after
+   */
+  constructor(config, size = {}) {
     /** @type {string} */
     this.id = randomUUID();
     this.startedAt = new Date().toISOString();
@@ -64,7 +87,7 @@ export class Session {
     /** @type {OiaModel} */
     this.oia = new OiaModel();
     /** @type {number} the emulator confirms this in screen-mode. */
-    this.model = config.emulator.model;
+    this.model = size.model ?? config.emulator.model;
     /** @type {string} */
     this.codePage = "bracket";
     /** @type {Map<string, string>} */
@@ -88,7 +111,10 @@ export class Session {
     /** @type {number | null} A model waiting for the connection to go away. */
     this.pendingModel = null;
     /** @type {string} `<cols>x<rows>`, or '' for the model's own size. */
-    this.oversize = String(config.emulator.settings["oversize"] ?? "");
+    this.oversize = startingOversize(
+      size.oversize ?? String(config.emulator.settings["oversize"] ?? ""),
+      this.model,
+    );
     /** @type {boolean} Whether an oversize is waiting for the connection to go
      * away. The size itself is already in `oversize`. */
     this.pendingOversize = false;
@@ -137,8 +163,9 @@ export class Session {
     });
 
     const options = {
-      model: String(config.emulator.model),
       ...config.emulator.settings,
+      model: String(this.model),
+      oversize: this.oversize,
     };
     this.log.info("starting emulator", { options: JSON.stringify(options) });
     this.emulator = new Emulator(options, this.log);
