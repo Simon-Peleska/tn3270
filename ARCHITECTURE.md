@@ -226,8 +226,8 @@ applied.
 
 ## Serving the page
 
-There is no bundler and no build step. The frontend is eighteen ES modules
-served as eighteen files — the same files `node --test` imports and the same
+There is no bundler and no build step. The frontend is thirty ES modules
+served as thirty files — the same files `node --test` imports and the same
 ones a browser gets opening `index.html` off disk. What a bundle would have
 bought is bought in `index.html` and `sendFile()` (`server/main.js`) instead,
 without anything standing between the source and what runs.
@@ -246,9 +246,7 @@ without anything standing between the source and what runs.
   `no-store`, since it changes whenever a setting does.
 - **A session starts at its saved size.** The page measures its screen and
   asks for the model and oversize in `POST /api/sessions`, so the emulator is
-  created at that size and never has to drop the host to resize. A pane split
-  off later is created before it has a box to measure, so its fit is still
-  sent after `hello`.
+  created at that size and never has to drop the host to resize.
 - **Fonts are immutable** for a year. They are vendored and never edited, they
   are three quarters of the page's weight, and they are the one thing a
   reconnect should never fetch twice.
@@ -283,12 +281,12 @@ server/
 
 public/
   index.html    the canvas, the inlined CSS, the preloads, and nothing else
-  app.js        sessions, panes, clipboard and clicks, routed to a panel when one is open
+  app.js        the session, clipboard and clicks, routed to a panel when one is open
   grid.js       the cell buffer: applyPaint, put, rectangular text, the field under a cell
-  hints.js      Ctrl-B's field hint letters
+  hints.js      Ctrl-B's field hint letters and the prefix that shows them
   paste.js      a paste split into one segment per stretch of editable cells
                 (run by the server, and by local-host.js for panels)
-  canvas.js     Pane: two grids and a rectangle; Screen: the page's one canvas
+  canvas.js     Pane: two grids and a rectangle; Screen: the canvas that draws it
   colors.js     3270 colour name → ANSI slot, gr → flags
   oia.js        the status line, composed from the last status and cursor
   keymap.js     KeyboardEvent → 3270 action, and the Keymap the Keys panel edits
@@ -298,7 +296,6 @@ public/
   settings.js   settings behavior; themes.js holds the static palettes
   session-api.js browser calls to create and list sessions
   macros.js  recorder.js   what the panels change
-  sessions.js   the Ctrl-B prefix, the URL fragment, and how panes split the page
   reconnect.js  fitfont.js  store.js
 test/           fakehost.js, recordinghost.js, helpers.js, traces/, *.test.js
 ```

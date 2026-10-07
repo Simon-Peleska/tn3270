@@ -411,27 +411,8 @@ test("the browser opens a panel", async (t) => {
   assert.deepEqual(browser.exceptions, []);
 });
 
-test("sessions can be switched and restored after reload", async (t) => {
+test("the session is restored after reload", async (t) => {
   const browser = await startBrowser(t);
-  const secondHello = browser.frame(
-    "Network.webSocketFrameReceived",
-    "hello",
-    (message) => message.sessionId !== browser.firstHello.sessionId,
-  );
-  await browser.key("b", "KeyB", {
-    modifiers: 2,
-    windowsVirtualKeyCode: 66,
-  });
-  await browser.key("2", "Digit2", {
-    text: "2",
-    windowsVirtualKeyCode: 50,
-  });
-  assert.notEqual((await secondHello).sessionId, browser.firstHello.sessionId);
-
-  const beforeReload = await browser.command("Runtime.evaluate", {
-    expression: "location.hash",
-    returnByValue: true,
-  });
   const reattached = browser.frame(
     "Network.webSocketFrameReceived",
     "hello",
@@ -445,7 +426,7 @@ test("sessions can be switched and restored after reload", async (t) => {
   });
   assert.equal(
     afterReload.result.result.value,
-    beforeReload.result.result.value,
+    `#${browser.firstHello.sessionId}`,
   );
   assert.deepEqual(browser.exceptions, []);
 });

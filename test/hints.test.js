@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { computeHints } from "../public/hints.js";
+import { HintPrefix, computeHints } from "../public/hints.js";
+import { key } from "./keyevent.js";
 
 /**
  * '_' is an editable blank; anything else is protected content.
@@ -77,4 +78,57 @@ test("running past 52 fields leaves the rest without a hint rather than reusing 
 test("an unformatted screen with nothing editable has no hints at all", () => {
   const { cells, cols } = screen(["no fields here at all"]);
   assert.deepEqual(computeHints(cells, cols), []);
+});
+
+test("Ctrl-B and a hint letter picks that hint", () => {
+  const prefix = new HintPrefix();
+
+  assert.deepEqual(prefix.handleKey(key({ key: "b", ctrlKey: true })), {
+    action: "arm",
+  });
+  assert.equal(prefix.armed, true);
+  // Ctrl going down on the way to the letter is a keystroke of its own.
+  assert.deepEqual(prefix.handleKey(key({ key: "Control", ctrlKey: true })), {
+    action: "ignore",
+  });
+  assert.deepEqual(prefix.handleKey(key({ key: "n" }), ["n", "e"]), {
+    action: "hint",
+    letter: "n",
+  });
+  assert.equal(prefix.armed, false);
+
+  assert.deepEqual(prefix.handleKey(key({ key: "n" }), ["n"]), {
+    action: "ignore",
+  });
+});
+
+test("anything that is not an offered hint cancels instead of reaching the host", () => {
+  const prefix = new HintPrefix();
+
+  for (const pressed of ["x", "Escape", "1", "Enter"]) {
+    prefix.handleKey(key({ key: "b", ctrlKey: true }));
+    assert.deepEqual(
+      prefix.handleKey(key({ key: pressed }), ["n"]),
+      { action: "cancel" },
+      pressed,
+    );
+    assert.equal(prefix.armed, false, pressed);
+  }
+});
+
+test("the prefix is Ctrl-B alone", () => {
+  const prefix = new HintPrefix();
+
+  assert.deepEqual(prefix.handleKey(key({ key: "b" })), { action: "ignore" });
+  assert.deepEqual(
+    prefix.handleKey(key({ key: "b", ctrlKey: true, altKey: true })),
+    { action: "ignore" },
+  );
+  assert.deepEqual(prefix.handleKey(key({ key: "a", ctrlKey: true })), {
+    action: "ignore",
+  });
+  assert.equal(prefix.armed, false);
+  assert.deepEqual(prefix.handleKey(key({ key: "B", ctrlKey: true })), {
+    action: "arm",
+  });
 });

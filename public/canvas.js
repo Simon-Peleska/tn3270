@@ -13,12 +13,12 @@ import {
  * A 3270 screen is a fixed grid of single-width cells with no scrollback, no
  * reflow and no alternate screen, so this draws exactly that and nothing else.
  *
- * There is one canvas for the whole page. Every session is a `Pane` on it — a
- * rectangle with its own grids, its own fitted font and its own cell size — and
- * `Screen.render()` clears the canvas and draws all of them, every time. Making
- * a frame whole is the only way to be sure it is not half of the last one.
+ * There is one canvas for the whole page, and the session is a `Pane` on it:
+ * its grids, its fitted font and its cell size. `Screen.render()` clears the
+ * canvas and draws it whole, every time. Making a frame whole is the only way
+ * to be sure it is not half of the last one.
  *
- * Each pane composites two grids: `host`, what the server painted, and
+ * The pane composites two grids: `host`, what the server painted, and
  * `overlay`, the chrome this page draws over it — panels, the status line, the
  * error bar. The overlay is why there is no `{type:"refresh"}` round trip for
  * closing a panel: the host grid never lost what was underneath.
@@ -51,7 +51,7 @@ const URL_PATTERN = /https?:\/\/[^\s<>"'`]+/gi;
 const URL_END_PUNCTUATION = /[.,;:!?)}\]]+$/;
 
 /**
- * One session's rectangle on the page's canvas: its cells, where they are and
+ * The session's rectangle on the page's canvas: its cells, where they are and
  * how big they are. It holds no DOM and draws nothing — `Screen` does both, so
  * that there is exactly one place a frame can come from.
  */
@@ -81,7 +81,7 @@ export class Pane {
     this.metrics = { width: 0, height: 0, baseline: 0 };
     /** @type {Rect} where the cells sit on the page canvas, in CSS pixels */
     this.rect = { x: 0, y: 0, width: 0, height: 0 };
-    /** @type {Rect} the share of the page this pane was given, before centring */
+    /** @type {Rect} the page this pane fills, before centring */
     this.box = { x: 0, y: 0, width: 0, height: 0 };
 
     /** @type {'block' | 'underline'} */
@@ -244,26 +244,11 @@ export class Pane {
       col: Math.floor((clientX - this.rect.x) / this.metrics.width),
     };
   }
-
-  /**
-   * @param {number} clientX
-   * @param {number} clientY
-   * @returns {boolean}
-   */
-  holds(clientX, clientY) {
-    const { x, y, width, height } = this.box;
-    return (
-      clientX >= x &&
-      clientX < x + width &&
-      clientY >= y &&
-      clientY < y + height
-    );
-  }
 }
 
 /**
  * The page's one canvas. Everything visible is drawn here, in one pass, from
- * the panes it was given.
+ * the pane it was given.
  */
 export class Screen {
   /**
@@ -277,10 +262,10 @@ export class Screen {
      * otherwise have had, so only its contents mark it out. */
     this.fieldBackground = options.fieldBackground;
 
-    /** @type {Pane[]} the panes on screen, in pane order */
-    this.panes = [];
-    /** @type {Pane | null} the pane a drag started in, for as long as it lasts */
-    this.dragging = null;
+    /** @type {Pane | null} */
+    this.pane = null;
+    /** @type {boolean} whether a drag is selecting, for as long as it lasts */
+    this.dragging = false;
 
     /** @type {HTMLCanvasElement} */
     this.canvas = options.canvas;
@@ -327,23 +312,22 @@ export class Screen {
   }
 
   /**
-   * Give each pane its share of the page and the largest font that fits its
-   * cells inside it, then size the backing store to the page.
+   * Give the pane the whole page and the largest font that fits its cells
+   * inside it, then size the backing store to the page.
    *
    * The backing store is set here and nowhere else. Setting `width`/`height`
    * clears the canvas and resets the context, so anything that touches them
    * outside this method loses the frame — and, if it forgets the ratio, the
    * HiDPI sharpness with it.
    *
-   * @param {readonly Pane[]} panes on screen, in pane order
-   * @param {readonly Rect[]} shares one per pane, fractions of the page
+   * @param {Pane | null} pane null before the server has said how big it is
    * @param {{ width: number, height: number }} box the page, in CSS pixels
    * @param {string} fontFamily
    * @param {number} [maxFontSize]
    * @returns {void}
    */
-  layout(panes, shares, box, fontFamily, maxFontSize) {
-    this.panes = [...panes];
+  layout(pane, box, fontFamily, maxFontSize) {
+    this.pane = pane;
     this.dpr = window.devicePixelRatio || 1;
     this.rect = { x: 0, y: 0, width: box.width, height: box.height };
 
@@ -353,35 +337,27 @@ export class Screen {
     this.canvas.style.height = `${box.height}px`;
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     this.ctx.textBaseline = "alphabetic";
+    if (pane === null) return;
 
-    for (const [index, pane] of this.panes.entries()) {
-      const share = shares[index] ?? { x: 0, y: 0, width: 1, height: 1 };
-      pane.box = {
-        x: Math.round(share.x * box.width),
-        y: Math.round(share.y * box.height),
-        width: Math.round(share.width * box.width),
-        height: Math.round(share.height * box.height),
-      };
-      pane.fontFamily = fontFamily;
-      pane.fontSize = chooseFontSize({
-        measure: (probe) => this.measure(fontFamily, probe),
-        cols: pane.cols,
-        rows: pane.displayRows,
-        box: pane.box,
-        start: pane.fontSize,
-        max: maxFontSize,
-      });
-      pane.metrics = this.measure(fontFamily, pane.fontSize);
-      // Centred in its share, as the CSS that used to lay the panes out did.
-      const width = pane.cols * pane.metrics.width;
-      const height = pane.displayRows * pane.metrics.height;
-      pane.rect = {
-        x: pane.box.x + Math.floor((pane.box.width - width) / 2),
-        y: pane.box.y + Math.floor((pane.box.height - height) / 2),
-        width,
-        height,
-      };
-    }
+    pane.box = { x: 0, y: 0, width: box.width, height: box.height };
+    pane.fontFamily = fontFamily;
+    pane.fontSize = chooseFontSize({
+      measure: (probe) => this.measure(fontFamily, probe),
+      cols: pane.cols,
+      rows: pane.displayRows,
+      box: pane.box,
+      start: pane.fontSize,
+      max: maxFontSize,
+    });
+    pane.metrics = this.measure(fontFamily, pane.fontSize);
+    const width = pane.cols * pane.metrics.width;
+    const height = pane.displayRows * pane.metrics.height;
+    pane.rect = {
+      x: Math.floor((box.width - width) / 2),
+      y: Math.floor((box.height - height) / 2),
+      width,
+      height,
+    };
   }
 
   /**
@@ -456,7 +432,7 @@ export class Screen {
   render() {
     this.ctx.fillStyle = this.theme["background"] ?? "#000000";
     this.ctx.fillRect(0, 0, this.rect.width, this.rect.height);
-    for (const pane of this.panes) this.renderPane(pane);
+    if (this.pane !== null) this.renderPane(this.pane);
   }
 
   /**
@@ -491,14 +467,6 @@ export class Screen {
     const cells = new Array(pane.cols);
     /** @type {({ fg: string, bg: string, bold: boolean, underline: boolean } | null)[]} */
     const styles = new Array(pane.cols);
-
-    // A screen that cannot shrink past MIN_FONT_SIZE is drawn larger than its
-    // share of the page. With one canvas under every pane, the overflow would
-    // land on the neighbour rather than being cut off at the pane's edge.
-    this.ctx.save();
-    this.ctx.beginPath();
-    this.ctx.rect(pane.box.x, pane.box.y, pane.box.width, pane.box.height);
-    this.ctx.clip();
 
     for (let row = 0; row < rows; row++) {
       const top = rowEdge[row];
@@ -591,7 +559,6 @@ export class Screen {
     }
 
     this.renderCursor(pane);
-    this.ctx.restore();
   }
 
   /**
@@ -635,15 +602,13 @@ export class Screen {
   /**
    * @param {number} clientX
    * @param {number} clientY
-   * @returns {{ pane: Pane, row: number, col: number } | null}
+   * @returns {{ row: number, col: number } | null} may be outside the grid;
+   *   null before there is a pane
    */
-  paneAt(clientX, clientY) {
+  cellAt(clientX, clientY) {
+    if (this.pane === null) return null;
     const rect = this.canvas.getBoundingClientRect();
-    const x = clientX - rect.left;
-    const y = clientY - rect.top;
-    const pane = this.panes.find((each) => each.holds(x, y));
-    if (pane === undefined) return null;
-    return { pane, ...pane.cellAt(x, y) };
+    return this.pane.cellAt(clientX - rect.left, clientY - rect.top);
   }
 
   /**
@@ -651,15 +616,14 @@ export class Screen {
    * @returns {void}
    */
   beginSelection(event) {
-    if (event.button !== 0) return;
-    const hit = this.paneAt(event.clientX, event.clientY);
-    const had = this.panes.some((pane) => pane.hasSelection());
-    for (const pane of this.panes) pane.clearSelection();
-    if (hit !== null) {
-      this.dragging = hit.pane;
-      hit.pane.selectionStart = { row: hit.row, col: hit.col };
-      hit.pane.selectionEnd = { row: hit.row, col: hit.col };
-    }
+    const pane = this.pane;
+    if (event.button !== 0 || pane === null) return;
+    const hit = this.cellAt(event.clientX, event.clientY);
+    if (hit === null) return;
+    const had = pane.hasSelection();
+    this.dragging = true;
+    pane.selectionStart = { row: hit.row, col: hit.col };
+    pane.selectionEnd = { row: hit.row, col: hit.col };
     // A press is not a selection yet; only a previous one has to come off.
     if (had) this.requestRender();
   }
@@ -669,10 +633,9 @@ export class Screen {
    * @returns {void}
    */
   extendSelection(event) {
-    const pane = this.dragging;
-    if (pane === null) return;
+    const pane = this.pane;
+    if (!this.dragging || pane === null) return;
     const rect = this.canvas.getBoundingClientRect();
-    // The drag belongs to the pane it started in, however far out of it it goes.
     const at = pane.cellAt(event.clientX - rect.left, event.clientY - rect.top);
     const row = Math.min(Math.max(at.row, 0), pane.statusRow);
     const col = Math.min(Math.max(at.col, 0), pane.cols - 1);
@@ -688,6 +651,6 @@ export class Screen {
 
   /** @returns {void} */
   endSelection() {
-    this.dragging = null;
+    this.dragging = false;
   }
 }

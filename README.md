@@ -61,8 +61,8 @@ runs more or other seeds.
 
 ## What it does
 
-- **Up to four sessions in one page**, tiled edge to edge. `Ctrl-B` and a digit
-  aims the keyboard at one; `Ctrl-B` and a shifted digit lays the panes out.
+- **Field hints.** `Ctrl-B` puts a letter on every typeable field; typing that
+  letter moves the cursor there.
 - **Shared by URL.** The first viewer types, the rest watch, and the screen is
   identical for everyone. A reload or a dropped network keeps the host session:
   the server holds it, and the page reconnects to it.
@@ -75,7 +75,7 @@ runs more or other seeds.
   `=1` jump from anywhere. `[Rec]` on the status row records the session as a
   script.
   Opening a panel is a keymap command, so that key is yours to change too.
-- **Fit to window**: ask the host for a screen the size of the pane rather than
+- **Fit to window**: ask the host for a screen the size of the window rather than
   the model's 24×80, negotiated as IBM-DYNAMIC.
 
 ## Configuring it

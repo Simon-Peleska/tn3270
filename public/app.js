@@ -26,14 +26,6 @@ import {
   loadKeymap,
   saveKeymap,
 } from "./store.js";
-import {
-  MAX_SESSIONS,
-  SessionPrefix,
-  paneShares,
-  parseSessionHash,
-  sessionHash,
-  switcherText,
-} from "./sessions.js";
 import { backoffDelay, reconnectStep } from "./reconnect.js";
 import {
   createSessionRequest,
@@ -41,7 +33,7 @@ import {
   liveSessionIds,
   terminateSession,
 } from "./session-api.js";
-import { computeHints } from "./hints.js";
+import { HintPrefix, computeHints } from "./hints.js";
 
 /**
  * @param {string} fg
@@ -75,14 +67,14 @@ if (!(importInput instanceof HTMLInputElement))
   throw new Error("#recording-import is not a file input");
 
 /**
- * One canvas for the whole page. Every session is a rectangle on it, and every
- * frame is drawn whole — see `redraw()`, which is the only way one happens.
+ * One canvas for the whole page, and every frame is drawn whole — see
+ * `redraw()`, which is the only way one happens.
  *
  * @type {Screen}
  */
 let screen;
 
-/** Whether the on-screen keyboard is over the session being looked at. */
+/** Whether the on-screen keyboard is drawn over the screen. */
 let keyboardShown = false;
 
 /**
@@ -117,11 +109,10 @@ function statusLabel(command, label) {
  * puts them where this says and `canvasClicked` hit-tests the same list, so
  * the row that is drawn and the row that is clickable cannot drift apart.
  *
- * @param {SessionSlot} slot
  * @param {number} cols
  * @returns {StatusButton[]}
  */
-function statusButtons(slot, cols) {
+function statusButtons(cols) {
   /** @type {{ label: string, press: () => void }[]} */
   const wanted = [
     {
@@ -141,40 +132,40 @@ function statusButtons(slot, cols) {
       press: toggleRecording,
     },
   ];
-  const request = slot.requests[0];
-  if (slot.refusal !== null || slot.waiting) {
+  const request = session.requests[0];
+  if (session.refusal !== null || session.waiting) {
     // Nothing to share and nothing to ask for.
   } else if (request !== undefined) {
     wanted.push({
       label: statusLabel("AnswerNo", "No"),
-      press: () => answerRequest(slot, request, false),
+      press: () => answerRequest(request, false),
     });
     wanted.push({
       label: statusLabel("AnswerYes", "Yes"),
-      press: () => answerRequest(slot, request, true),
+      press: () => answerRequest(request, true),
     });
-  } else if (slot.owner) {
-    if (slot.editor !== null)
+  } else if (session.owner) {
+    if (session.editor !== null)
       wanted.push({
         label: statusLabel("StopEditing", "X edit"),
-        press: () => sendTo(slot, { type: "stopEditing" }),
+        press: () => sendUnrecorded({ type: "stopEditing" }),
       });
-    if (slot.guests > 0)
+    if (session.guests > 0)
       wanted.push({
         label: statusLabel("StopSharing", "X shr"),
-        press: () => sendTo(slot, { type: "stopSharing" }),
+        press: () => sendUnrecorded({ type: "stopSharing" }),
       });
-  } else if (slot.role === "observer" && !slot.editRequested) {
+  } else if (session.role === "observer" && !session.editRequested) {
     wanted.push({
       label: statusLabel("AskEdit", "Edit"),
-      press: () => sendTo(slot, { type: "askEdit" }),
+      press: () => sendUnrecorded({ type: "askEdit" }),
     });
   }
 
   /** @type {StatusButton[]} */
   const placed = [];
-  const cursor = slot.pane?.overlay.cursor ??
-    slot.pane?.host.cursor ?? { row: 0, col: 0 };
+  const cursor = session.pane?.overlay.cursor ??
+    session.pane?.host.cursor ?? { row: 0, col: 0 };
   let col = cols - cursorPosition(cursor).length - 2;
   for (const button of wanted) {
     col -= button.label.length;
@@ -200,33 +191,33 @@ function toggleRecording() {
  * What the status row says instead of the OIA while sharing needs a word:
  * someone asking the owner, or this viewer waiting on one.
  *
- * @param {SessionSlot} slot
  * @returns {string | null}
  */
-function sharingText(slot) {
-  if (slot.refusal !== null) return slot.refusal;
-  if (slot.waiting) return "Waiting for the session's owner to let you in";
-  const request = slot.requests[0];
+function sharingText() {
+  if (session.refusal !== null) return session.refusal;
+  if (session.waiting) return "Waiting for the session's owner to let you in";
+  const request = session.requests[0];
   if (request !== undefined) {
     const more =
-      slot.requests.length > 1 ? ` (${slot.requests.length - 1} more)` : "";
+      session.requests.length > 1
+        ? ` (${session.requests.length - 1} more)`
+        : "";
     return request.kind === "watch"
       ? `${request.name} wants to watch${more}`
       : `${request.name} wants to edit${more}`;
   }
-  if (slot.editRequested) return "Asked the owner to let you edit";
+  if (session.editRequested) return "Asked the owner to let you edit";
   return null;
 }
 
 /**
- * @param {SessionSlot} slot
  * @param {import('../server/protocol.js').SharingRequest} request
  * @param {boolean} allow
  * @returns {void}
  */
-function answerRequest(slot, request, allow) {
+function answerRequest(request, allow) {
   console.info("sharing request answered", { ...request, allow });
-  sendTo(slot, { type: "answer", viewer: request.viewer, allow });
+  sendUnrecorded({ type: "answer", viewer: request.viewer, allow });
 }
 
 /**
@@ -247,15 +238,14 @@ let errorTimer;
 
 /**
  * Everything this page draws over the screen: the panels' own host screen
- * across all of it, the status row under it, and then the switcher bar, an
- * error and the hint letters on top. The host's own grid is never touched, so taking the overlay
+ * across all of it, the status row under it, and then an error and the hint
+ * letters on top. The host's own grid is never touched, so taking the overlay
  * off puts the screen back without asking the server for it again.
  *
- * @param {SessionSlot} slot
  * @returns {void}
  */
-function drawChrome(slot) {
-  const canvas = slot.pane;
+function drawChrome() {
+  const canvas = session.pane;
   if (canvas === null) return;
   const overlay = canvas.overlay;
   const bottom = canvas.statusRow;
@@ -272,8 +262,7 @@ function drawChrome(slot) {
     text.slice(0, statusWidth).padEnd(statusWidth, " ");
 
   overlay.clear();
-  const onScreen = slot === activeSession();
-  const panel = onScreen && panels.isOpen();
+  const panel = panels.isOpen();
   if (panel) {
     const painted = panels.paint(canvas.rows, canvas.cols);
     overlay.applyPaint(
@@ -290,7 +279,7 @@ function drawChrome(slot) {
         : painted,
     );
   }
-  const insert = panel ? panels.host.insert : slot.insert;
+  const insert = panel ? panels.host.insert : session.insert;
   canvas.cursorStyle = insert ? "underline" : "block";
 
   const style = paint(statusInk, statusBar);
@@ -298,20 +287,20 @@ function drawChrome(slot) {
   const cursor = overlay.cursor ?? canvas.host.cursor ?? { row: 0, col: 0 };
   const position = cursorPosition(cursor);
   const positionCol = canvas.cols - position.length - 1;
-  const buttons = statusButtons(slot, canvas.cols);
+  const buttons = statusButtons(canvas.cols);
   const buttonsStart = buttons.at(-1)?.col ?? positionCol - 1;
   // Browser zoom and OS display scaling together; the page cannot tell them apart.
   const scale = Math.round((window.devicePixelRatio || 1) * 100);
   const scaleText = scale === 100 ? "" : `Zoom ${scale}%`;
   const scaleCol = buttonsStart - scaleText.length - 1;
   const width = Math.max(0, (scaleText === "" ? buttonsStart : scaleCol) - 2);
-  const said = sharingText(slot);
+  const said = sharingText();
   overlay.put(bottom, 0, wide(""), style);
   if (said === null)
     overlay.put(
       bottom,
       1,
-      renderOia({ ...oiaState(slot), insert }, null, width),
+      renderOia({ ...oiaState(), insert }, null, width),
       style,
     );
   else overlay.put(bottom, 1, said.slice(0, width), loud);
@@ -319,9 +308,6 @@ function drawChrome(slot) {
   for (const button of buttons)
     overlay.put(bottom, button.col, button.label, loud);
   overlay.put(bottom, positionCol, position, style);
-
-  // Everything below belongs to the session being looked at, not to every pane.
-  if (!onScreen) return;
 
   if (keyboardShown) {
     const keys = keyboardKeys(canvas);
@@ -346,20 +332,6 @@ function drawChrome(slot) {
       statusText(`[${activeError.code}] ${activeError.message}`),
       errorStyle,
     );
-  } else if (prefix.armed) {
-    const switcherStyle = paint(background, foreground, true);
-    overlay.put(bottom, 0, wide(""), switcherStyle);
-    overlay.put(
-      bottom,
-      1,
-      statusText(
-        switcherText(
-          sessions.map((each) => each?.id ?? null),
-          active,
-        ),
-      ),
-      switcherStyle,
-    );
   }
 
   if (prefix.armed)
@@ -376,8 +348,8 @@ function drawChrome(slot) {
 let chromeFrame = null;
 
 /**
- * The one way a frame happens. Every pane on screen gets its chrome rebuilt
- * from the current state and then the whole canvas is drawn again, so there is
+ * The one way a frame happens. The chrome is rebuilt from the current state
+ * and then the whole canvas is drawn again, so there is
  * no such thing as a half-updated screen — and nothing has to work out which
  * part of it an action touched.
  *
@@ -392,37 +364,20 @@ function redraw() {
   if (chromeFrame !== null) return;
   chromeFrame = requestAnimationFrame(() => {
     chromeFrame = null;
-    for (const index of panes) {
-      const slot = sessions[index];
-      if (slot != null) drawChrome(slot);
-    }
+    drawChrome();
     screen.render();
   });
 }
 
-/**
- * A session with no pane on screen — a fourth one running a macro, say — still
- * takes its paints, but a frame it cannot appear in would be the same pixels.
- *
- * @param {SessionSlot} slot
- * @returns {boolean}
- */
-function displayed(slot) {
-  return panes.some((index) => sessions[index] === slot);
-}
-
-/**
- * @param {SessionSlot} slot
- * @returns {import('./oia.js').OiaState}
- */
-function oiaState(slot) {
+/** @returns {import('./oia.js').OiaState} */
+function oiaState() {
   return {
-    connection: slot.connection,
-    connected: slot.connected === true,
-    host: slot.hostName,
-    lock: slot.lock,
-    insert: slot.insert,
-    typeahead: slot.typeahead,
+    connection: session.connection,
+    connected: session.connected === true,
+    host: session.hostName,
+    lock: session.lock,
+    insert: session.insert,
+    typeahead: session.typeahead,
   };
 }
 
@@ -449,27 +404,17 @@ function clearError() {
   redraw();
 }
 
-/**
- * @param {{ width: number, height: number } | null} [box] the pane it will
- *   fill, when that is known before it exists, so a fit can be asked for up front
- * @returns {Promise<{ id: string, rows: number, cols: number }>}
- */
-async function createSession(box = null) {
-  const body = await createSessionRequest(startingSize(box));
-  // This tab opened it, so the size saved here is its to ask for; one attached
-  // to by id belongs to whoever is in it. Kept past a reload, which comes
-  // before the hello that asks when the server was restarted.
-  sessionStorage.setItem(`tn3270.unsized.${body.id}`, "1");
-  return body;
+/** @returns {Promise<{ id: string, rows: number, cols: number }>} */
+function createSession() {
+  return createSessionRequest(startingSize());
 }
 
 /**
- * A hidden pane keeps taking paints — applying cells to a grid nobody is looking
- * at is free, and it means coming back into view costs no round trip. Its socket
- * stays open too, or the server reaps the session.
+ * The one host session this tab shows. Its socket stays open while the tab is
+ * hidden, or the server reaps the session.
  *
- * @typedef {object} SessionSlot
- * @property {string} id
+ * @typedef {object} Session
+ * @property {string} id empty until the server has made or confirmed one
  * @property {import('./canvas.js').Pane | null} pane its rectangle on the page's
  *   canvas, once the server has said how big the screen is
  * @property {WebSocket | null} socket
@@ -500,87 +445,59 @@ async function createSession(box = null) {
  * @property {string | null} refusal why the owner sent us away; set, the socket stays closed
  */
 
-/** @type {(SessionSlot | null)[]} */
-const sessions = [];
-for (let index = 0; index < MAX_SESSIONS; index++) sessions.push(null);
+/** @type {Session} */
+const session = {
+  id: "",
+  pane: null,
+  socket: null,
+  attempt: 0,
+  retryTimer: null,
+  reconnecting: false,
+  model: 0,
+  models: [],
+  hostLocked: false,
+  codePage: "bracket",
+  oversize: "",
+  cols: 0,
+  rows: 0,
+  connection: "not-connected",
+  connected: null,
+  hostName: null,
+  touched: false,
+  lock: "",
+  insert: false,
+  typeahead: false,
+  role: "controller",
+  owner: false,
+  guests: 0,
+  editor: null,
+  requests: [],
+  editRequested: false,
+  waiting: false,
+  refusal: null,
+};
+
 let editOnJoinId = new URLSearchParams(location.search).has("requestEdit")
-  ? parseSessionHash(location.hash)[0]
+  ? location.hash.replace(/^#/, "")
   : null;
 
-/** @type {number} The slot the keyboard is aimed at; always one of `panes`. */
-let active = 0;
-
-/** @type {number[]} The slots on screen, in pane order. */
-let panes = [0];
-
-const prefix = new SessionPrefix();
+const prefix = new HintPrefix();
 
 /** @type {{ row: number, col: number, letter: string }[]} */
 let hints = [];
 
-/** @returns {SessionSlot | null} */
-function activeSession() {
-  return sessions[active] ?? null;
-}
-
-/** @returns {import('./canvas.js').Pane | null} */
-function activePane() {
-  return activeSession()?.pane ?? null;
-}
-
-/** @param {SessionSlot} slot */
-function syncActiveSettings(slot) {
-  settings.model = slot.model;
-  settings.oversize = slot.oversize;
-  settings.connected = slot.connected === true;
-  settings.models = slot.models;
-  settings.hostLocked = slot.hostLocked;
-}
-
-/**
- * @param {string} id
- * @param {number} cols
- * @param {number} rows the host's screen, without the status row
- * @returns {SessionSlot}
- */
-function newSlot(id, cols = 0, rows = 0) {
-  /** @type {SessionSlot} */
-  const slot = {
-    id,
-    pane: null,
-    socket: null,
-    attempt: 0,
-    retryTimer: null,
-    reconnecting: false,
-    model: 0,
-    models: [],
-    hostLocked: false,
-    codePage: "bracket",
-    oversize: "",
-    cols,
-    rows,
-    connection: "not-connected",
-    connected: null,
-    hostName: null,
-    touched: false,
-    lock: "",
-    insert: false,
-    typeahead: false,
-    role: "controller",
-    owner: false,
-    guests: 0,
-    editor: null,
-    requests: [],
-    editRequested: false,
-    waiting: false,
-    refusal: null,
-  };
-  return slot;
+/** @returns {void} */
+function syncSettings() {
+  settings.model = session.model;
+  settings.oversize = session.oversize;
+  settings.connected = session.connected === true;
+  settings.models = session.models;
+  settings.hostLocked = session.hostLocked;
 }
 
 /** @returns {void} */
 function writeHash() {
-  location.hash = sessionHash(sessions.map((slot) => slot?.id ?? null));
+  location.hash = session.id;
 }
 
 /**
@@ -624,7 +541,7 @@ const keymap = new Keymap((bindings) => {
 });
 
 const macros = new Macros({
-  dispatch: (message) => sendTo(activeSession(), message),
+  dispatch: (message) => sendUnrecorded(message),
   persist: (values) => {
     saveMacros(values).catch((cause) => {
       showError("E5009", "Macros could not be saved on the server.", cause);
@@ -633,14 +550,8 @@ const macros = new Macros({
   keymap,
 });
 
-/** @type {SessionSlot | null} */
-let recordingSlot = null;
 const recorder = new Recorder({
-  dispatch: (message) => {
-    if (message.type === "recorder" && message.action === "start")
-      recordingSlot = activeSession();
-    sendTo(recordingSlot, message);
-  },
+  dispatch: (message) => sendUnrecorded(message),
   exportFile: downloadFile,
   persist: (values) => {
     saveRecordings(values).catch((cause) => {
@@ -667,7 +578,7 @@ fetch("./api/version")
 const panels = new Panels({
   settings,
   revision: () => revision,
-  codePage: () => activeSession()?.codePage ?? "bracket",
+  codePage: () => session.codePage,
   keymap,
   macros,
   recorder,
@@ -680,10 +591,7 @@ const panels = new Panels({
   },
   applyModel: (model) => send({ type: "model", model }),
   applyOversize: (value) => send({ type: "oversize", value }),
-  windowFit: (fontSize) => {
-    const slot = activeSession();
-    return slot === null ? null : paneFit(slot, fontSize);
-  },
+  windowFit: (fontSize) => paneFit(fontSize),
   connect: connectHost,
   importRecording: () => importInput.click(),
   listSessions,
@@ -695,12 +603,9 @@ const panels = new Panels({
     );
   },
   ownsSession: (id) =>
-    sessions.some(
-      (slot) =>
-        slot?.id === id &&
-        slot.owner &&
-        sessionStorage.getItem(`tn3270.pass.${id}`) !== null,
-    ),
+    session.id === id &&
+    session.owner &&
+    sessionStorage.getItem(`tn3270.pass.${id}`) !== null,
   terminateSession: (id) =>
     terminateSession(id, sessionStorage.getItem(`tn3270.pass.${id}`) ?? ""),
   insertCharacter: (character) => {
@@ -740,23 +645,22 @@ importInput.addEventListener("change", async () => {
  * Build the session's pane, or resize the one it has to the geometry the server
  * last reported. A session with no geometry yet has nothing to build.
  *
- * @param {SessionSlot} slot
  * @returns {void}
  */
-function ensurePane(slot) {
-  if (slot.cols < 1 || slot.rows < 1) return;
-  if (slot.pane !== null) {
-    slot.pane.resize(slot.cols, slot.rows);
+function ensurePane() {
+  if (session.cols < 1 || session.rows < 1) return;
+  if (session.pane !== null) {
+    session.pane.resize(session.cols, session.rows);
     return;
   }
-  slot.pane = new Pane(slot.cols, slot.rows);
+  session.pane = new Pane(session.cols, session.rows);
   // It was built empty, and every paint before it was built went nowhere.
-  sendQuietly(slot, { type: "refresh" });
+  sendQuietly({ type: "refresh" });
 }
 
 /**
  * The colours are the browser's own now, so a theme change is a repaint and
- * nothing more: no pane has to ask the server for its screen back.
+ * nothing more: the server is not asked for the screen again.
  *
  * @param {import('./settings.js').Theme} theme
  * @returns {void}
@@ -782,14 +686,13 @@ async function applyFont(font) {
 }
 
 /**
- * How big a screen this pane would hold with text `fontSize` pixels tall.
+ * How big a screen the pane would hold with text `fontSize` pixels tall.
  *
- * @param {SessionSlot} slot
  * @param {number} fontSize
  * @returns {{ cols: number, rows: number } | null}
  */
-function paneFit(slot, fontSize) {
-  return slot.pane === null ? null : boxFit(slot.pane.box, fontSize);
+function paneFit(fontSize) {
+  return session.pane === null ? null : boxFit(session.pane.box, fontSize);
 }
 
 /**
@@ -800,8 +703,8 @@ function paneFit(slot, fontSize) {
 function boxFit(box, fontSize) {
   if (box.width < 1 || box.height < 1) return null;
 
-  // Never scale from the drawn size: a cell rounds up to whole pixels, so
-  // scaled panes never agree on a screen.
+  // Never scale from the drawn size: a cell rounds up to whole pixels, so a
+  // scaled fit would not agree with the next one.
   const cell = screen.measure(settings.font().family, fontSize);
   const cols = Math.floor(box.width / cell.width);
   // One row is the OIA, which this side paints and the host knows nothing about.
@@ -811,31 +714,13 @@ function boxFit(box, fontSize) {
 }
 
 /**
- * Changing the oversize drops and reopens the host connection.
+ * What the session should start at. Asked for in the request that creates it,
+ * so the first screen is already the right size and the host is never dropped
+ * to resize it.
  *
- * @param {SessionSlot} slot
- * @param {number} model the floor the fit may not go below, which is the one
- *   being asked for rather than the one in force when both move together
- * @returns {void}
- */
-function fitSession(slot, model = slot.model) {
-  const fit = paneFit(slot, settings.values.fitFontSize);
-  if (fit === null) return;
-  const value = settings.fitSize(fit, model);
-  if (value === slot.oversize) return;
-  sendQuietly(slot, { type: "oversize", value });
-}
-
-/**
- * What a session this tab opens should start at. Asked for in the request that
- * creates it, so the first screen is already the right size and the host is
- * never dropped to resize it. A fit needs the pane's box; without one it is
- * left to `applySavedSize`.
- *
- * @param {{ width: number, height: number } | null} box
  * @returns {{ model?: number, oversize?: string }}
  */
-function startingSize(box) {
+function startingSize() {
   /** @type {{ model?: number, oversize?: string }} */
   const size = {};
   const model = settings.values.model;
@@ -847,47 +732,27 @@ function startingSize(box) {
     size.oversize = oversize;
     return size;
   }
-  const fit = box === null ? null : boxFit(box, settings.values.fitFontSize);
+  const page = { width: screenEl.clientWidth, height: screenEl.clientHeight };
+  const fit = boxFit(page, settings.values.fitFontSize);
   if (fit !== null)
     size.oversize = settings.fitSize(fit, model ?? settings.model);
   return size;
 }
 
 /**
- * Catches what `startingSize` could not settle up front: a fit for a session
- * created without a pane box to measure.
- *
- * @param {SessionSlot} slot
- * @returns {void}
- */
-function applySavedSize(slot) {
-  const unsized = `tn3270.unsized.${slot.id}`;
-  if (sessionStorage.getItem(unsized) === null) return;
-  sessionStorage.removeItem(unsized);
-
-  const model = settings.values.model ?? slot.model;
-  if (model !== slot.model) sendQuietly(slot, { type: "model", model });
-
-  // Nothing saved leaves the stretch to the server's own configuration.
-  if (settings.values.screenSize === null) return;
-  const value = modeOversize(settings.values.screenSize);
-  if (value === null) fitSession(slot, model);
-  else if (value !== slot.oversize)
-    sendQuietly(slot, { type: "oversize", value });
-}
-
-/**
- * Only untouched sessions: refitting a live one would lose the host's cursor.
+ * Only an untouched session: refitting a live one would lose the host's
+ * cursor, since changing the oversize drops and reopens the host connection.
  *
  * @returns {void}
  */
-function fitIdleSessions() {
+function fitIdleSession() {
   if (!settings.fitsWindow()) return;
-  for (const index of panes) {
-    const slot = sessions[index];
-    if (slot == null || (slot.connected === true && slot.touched)) continue;
-    fitSession(slot);
-  }
+  if (session.connected === true && session.touched) return;
+  const fit = paneFit(settings.values.fitFontSize);
+  if (fit === null) return;
+  const value = settings.fitSize(fit, session.model);
+  if (value === session.oversize) return;
+  sendQuietly({ type: "oversize", value });
 }
 
 // Coalesced into a frame: a drag fires this continuously.
@@ -904,7 +769,7 @@ const resizeObserver = new ResizeObserver(() => {
   }
   // A refit costs a host round trip, so wait for the drag to settle.
   clearTimeout(settleTimer);
-  settleTimer = setTimeout(fitIdleSessions, 400);
+  settleTimer = setTimeout(fitIdleSession, 400);
 });
 
 /**
@@ -913,16 +778,15 @@ const resizeObserver = new ResizeObserver(() => {
  */
 function send(message) {
   macros.record(message);
-  sendTo(activeSession(), message);
+  sendUnrecorded(message);
 }
 
 /**
- * @param {SessionSlot | null} slot
  * @param {import('../server/protocol.js').ClientMessage} message
  * @returns {void}
  */
-function sendTo(slot, message) {
-  if (!sendQuietly(slot, message)) {
+function sendUnrecorded(message) {
+  if (!sendQuietly(message)) {
     showError("E5002", "Not connected to the server; your input was not sent.");
   }
 }
@@ -930,37 +794,33 @@ function sendTo(slot, message) {
 /**
  * For messages nobody asked for by hand, where a closed socket is routine.
  *
- * @param {SessionSlot | null} slot
  * @param {import('../server/protocol.js').ClientMessage} message
  * @returns {boolean} whether it went out
  */
-function sendQuietly(slot, message) {
-  const socket = slot?.socket ?? null;
+function sendQuietly(message) {
+  const socket = session.socket;
   if (socket === null || socket.readyState !== WebSocket.OPEN) return false;
   socket.send(JSON.stringify(message));
   return true;
 }
 
-/**
- * @param {SessionSlot} slot
- * @returns {void}
- */
-function connectSocket(slot) {
+/** @returns {void} */
+function connectSocket() {
   // Relative to the document, so a reverse proxy can mount us under a path.
-  const url = new URL(`./ws/${slot.id}`, document.baseURI);
+  const url = new URL(`./ws/${session.id}`, document.baseURI);
   url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
   // Per tab and never in the fragment, so sharing the URL does not share it.
-  const pass = sessionStorage.getItem(`tn3270.pass.${slot.id}`);
+  const pass = sessionStorage.getItem(`tn3270.pass.${session.id}`);
   if (pass !== null) url.searchParams.set("pass", pass);
 
   const ws = new WebSocket(url.href);
-  slot.socket = ws;
+  session.socket = ws;
 
   ws.addEventListener("message", (event) => {
     try {
       const frame = JSON.parse(String(event.data));
       for (const message of Array.isArray(frame) ? frame : [frame])
-        handleServerMessage(slot, message);
+        handleServerMessage(message);
     } catch (cause) {
       showError(
         "E5037",
@@ -976,82 +836,64 @@ function connectSocket(slot) {
   });
 
   ws.addEventListener("close", (event) => {
-    slot.socket = null;
+    session.socket = null;
     if (event.reason === "E3015") {
-      slot.refusal = "[E3015] Session terminated by its owner";
-      showError(
-        "E3015",
-        `Session ${sessions.indexOf(slot) + 1} was terminated by its owner.`,
-      );
+      session.refusal = "[E3015] Session terminated by its owner";
+      showError("E3015", "The session was terminated by its owner.");
       return;
     }
     // Coming back on our own would only ask again after a no.
-    if (slot.refusal !== null) return;
-    slot.reconnecting = true;
-    slot.connection = "Server disconnected";
-    slot.connected = false;
-    if (slot === activeSession()) syncActiveSettings(slot);
-    if (displayed(slot)) redraw();
+    if (session.refusal !== null) return;
+    session.reconnecting = true;
+    session.connection = "Server disconnected";
+    session.connected = false;
+    syncSettings();
+    redraw();
     if (event.reason === "E6010")
       showError("E6010", "This viewer fell behind the screen; reconnecting.");
-    else
-      showError(
-        "E5002",
-        `Session ${sessions.indexOf(slot) + 1}: Connection to server lost. Reconnecting...`,
-      );
-    scheduleReconnect(slot);
+    else showError("E5002", "Connection to server lost. Reconnecting...");
+    scheduleReconnect();
   });
 }
 
-/**
- * @param {SessionSlot} slot
- * @returns {void}
- */
-function scheduleReconnect(slot) {
-  const delay = backoffDelay(slot.attempt);
-  slot.attempt += 1;
-  slot.retryTimer = setTimeout(() => reconnect(slot), delay);
+/** @returns {void} */
+function scheduleReconnect() {
+  const delay = backoffDelay(session.attempt);
+  session.attempt += 1;
+  session.retryTimer = setTimeout(reconnect, delay);
 }
 
-/**
- * @param {SessionSlot} slot
- * @returns {Promise<void>}
- */
-async function reconnect(slot) {
-  slot.retryTimer = null;
+/** @returns {Promise<void>} */
+async function reconnect() {
+  session.retryTimer = null;
   const live = await liveSessionIds();
   const step = reconnectStep({
     answered: live !== null,
-    sessionLive: live !== null && live.has(slot.id),
+    sessionLive: live !== null && live.has(session.id),
   });
   if (step === "retry") {
-    scheduleReconnect(slot);
+    scheduleReconnect();
     return;
   }
   if (step === "fresh") {
-    startFreshSession(slot);
+    startFreshSession();
     return;
   }
-  connectSocket(slot);
+  connectSocket();
 }
 
 // A hidden tab's timers are throttled to once a minute, so the backoff wait
 // can outlast the outage by far; coming back should not sit through it.
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
-  for (const slot of sessions) {
-    if (slot === null || slot.retryTimer === null) continue;
-    console.info(`[reconnect] session ${slot.id}: tab visible, retrying now`);
-    clearTimeout(slot.retryTimer);
-    reconnect(slot);
-  }
+  if (session.retryTimer === null) return;
+  console.info(`[reconnect] session ${session.id}: tab visible, retrying now`);
+  clearTimeout(session.retryTimer);
+  reconnect();
 });
 
-/**
- * @param {SessionSlot} slot
- * @returns {Promise<void>}
- */
-async function startFreshSession(slot) {
+/** @returns {Promise<void>} */
+async function startFreshSession() {
   /** @type {{ id: string, rows: number, cols: number }} */
   let created;
   try {
@@ -1065,133 +907,120 @@ async function startFreshSession(slot) {
         `The session could not be restarted: ${String(cause)}`,
         cause,
       );
-    scheduleReconnect(slot);
+    scheduleReconnect();
     return;
   }
-  slot.id = created.id;
-  slot.cols = created.cols;
-  slot.rows = created.rows;
+  session.id = created.id;
+  session.cols = created.cols;
+  session.rows = created.rows;
   writeHash();
-  connectSocket(slot);
+  connectSocket();
 }
 
 /**
- * @param {SessionSlot} slot not necessarily the one on screen
  * @param {import('../server/protocol.js').ServerMessage} message
  * @returns {void}
  */
-function handleServerMessage(slot, message) {
-  const onScreen = slot === activeSession();
-
+function handleServerMessage(message) {
   // A refused attach closes without a hello, so hello is the success signal.
   if (message.type === "hello") {
-    slot.attempt = 0;
-    slot.waiting = false;
-    slot.owner = message.owner;
-    sessionStorage.setItem(`tn3270.pass.${slot.id}`, message.pass);
-    if (slot.reconnecting) {
+    session.attempt = 0;
+    session.waiting = false;
+    session.owner = message.owner;
+    sessionStorage.setItem(`tn3270.pass.${session.id}`, message.pass);
+    if (session.reconnecting) {
       // Reload rather than resume: the server may now serve newer page code.
-      slot.reconnecting = false;
+      session.reconnecting = false;
       location.reload();
       return;
     }
   }
 
   if (message.type === "waiting" || message.type === "refused") {
-    slot.waiting = message.type === "waiting";
+    session.waiting = message.type === "waiting";
     if (message.type === "refused") {
       console.error(`[${message.code}] ${message.message}`);
-      slot.refusal = `[${message.code}] ${message.message}`;
+      session.refusal = `[${message.code}] ${message.message}`;
     }
     // No hello has told us a size, but the status row needs a screen to sit under.
-    if (slot.cols < 1) {
-      slot.cols = 80;
-      slot.rows = 24;
+    if (session.cols < 1) {
+      session.cols = 80;
+      session.rows = 24;
     }
-    if (displayed(slot)) applyLayout();
+    applyLayout();
     return;
   }
   if (message.type === "screen") {
-    slot.model = message.model;
-    slot.oversize = message.oversize;
-    slot.cols = message.cols;
-    slot.rows = message.rows;
-    if (!onScreen) return;
-    syncActiveSettings(slot);
+    session.model = message.model;
+    session.oversize = message.oversize;
+    session.cols = message.cols;
+    session.rows = message.rows;
+    syncSettings();
     applyLayout();
     return;
   }
   if (message.type === "codePage") {
-    slot.codePage = message.name;
-    if (onScreen && panels.isOpen()) redraw();
+    session.codePage = message.name;
+    if (panels.isOpen()) redraw();
     return;
   }
   if (message.type === "hello") {
-    slot.model = message.model;
-    slot.codePage = message.codePage;
-    slot.oversize = message.oversize;
-    slot.cols = message.cols;
-    slot.rows = message.rows;
-    slot.models = message.models;
-    slot.hostLocked = message.hostLocked;
-    if (onScreen) applyLayout();
-    applySavedSize(slot);
-    if (!onScreen) return;
-    syncActiveSettings(slot);
-    slot.role = message.role;
-    redraw();
+    session.model = message.model;
+    session.codePage = message.codePage;
+    session.oversize = message.oversize;
+    session.cols = message.cols;
+    session.rows = message.rows;
+    session.models = message.models;
+    session.hostLocked = message.hostLocked;
+    session.role = message.role;
+    syncSettings();
+    applyLayout();
     screenEl.focus();
-    if (slot.id === editOnJoinId) {
+    if (session.id === editOnJoinId) {
       editOnJoinId = null;
       const url = new URL(location.href);
       url.searchParams.delete("requestEdit");
       history.replaceState(null, "", url.href);
-      if (message.role === "observer") sendTo(slot, { type: "askEdit" });
+      if (message.role === "observer") sendUnrecorded({ type: "askEdit" });
     }
     return;
   }
   if (message.type === "recorderStep") {
-    if (slot === recordingSlot) recorder.record(message.step);
-    if (onScreen && panels.isOpen()) redraw();
+    recorder.record(message.step);
+    if (panels.isOpen()) redraw();
     return;
   }
   if (message.type === "recorderStopped") {
-    if (slot === recordingSlot) {
+    // Another viewer's recording ends here too, and is none of this tab's.
+    if (recorder.stopping) {
       recorder.stopped();
-      recordingSlot = null;
       redraw();
     }
     return;
   }
   if (message.type === "paint") {
-    // Even hidden, even behind a panel: a grid nobody is looking at costs
-    // nothing to keep, and keeping it is what makes coming back free.
-    slot.pane?.applyHostPaint(message);
-    if (displayed(slot)) redraw();
+    // Even behind a panel: the grid underneath is what closing it puts back.
+    session.pane?.applyHostPaint(message);
+    redraw();
     return;
   }
   if (message.type === "status") {
-    const changed = slot.connected !== message.connected;
-    slot.connection = message.connection;
-    slot.connected = message.connected;
-    slot.hostName = message.host;
-    slot.touched = message.touched;
-    slot.lock = message.lock;
-    slot.insert = message.insert;
-    slot.typeahead = message.typeahead;
-    slot.role = message.role;
-    slot.owner = message.owner;
-    slot.guests = message.guests;
-    slot.editor = message.editor;
-    slot.requests = message.requests;
-    slot.editRequested = message.editRequested;
-    if (displayed(slot)) redraw();
-    // A new pane's session is only reachable once its socket has said hello,
-    // which is after the layout that made the pane.
-    if (changed && !message.connected && onScreen && panes.length > 1)
-      fitIdleSessions();
-    if (!onScreen) return;
-    syncActiveSettings(slot);
+    const changed = session.connected !== message.connected;
+    session.connection = message.connection;
+    session.connected = message.connected;
+    session.hostName = message.host;
+    session.touched = message.touched;
+    session.lock = message.lock;
+    session.insert = message.insert;
+    session.typeahead = message.typeahead;
+    session.role = message.role;
+    session.owner = message.owner;
+    session.guests = message.guests;
+    session.editor = message.editor;
+    session.requests = message.requests;
+    session.editRequested = message.editRequested;
+    redraw();
+    syncSettings();
     // b3270 reports the host without its port, so never overwrite a typed one.
     if (message.host !== null && settings.host === "" && !settings.hostLocked)
       settings.host = message.host;
@@ -1205,149 +1034,28 @@ function handleServerMessage(slot, message) {
     }
     return;
   }
-  if (onScreen) {
-    // A refused change leaves the page showing a size never accepted.
-    syncActiveSettings(slot);
-    showError(message.code, message.message);
-    return;
-  }
-  showError(
-    message.code,
-    `Session ${sessions.indexOf(slot) + 1}: ${message.message}`,
-  );
+  // A refused change leaves the page showing a size never accepted.
+  syncSettings();
+  showError(message.code, message.message);
 }
 
 /**
- * Everything that decides where a cell lands on the canvas, in one pass: which
- * sessions are on screen, how the page is split between them, how big their
- * text has to be to fit, and then the frame. A resize, a layout change and a
- * new session all come through here, so none of them can leave the three
- * disagreeing.
+ * Everything that decides where a cell lands on the canvas, in one pass: how
+ * big the screen is, how big its text has to be to fill the page, and then the
+ * frame. A resize and a new screen size both come through here, so neither can
+ * leave the two disagreeing.
  *
  * @returns {void}
  */
 function applyLayout() {
-  /** @type {import('./canvas.js').Pane[]} */
-  const onCanvas = [];
-  for (const index of panes) {
-    const slot = sessions[index];
-    if (slot == null) continue;
-    ensurePane(slot);
-    if (slot.pane !== null) onCanvas.push(slot.pane);
-  }
-
+  ensurePane();
   screen.layout(
-    onCanvas,
-    paneShares(onCanvas.length),
+    session.pane,
     { width: screenEl.clientWidth, height: screenEl.clientHeight },
     settings.font().family,
     settings.values.forceMaxFontSize ? settings.values.fitFontSize : undefined,
   );
   redraw();
-}
-
-/**
- * @param {number} index
- * @returns {void}
- */
-function focusSlot(index) {
-  const slot = sessions[index] ?? null;
-  if (slot === null || index === active) return;
-
-  // The panels belong to the pane that was being looked at.
-  panels.close();
-
-  if (!panes.includes(index)) {
-    const here = Math.max(0, panes.indexOf(active));
-    panes[here] = index;
-  }
-  active = index;
-  syncActiveSettings(slot);
-  applyLayout();
-  screenEl.focus();
-
-  if (slot.connection === "not-connected") panels.open("settings");
-}
-
-/** @type {boolean} One creation at a time; two fast keystrokes are one session. */
-let opening = false;
-
-/**
- * @param {number} index
- * @returns {Promise<SessionSlot>}
- */
-async function ensureSlot(index) {
-  const existing = sessions[index];
-  if (existing != null) return existing;
-  const created = await createSession();
-  const slot = newSlot(created.id, created.cols, created.rows);
-  sessions[index] = slot;
-  writeHash();
-  connectSocket(slot);
-  return slot;
-}
-
-/**
- * @param {number} index
- * @returns {void}
- */
-function switchTo(index) {
-  if (sessions[index] != null) {
-    focusSlot(index);
-    return;
-  }
-  if (opening) return;
-  opening = true;
-  ensureSlot(index)
-    .then(() => {
-      focusSlot(index);
-    })
-    .catch((cause) => {
-      showError(
-        "E5006",
-        `Another session could not be opened: ${String(cause)}`,
-        cause,
-      );
-    })
-    .finally(() => {
-      opening = false;
-    });
-}
-
-/**
- * Missing sessions are opened all at once: each costs a b3270 startup.
- *
- * @param {number} count
- * @returns {void}
- */
-function changeLayout(count) {
-  if (opening) return;
-  opening = true;
-  /** @type {Promise<unknown>[]} */
-  const opens = [];
-  if (count > 1)
-    for (let index = 0; index < count; index++) opens.push(ensureSlot(index));
-
-  Promise.all(opens)
-    .then(() => {
-      panes = [];
-      if (count === 1) panes.push(active);
-      else for (let index = 0; index < count; index++) panes.push(index);
-      if (!panes.includes(active)) active = panes[0];
-      applyLayout();
-      fitIdleSessions();
-      screenEl.focus();
-    })
-    .catch((cause) => {
-      showError(
-        "E5006",
-        `Another session could not be opened: ${String(cause)}`,
-        cause,
-      );
-    })
-    .finally(() => {
-      opening = false;
-    });
 }
 
 /**
@@ -1381,20 +1089,21 @@ window.addEventListener(
     lone.keydown(event);
     const sharingCommand = commandForEvent(event, keymap.lookup());
     if (sharingCommand !== null && SHARING_COMMANDS.has(sharingCommand)) {
-      const slot = activeSession();
-      const request = slot?.requests[0];
+      const request = session.requests[0];
       const available =
         ((sharingCommand === "AnswerYes" || sharingCommand === "AnswerNo") &&
           request !== undefined) ||
         (sharingCommand === "AskEdit" &&
-          slot?.role === "observer" &&
-          !slot.editRequested &&
-          !slot.waiting) ||
-        (sharingCommand === "StopSharing" && slot?.owner && slot.guests > 0) ||
+          session.role === "observer" &&
+          !session.editRequested &&
+          !session.waiting) ||
+        (sharingCommand === "StopSharing" &&
+          session.owner &&
+          session.guests > 0) ||
         (sharingCommand === "StopEditing" &&
-          slot?.owner &&
-          slot.editor !== null);
-      if (slot !== null && slot.refusal === null && available) {
+          session.owner &&
+          session.editor !== null);
+      if (session.refusal === null && available) {
         event.preventDefault();
         event.stopPropagation();
         if (event.repeat) return;
@@ -1402,13 +1111,13 @@ window.addEventListener(
           request !== undefined &&
           (sharingCommand === "AnswerYes" || sharingCommand === "AnswerNo")
         )
-          answerRequest(slot, request, sharingCommand === "AnswerYes");
+          answerRequest(request, sharingCommand === "AnswerYes");
         else if (sharingCommand === "AskEdit")
-          sendTo(slot, { type: "askEdit" });
+          sendUnrecorded({ type: "askEdit" });
         else if (sharingCommand === "StopSharing")
-          sendTo(slot, { type: "stopSharing" });
+          sendUnrecorded({ type: "stopSharing" });
         else if (sharingCommand === "StopEditing")
-          sendTo(slot, { type: "stopEditing" });
+          sendUnrecorded({ type: "stopEditing" });
         return;
       }
     }
@@ -1453,7 +1162,7 @@ window.addEventListener(
       event.preventDefault();
       event.stopPropagation();
       if (decision.action === "arm") {
-        const pane = activePane();
+        const pane = session.pane;
         if (pane === null) hints = [];
         else if (panels.isOpen()) hints = panels.hints(pane.rows, pane.cols);
         else hints = computeHints(pane.host.cells, pane.host.cols);
@@ -1463,9 +1172,7 @@ window.addEventListener(
       // The bar comes off first: a hint or a cancel draws nothing after it.
       clearError();
       redraw();
-      if (decision.action === "switch") switchTo(decision.index);
-      else if (decision.action === "layout") changeLayout(decision.panes);
-      else if (decision.action === "hint") jumpToHint(decision.letter);
+      if (decision.action === "hint") jumpToHint(decision.letter);
       return;
     }
     // In a key field the key is what is being picked, even a panel shortcut.
@@ -1595,7 +1302,7 @@ screenEl.addEventListener(
 
     const step = SELECT_STEPS[mapped.command];
     if (step !== undefined) {
-      activePane()?.stepSelection(step.row, step.col);
+      session.pane?.stepSelection(step.row, step.col);
       redraw();
       return;
     }
@@ -1603,7 +1310,7 @@ screenEl.addEventListener(
     // Copy and Paste are this browser's clipboard, not 3270 actions, so keymap.js
     // maps them but cannot dispatch them.
     if (mapped.command === "Copy") {
-      const canvas = activePane();
+      const canvas = session.pane;
       if (canvas !== null && canvas.hasSelection())
         navigator.clipboard.writeText(canvas.getSelection());
       else {
@@ -1657,25 +1364,18 @@ screenEl.addEventListener(
 );
 
 /**
- * One canvas means one click listener: which session was clicked is a question
- * about where on the page it landed, and the renderer is what knows.
- *
  * @param {MouseEvent} event
  * @returns {void}
  */
 function canvasClicked(event) {
   screenEl.focus();
-  const hit = screen.paneAt(event.clientX, event.clientY);
-  if (hit === null) return;
-  const slot = sessions.find((each) => each?.pane === hit.pane) ?? null;
-  if (slot == null) return;
-  focusSlot(sessions.indexOf(slot));
-
-  const canvas = hit.pane;
+  const canvas = session.pane;
+  const hit = screen.cellAt(event.clientX, event.clientY);
+  if (canvas === null || hit === null) return;
   const { row, col } = hit;
 
   if (row === canvas.statusRow) {
-    const button = statusButtons(slot, canvas.cols).find(
+    const button = statusButtons(canvas.cols).find(
       (each) => col >= each.col && col < each.col + each.label.length,
     );
     if (button !== undefined) {
@@ -1736,7 +1436,7 @@ function canvasClicked(event) {
     window.open(url, "_blank", "noopener,noreferrer");
     return;
   }
-  sendTo(slot, {
+  sendUnrecorded({
     type: "action",
     action: "MoveCursor1",
     args: [String(row + 1), String(col + 1)],
@@ -1819,32 +1519,21 @@ screenEl.style.background = settings.theme().colors.background;
 const storedHost = localStorage.getItem("tn3270.host");
 if (storedHost !== null) settings.host = storedHost;
 
-const wanted = parseSessionHash(location.hash);
-if (wanted.some((id) => id !== null)) {
-  // No answer is not the same as forgotten: keep the slots and let the sockets wait.
+const wantedId = location.hash.replace(/^#/, "").trim();
+if (wantedId !== "") {
+  // No answer is not the same as forgotten: keep it and let the socket wait.
   const live = await liveSessionIds();
-  const gone = [];
-  for (let index = 0; index < MAX_SESSIONS; index++) {
-    const id = wanted[index];
-    if (id == null) continue;
-    if (live === null || live.has(id)) sessions[index] = newSlot(id);
-    else gone.push(index + 1);
-  }
-  if (gone.length > 0)
-    showError(
-      "E3001",
-      `Session ${gone.join(", ")} is gone; starting a new one.`,
-    );
+  if (live === null || live.has(wantedId)) session.id = wantedId;
+  else showError("E3001", "The session is gone; starting a new one.");
 }
 
 let startupFailed = false;
-if (!sessions.some((slot) => slot !== null)) {
+if (session.id === "") {
   try {
-    const created = await createSession({
-      width: screenEl.clientWidth,
-      height: screenEl.clientHeight,
-    });
-    sessions[0] = newSlot(created.id, created.cols, created.rows);
+    const created = await createSession();
+    session.id = created.id;
+    session.cols = created.cols;
+    session.rows = created.rows;
   } catch (cause) {
     startupFailed = true;
     console.error(
@@ -1860,13 +1549,6 @@ if (startupFailed) {
     "[E5038] The first terminal session could not be opened. Reload to try again.";
 } else {
   writeHash();
-  active = Math.max(
-    0,
-    sessions.findIndex((slot) => slot !== null),
-  );
-  panes = [active];
   applyLayout();
-  for (const slot of sessions) {
-    if (slot !== null) connectSocket(slot);
-  }
+  connectSocket();
 }

@@ -74,7 +74,7 @@ export function keyboardTop(rows, cursorRow) {
 /**
  * @param {number} cols
  * @param {number} top from `keyboardTop`
- * @returns {PlacedKey[]} centred in the pane
+ * @returns {PlacedKey[]} centred on the screen
  */
 export function placeKeys(cols, top) {
   const left = Math.max(0, Math.floor((cols - KEYBOARD_WIDTH) / 2));

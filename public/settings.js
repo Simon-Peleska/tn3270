@@ -249,7 +249,7 @@ export class Settings {
       Math.min(fit.cols, Math.floor(16383 / rows)),
     );
 
-    // A pane too narrow for the model shrinks the text, which buys more rows.
+    // A window too narrow for the model shrinks the text, which buys more rows.
     if (cols > fit.cols) {
       rows = Math.round(((fit.rows + 1) * cols) / fit.cols) - 1;
       rows = Math.max(minRows, Math.min(rows, Math.floor(16383 / cols)));

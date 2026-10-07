@@ -1,6 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { paneShares } from "../public/sessions.js";
 import { Pane, Screen } from "../public/canvas.js";
 
 /**
@@ -197,37 +196,24 @@ test("screen layout respects a font size cap but shrinks further when needed", (
     fieldBackground: true,
   });
   const pane = new Pane(80, 24);
-  screen.layout([pane], paneShares(1), PAGE, "monospace", 16);
+  screen.layout(pane, PAGE, "monospace", 16);
   assert.equal(pane.fontSize, 16);
-  screen.layout(
-    [pane],
-    paneShares(1),
-    { width: 700, height: 350 },
-    "monospace",
-    16,
-  );
+  screen.layout(pane, { width: 700, height: 350 }, "monospace", 16);
   assert.ok(pane.fontSize < 16);
 });
 
-/**
- * @param {number} count how many panes share the page
- * @returns {{ screen: Screen, panes: Pane[] }} laid out, with text on each
- */
-function pageOf(count) {
+/** @returns {{ screen: Screen, pane: Pane }} laid out, with text on it */
+function page() {
   const screen = new Screen({
     canvas: fakeCanvas(),
     theme: THEME,
     fieldBackground: true,
   });
-  const panes = [];
-  for (let index = 0; index < count; index++) {
-    const pane = new Pane(80, 24);
-    pane.host.put(2, 0, `PANE ${index} TEXT`, { fg: null, bg: null, gr: null });
-    panes.push(pane);
-  }
-  screen.layout(panes, paneShares(count), PAGE, "monospace");
+  const pane = new Pane(80, 24);
+  pane.host.put(2, 0, "PANE 0 TEXT", { fg: null, bg: null, gr: null });
+  screen.layout(pane, PAGE, "monospace");
   screen.render();
-  return { screen, panes };
+  return { screen, pane };
 }
 
 /**
@@ -316,7 +302,7 @@ function fieldFrame(fieldBackground, length) {
     gr: null,
     editable: true,
   });
-  screen.layout([pane], paneShares(1), PAGE, "monospace");
+  screen.layout(pane, PAGE, "monospace");
   screen.render();
   return { screen, pane };
 }
@@ -390,7 +376,7 @@ test("an underline and a cursor land on the device pixel grid too", () => {
 
     for (const style of ["block", "underline"]) {
       pane.cursorStyle = /** @type {'block' | 'underline'} */ (style);
-      screen.layout([pane], paneShares(1), PAGE, "monospace");
+      screen.layout(pane, PAGE, "monospace");
       screen.render();
       assertOnDeviceGrid(screen, 1.4);
     }
@@ -424,7 +410,7 @@ test("host URLs are underlined, clickable by cell, and updated with the host pai
     theme: THEME,
     fieldBackground: true,
   });
-  screen.layout([pane], paneShares(1), PAGE, "monospace");
+  screen.layout(pane, PAGE, "monospace");
   screen.render();
   const underlines = () =>
     lastFrame(screen).filter((fill) => fill.h < pane.metrics.height / 4).length;
@@ -446,127 +432,133 @@ test("host URLs are underlined, clickable by cell, and updated with the host pai
   assert.equal(pane.linkAt(1, 1), "http://example.net");
 });
 
-test("every pane gets a share of the one canvas, and none overlaps another", () => {
-  const { screen, panes } = pageOf(4);
+test("the screen is fitted to the one canvas and centred on it", () => {
+  const { screen, pane } = page();
 
   assert.equal(screen.canvas.width, PAGE.width);
   assert.equal(screen.canvas.height, PAGE.height);
-
-  for (const pane of panes) {
-    assert.ok(pane.metrics.width > 0, "each pane is measured and fitted");
-    assert.ok(pane.rect.x >= pane.box.x, "cells sit inside the pane's share");
-    assert.ok(pane.rect.y >= pane.box.y);
-    assert.ok(pane.rect.x + pane.rect.width <= pane.box.x + pane.box.width);
-    assert.ok(pane.rect.y + pane.rect.height <= pane.box.y + pane.box.height);
-  }
-
-  // Two panes side by side are half as wide, so their text is smaller.
-  const wide = pageOf(1).panes[0];
-  assert.ok(wide.fontSize > panes[0].fontSize);
+  assert.ok(pane.metrics.width > 0, "the pane is measured and fitted");
+  assert.ok(pane.rect.x >= 0 && pane.rect.y >= 0, "cells sit on the page");
+  assert.ok(pane.rect.x + pane.rect.width <= PAGE.width);
+  assert.ok(pane.rect.y + pane.rect.height <= PAGE.height);
+  const left = pane.rect.x;
+  const right = PAGE.width - pane.rect.x - pane.rect.width;
+  assert.ok(Math.abs(left - right) <= 1, `centred: ${left} and ${right}`);
 });
 
-test("one frame clears the whole page before drawing any pane", () => {
-  const { screen } = pageOf(4);
+test("a canvas with no screen yet is still the size of the page", () => {
+  const screen = new Screen({
+    canvas: fakeCanvas(),
+    theme: THEME,
+    fieldBackground: true,
+  });
+  screen.layout(null, PAGE, "monospace");
+  screen.render();
+  assert.equal(screen.canvas.width, PAGE.width);
+  assert.equal(screen.cellAt(10, 10), null);
+});
+
+test("one frame clears the whole page before drawing the screen", () => {
+  const { screen } = page();
   const fills = /** @type {FakeContext} */ (/** @type {unknown} */ (screen.ctx))
     .fills;
+  fills.length = 0;
+  screen.render();
 
-  const frameStart = fills.findLastIndex((fill) => fill.w === PAGE.width);
-  assert.notEqual(frameStart, -1, "the page is cleared edge to edge");
-  assert.equal(fills[frameStart].x, 0);
-  assert.equal(fills[frameStart].y, 0);
-  assert.equal(fills[frameStart].h, PAGE.height);
-  assert.equal(fills[frameStart].style, THEME.background);
+  assert.deepEqual(fills[0], {
+    ...fills[0],
+    x: 0,
+    y: 0,
+    w: PAGE.width,
+    h: PAGE.height,
+    style: THEME.background,
+  });
 });
 
-test("a click routes to the pane it landed in, whichever that is", () => {
-  const { screen, panes } = pageOf(4);
-  for (const pane of panes) {
-    const at = {
-      clientX: pane.rect.x + 3 * pane.metrics.width + 1,
-      clientY: pane.rect.y + 2 * pane.metrics.height + 1,
-    };
-    const hit = screen.paneAt(at.clientX, at.clientY);
-    assert.equal(hit?.pane, pane);
-    assert.deepEqual({ row: hit?.row, col: hit?.col }, { row: 2, col: 3 });
-  }
+test("a click lands on the cell under it", () => {
+  const { screen, pane } = page();
+  const hit = screen.cellAt(
+    pane.rect.x + 3 * pane.metrics.width + 1,
+    pane.rect.y + 2 * pane.metrics.height + 1,
+  );
+  assert.deepEqual(hit, { row: 2, col: 3 });
 });
 
 test("a click on a character leaves no selection behind", () => {
-  const { screen, panes } = pageOf(1);
+  const { screen, pane } = page();
 
-  mouse(screen, "mousedown", panes[0], 2, 3);
+  mouse(screen, "mousedown", pane, 2, 3);
   assert.equal(
-    selectedCells(screen, panes[0]),
+    selectedCells(screen, pane),
     0,
     "a press is not a selection yet, so nothing is highlighted",
   );
 
-  mouse(screen, "mouseup", panes[0], 2, 3);
-  assert.equal(selectedCells(screen, panes[0]), 0);
-  assert.equal(panes[0].hasSelection(), false);
-  assert.equal(panes[0].getSelection(), "");
+  mouse(screen, "mouseup", pane, 2, 3);
+  assert.equal(selectedCells(screen, pane), 0);
+  assert.equal(pane.hasSelection(), false);
+  assert.equal(pane.getSelection(), "");
 });
 
 test("a click on a blank cell leaves no selection behind", () => {
-  const { screen, panes } = pageOf(1);
+  const { screen, pane } = page();
 
-  mouse(screen, "mousedown", panes[0], 10, 40);
-  assert.equal(selectedCells(screen, panes[0]), 0);
+  mouse(screen, "mousedown", pane, 10, 40);
+  assert.equal(selectedCells(screen, pane), 0);
 
-  mouse(screen, "mouseup", panes[0], 10, 40);
-  assert.equal(panes[0].hasSelection(), false);
+  mouse(screen, "mouseup", pane, 10, 40);
+  assert.equal(pane.hasSelection(), false);
 });
 
 test("a drag of more than one cell is a selection, blank or not", () => {
-  const { screen, panes } = pageOf(1);
+  const { screen, pane } = page();
 
-  mouse(screen, "mousedown", panes[0], 2, 0);
-  mouse(screen, "mousemove", panes[0], 2, 3);
-  mouse(screen, "mouseup", panes[0], 2, 3);
+  mouse(screen, "mousedown", pane, 2, 0);
+  mouse(screen, "mousemove", pane, 2, 3);
+  mouse(screen, "mouseup", pane, 2, 3);
 
-  assert.equal(panes[0].hasSelection(), true);
-  assert.equal(panes[0].getSelection(), "PANE");
-  assert.equal(selectedCells(screen, panes[0]), 4);
+  assert.equal(pane.hasSelection(), true);
+  assert.equal(pane.getSelection(), "PANE");
+  assert.equal(selectedCells(screen, pane), 4);
 
-  const blank = pageOf(1);
-  mouse(blank.screen, "mousedown", blank.panes[0], 10, 0);
-  mouse(blank.screen, "mousemove", blank.panes[0], 12, 5);
-  mouse(blank.screen, "mouseup", blank.panes[0], 12, 5);
+  const blank = page();
+  mouse(blank.screen, "mousedown", blank.pane, 10, 0);
+  mouse(blank.screen, "mousemove", blank.pane, 12, 5);
+  mouse(blank.screen, "mouseup", blank.pane, 12, 5);
   assert.equal(
-    blank.panes[0].hasSelection(),
+    blank.pane.hasSelection(),
     true,
     "blank cells are still a selection",
   );
 });
 
 test("a selection copies what is on screen, a panel over the host included", () => {
-  const { screen, panes } = pageOf(1);
-  panes[0].overlay.put(2, 0, "PA", { fg: "red", bg: "blue", gr: null });
+  const { screen, pane } = page();
+  pane.overlay.put(2, 0, "PA", { fg: "red", bg: "blue", gr: null });
 
-  mouse(screen, "mousedown", panes[0], 2, 0);
-  mouse(screen, "mousemove", panes[0], 2, 3);
-  mouse(screen, "mouseup", panes[0], 2, 3);
+  mouse(screen, "mousedown", pane, 2, 0);
+  mouse(screen, "mousemove", pane, 2, 3);
+  mouse(screen, "mouseup", pane, 2, 3);
 
-  assert.equal(panes[0].getSelection(), "PANE");
-  panes[0].overlay.put(2, 0, "XY", { fg: "red", bg: "blue", gr: null });
-  assert.equal(panes[0].getSelection(), "XYNE");
+  assert.equal(pane.getSelection(), "PANE");
+  pane.overlay.put(2, 0, "XY", { fg: "red", bg: "blue", gr: null });
+  assert.equal(pane.getSelection(), "XYNE");
 });
 
 test("a new press takes the previous selection off the screen", () => {
-  const { screen, panes } = pageOf(1);
+  const { screen, pane } = page();
 
-  mouse(screen, "mousedown", panes[0], 2, 0);
-  mouse(screen, "mousemove", panes[0], 2, 3);
-  mouse(screen, "mouseup", panes[0], 2, 3);
-  assert.equal(selectedCells(screen, panes[0]), 4);
+  mouse(screen, "mousedown", pane, 2, 0);
+  mouse(screen, "mousemove", pane, 2, 3);
+  mouse(screen, "mouseup", pane, 2, 3);
+  assert.equal(selectedCells(screen, pane), 4);
 
-  mouse(screen, "mousedown", panes[0], 8, 8);
-  assert.equal(selectedCells(screen, panes[0]), 0);
+  mouse(screen, "mousedown", pane, 8, 8);
+  assert.equal(selectedCells(screen, pane), 0);
 });
 
 test("shift and the arrows select a rectangle from the cursor", () => {
-  const { screen, panes } = pageOf(1);
-  const pane = panes[0];
+  const { screen, pane } = page();
   pane.host.cursor = { row: 2, col: 0, visible: false };
 
   for (let step = 0; step < 3; step++) pane.stepSelection(0, 1);
@@ -586,8 +578,7 @@ test("shift and the arrows select a rectangle from the cursor", () => {
 });
 
 test("a keyboard selection starts at the cursor, not at the last click", () => {
-  const { screen, panes } = pageOf(1);
-  const pane = panes[0];
+  const { screen, pane } = page();
   mouse(screen, "mousedown", pane, 10, 10);
   mouse(screen, "mouseup", pane, 10, 10);
   pane.host.cursor = { row: 2, col: 5, visible: true };
@@ -597,8 +588,7 @@ test("a keyboard selection starts at the cursor, not at the last click", () => {
 });
 
 test("a keyboard selection starts over once the cursor has moved away from it", () => {
-  const { panes } = pageOf(1);
-  const pane = panes[0];
+  const { pane } = page();
   pane.host.cursor = { row: 2, col: 0, visible: false };
   pane.stepSelection(0, 3);
 
@@ -613,8 +603,7 @@ test("a keyboard selection starts over once the cursor has moved away from it", 
 });
 
 test("a keyboard selection stops at the edge of the host's screen", () => {
-  const { panes } = pageOf(1);
-  const pane = panes[0];
+  const { pane } = page();
   pane.host.cursor = { row: 23, col: 79, visible: true };
 
   pane.stepSelection(1, 0);
@@ -631,60 +620,17 @@ test("a keyboard selection stops at the edge of the host's screen", () => {
   });
 });
 
-test("a selection belongs to one pane, and a press in another clears it", () => {
-  const { screen, panes } = pageOf(2);
+test("a drag that leaves the screen stays clamped inside it", () => {
+  const { screen, pane } = page();
 
-  mouse(screen, "mousedown", panes[0], 2, 0);
-  mouse(screen, "mousemove", panes[0], 2, 3);
-  mouse(screen, "mouseup", panes[0], 2, 3);
-  assert.equal(panes[0].hasSelection(), true);
-  assert.equal(panes[1].hasSelection(), false);
+  mouse(screen, "mousedown", pane, 2, 0);
+  mouse(screen, "mousemove", pane, 400, 400);
+  mouse(screen, "mouseup", pane, 400, 400);
 
-  mouse(screen, "mousedown", panes[1], 2, 0);
-  assert.equal(
-    panes[0].hasSelection(),
-    false,
-    "the other pane's selection came off",
-  );
-  assert.equal(selectedCells(screen, panes[0]), 0);
-});
-
-test("a pane too big for its share is cut off at it, not at its neighbour", () => {
-  const screen = new Screen({
-    canvas: fakeCanvas(),
-    theme: THEME,
-    fieldBackground: true,
+  assert.deepEqual(pane.selectionBox(), {
+    top: 2,
+    left: 0,
+    bottom: 24,
+    right: 79,
   });
-  // 60 rows into a quarter of the page: below MIN_FONT_SIZE the fit gives up
-  // and the pane is drawn larger than the box it was given.
-  const pane = new Pane(80, 60);
-  for (let row = 0; row < 60; row++)
-    pane.host.put(row, 0, "X".repeat(80), { fg: "red", bg: "blue", gr: null });
-  const share = { x: 0, y: 0, width: 0.5, height: 0.5 };
-  screen.layout([pane], [share], PAGE, "monospace");
-  screen.render();
-
-  const box = pane.box;
-  assert.ok(
-    pane.rect.height > box.height,
-    "the pane really does overflow, or this asserts nothing",
-  );
-
-  for (const fill of lastFrame(screen).slice(1)) {
-    assert.ok(fill.x >= box.x && fill.x + fill.w <= box.x + box.width);
-    assert.ok(fill.y >= box.y && fill.y + fill.h <= box.y + box.height);
-  }
-});
-
-test("a drag that leaves its pane stays clamped inside it", () => {
-  const { screen, panes } = pageOf(2);
-
-  mouse(screen, "mousedown", panes[0], 2, 0);
-  // Well into the second pane, and past the bottom of the first.
-  mouse(screen, "mousemove", panes[0], 400, 400);
-  mouse(screen, "mouseup", panes[0], 400, 400);
-
-  const box = panes[0].selectionBox();
-  assert.deepEqual(box, { top: 2, left: 0, bottom: 24, right: 79 });
-  assert.equal(panes[1].hasSelection(), false);
 });

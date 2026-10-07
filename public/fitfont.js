@@ -1,5 +1,5 @@
 /**
- * The 3270 grid is fixed, so font size is the only way to fill a pane. Kept
+ * The 3270 grid is fixed, so font size is the only way to fill the window. Kept
  * apart from the terminal so it can be tested without a browser.
  */
 

@@ -96,3 +96,45 @@ export function computeHints(cells, cols) {
   });
   return hints;
 }
+
+/** Ctrl-<this> shows the hints. Free on a 3270 keyboard; see keymap.js. */
+const PREFIX_KEY = "b";
+
+/**
+ * Reaching for a modifier must not cancel the shown hints.
+ * @type {ReadonlySet<string>}
+ */
+const MODIFIER_KEYS = new Set(["Control", "Shift", "Alt", "Meta", "AltGraph"]);
+
+export class HintPrefix {
+  constructor() {
+    /** @type {boolean} Ctrl-B has been seen and the next key picks a hint. */
+    this.armed = false;
+  }
+
+  /**
+   * @param {KeyboardEvent} event
+   * @param {readonly string[]} [hintLetters] the letters on screen
+   * @returns {{ action: 'ignore' | 'arm' | 'cancel' } | { action: 'hint', letter: string }}
+   */
+  handleKey(event, hintLetters = []) {
+    if (this.armed) {
+      if (MODIFIER_KEYS.has(event.key)) return { action: "ignore" };
+      this.armed = false;
+      if (hintLetters.includes(event.key))
+        return { action: "hint", letter: event.key };
+      // Swallowed, so a missed hint letter cannot type into a host.
+      return { action: "cancel" };
+    }
+    if (
+      event.ctrlKey &&
+      !event.altKey &&
+      !event.metaKey &&
+      event.key.toLowerCase() === PREFIX_KEY
+    ) {
+      this.armed = true;
+      return { action: "arm" };
+    }
+    return { action: "ignore" };
+  }
+}

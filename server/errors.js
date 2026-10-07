@@ -45,7 +45,7 @@ export const ERRORS = Object.freeze({
   E5003: "Settings could not be read from the server",
   E5004: "Settings could not be saved on the server",
   E5005: "Clipboard could not be read for a Shift+Insert paste",
-  E5006: "Another terminal session could not be opened",
+  // E5006 was opening a second session in the same page, which is gone. Retired, not free.
   // E5007 is spent.
   E5008: "Macros could not be read from the server",
   E5009: "Macros could not be saved on the server",
