@@ -7,17 +7,19 @@ Status as of 2026-09-20.
 - [x] **Nix flake** — devShell with `nodejs_22`, `typescript`, `python3`, and a
       minimal `b3270` derivation built from the same `suite3270-4.5ga5` tarball
       nixpkgs uses, with X11 disabled. Verified: zero X11 libraries linked.
-      `s3270` is built alongside it, for the REST proxy's comparison test; it
-      is headless too, and adds nothing to the closure.
+      `s3270` is built alongside it; both are oracles for node3270's own
+      comparison tests, headless, and add nothing to the closure.
 - [x] **Config** — `config.jsonc` plus a hand-written JSONC parser
       (`server/config.js`): comment stripper, trailing-comma stripper, typed
       validation with `E1xxx` codes. No dependency added for it.
 - [x] **Error codes** — `server/errors.js`, seven blocks, `AppError` carrying the
       code all the way to the UI.
 - [x] **Logging** — `server/log.js`, levelled, structured, to stderr;
-      `logLevel: "debug"` logs every line exchanged with b3270.
-- [x] **b3270 driver** — `server/b3270.js`: spawn, NDJSON framing, `initialize`
-      flattening, tagged action submission, clean stop via stdin EOF.
+      `logLevel: "debug"` logs every action run and the emulator's debug lines.
+- [x] **Emulator** — node3270 (`3270/`), a port of x3270 4.5 that emits
+      `b3270 -json`'s indications byte for byte, run in-process on a pool of
+      worker threads. It replaced a `b3270` child per session (`server/b3270.js`)
+      and with it the REST proxy, which only b3270's `-httpd` could serve.
 - [x] **Screen model** — `server/screen.js`: incremental `screen` application
       with per-cell attribute retention, `erase`, `screen-mode`, dirty-row
       tracking.
@@ -36,11 +38,6 @@ Status as of 2026-09-20.
       every module and every font arrives in one wave. A cold browser fetches
       about 810 KB; a reconnect's reload fetches the 230 KB of page code again
       and no fonts.
-- [x] **REST** — `server/restproxy.js`: each session's b3270 runs its own
-      `-httpd` on a loopback port guarded by a per-session cookie, and
-      `/api/sessions/<id>/3270/…` is forwarded to it untouched. s3270's REST
-      interface, because it _is_ s3270's REST interface — verified byte for byte
-      against a real `s3270 -httpd`.
 - [x] **Frontend** — `public/index.html`, `app.js`, `keymap.js`: one ordered
       text channel, paints into a `Grid`, status and in-place errors,
       capture-phase keymap. The markup is a `<canvas>` in a box and four CSS
@@ -87,11 +84,9 @@ Status as of 2026-09-20.
     over real traced b3270 output (`roundtrip.test.js`, `grid.test.js`)
   - screen-indication semantics and the OIA (`screen.test.js`)
   - JSONC parsing, validation, the action allow-list (`config.test.js`)
-  - multi-viewer behaviour against a real b3270, including a model change
+  - multi-viewer behaviour against a real node3270, including a model change
     resizing every viewer before it repaints them (`session.test.js`)
   - the whole stack over real HTTP and real WebSockets (`server.test.js`)
-  - the REST proxy against a real `s3270 -httpd` as the oracle
-    (`restproxy.test.js`)
   - the reconnect arithmetic and idle reaping (`reconnect.test.js`,
     `session.test.js`)
   - the font fit against a brute-force search over every size (`fitfont.test.js`)

@@ -52,14 +52,14 @@ test("a brace inside a string does not make the comma before it trailing", () =>
 test("the shipped config.example.jsonc parses and validates", () => {
   const config = loadConfig("config.example.jsonc");
   assert.equal(typeof config.server.port, "number");
-  assert.ok(config.b3270.model >= 2 && config.b3270.model <= 5);
+  assert.ok(config.emulator.model >= 2 && config.emulator.model <= 5);
 });
 
 test("missing sections fall back to defaults", () => {
   const config = validateConfig({});
   assert.equal(config.server.host, "127.0.0.1");
-  assert.equal(config.b3270.defaultHost, null);
-  assert.equal(config.b3270.tls, true);
+  assert.equal(config.emulator.defaultHost, null);
+  assert.equal(config.emulator.tls, true);
   assert.deepEqual(config.security.allowedHosts, []);
   // Without a proxy in front, any client could forge its own address.
   assert.equal(config.security.trustProxyHeaders, false);
@@ -68,7 +68,10 @@ test("missing sections fall back to defaults", () => {
 });
 
 test("TLS can be disabled explicitly", () => {
-  assert.equal(validateConfig({ b3270: { tls: false } }).b3270.tls, false);
+  assert.equal(
+    validateConfig({ emulator: { tls: false } }).emulator.tls,
+    false,
+  );
 });
 
 test("a wrongly typed setting is rejected with its own code", () => {
@@ -84,7 +87,7 @@ test("a wrongly typed setting is rejected with its own code", () => {
 
 test("an out-of-range setting is rejected with its own code", () => {
   assert.throws(
-    () => validateConfig({ b3270: { model: 9 } }),
+    () => validateConfig({ emulator: { model: 9 } }),
     (err) => {
       assert.ok(err instanceof AppError);
       assert.equal(err.code, "E1004");
@@ -93,31 +96,32 @@ test("an out-of-range setting is rejected with its own code", () => {
   );
 });
 
-test("any b3270 resource can be set, and reaches b3270 as a string", () => {
+test("any emulator setting can be set, and reaches the emulator with its type", () => {
   const config = validateConfig({
-    b3270: {
+    emulator: {
       settings: {
         oversize: "90x30",
         monoCase: true,
         nopSeconds: 30,
-        "b3270.codePage": "german",
-        "*trace": false,
+        codePage: "german",
+        trace: false,
       },
     },
   });
-  assert.deepEqual(config.b3270.settings, {
+  assert.deepEqual(config.emulator.settings, {
     oversize: "90x30",
-    monoCase: "true",
-    nopSeconds: "30",
-    "b3270.codePage": "german",
-    "*trace": "false",
+    monoCase: true,
+    nopSeconds: 30,
+    saveLines: 0,
+    codePage: "german",
+    trace: false,
   });
 });
 
-test("a code page outside b3270.settings is rejected instead of ignored", () => {
+test("a code page outside emulator.settings is rejected instead of ignored", () => {
   for (const raw of [
-    { b3270: { codepage: "german" } },
-    { b3270: { codePage: "german" } },
+    { emulator: { codepage: "german" } },
+    { emulator: { codePage: "german" } },
     { settings: { codePage: "german" } },
   ]) {
     assert.throws(
@@ -125,7 +129,7 @@ test("a code page outside b3270.settings is rejected instead of ignored", () => 
       (err) => {
         assert.ok(err instanceof AppError);
         assert.equal(err.code, "E1006");
-        assert.match(err.message, /b3270\.settings\.codePage/);
+        assert.match(err.message, /emulator\.settings\.codePage/);
         return true;
       },
     );
@@ -133,19 +137,33 @@ test("a code page outside b3270.settings is rejected instead of ignored", () => 
 });
 
 test("a quiet host connection is kept open with a NOP every minute, unless the config says otherwise", () => {
-  assert.deepEqual(validateConfig({}).b3270.settings, { nopSeconds: "60" });
+  assert.equal(validateConfig({}).emulator.settings.nopSeconds, 60);
   assert.deepEqual(
-    validateConfig({ b3270: { settings: { nopSeconds: 0, monoCase: true } } })
-      .b3270.settings,
-    { nopSeconds: "0", monoCase: "true" },
+    validateConfig({
+      emulator: { settings: { nopSeconds: 0, monoCase: true } },
+    }).emulator.settings,
+    { nopSeconds: 0, saveLines: 0, monoCase: true },
   );
 });
 
-test("a resource name that is not a resource name is refused", () => {
-  // These land in `-xrm "b3270.<name>: <value>"`: a space or colon rewrites the argument.
-  for (const name of ["code page", "codePage: x", "", "a;b", "-model"]) {
+test("sessions keep no scrollback unless the config asks for some", () => {
+  assert.equal(validateConfig({}).emulator.settings.saveLines, 0);
+  assert.equal(
+    validateConfig({ emulator: { settings: { saveLines: 2000 } } }).emulator
+      .settings.saveLines,
+    2000,
+  );
+});
+
+test("a setting the emulator does not have is refused at startup", () => {
+  for (const name of [
+    "noSuchSetting",
+    "*nopSeconds",
+    "b3270.codePage",
+    "toString",
+  ]) {
     assert.throws(
-      () => validateConfig({ b3270: { settings: { [name]: "x" } } }),
+      () => validateConfig({ emulator: { settings: { [name]: "x" } } }),
       (err) => {
         assert.ok(err instanceof AppError);
         assert.equal(err.code, "E1005");
@@ -156,12 +174,32 @@ test("a resource name that is not a resource name is refused", () => {
   }
 });
 
-test("a resource value that is not a scalar is refused", () => {
+test("a setting value of the wrong type is refused at startup", () => {
+  for (const settings of [
+    { oversize: { x: 1 } },
+    { monoCase: "true" },
+    { nopSeconds: "60" },
+    { codePage: 37 },
+  ]) {
+    assert.throws(
+      () => validateConfig({ emulator: { settings } }),
+      (err) => {
+        assert.ok(err instanceof AppError);
+        assert.equal(err.code, "E1003");
+        return true;
+      },
+      JSON.stringify(settings),
+    );
+  }
+});
+
+test("a config still written for b3270 is refused rather than half-ignored", () => {
   assert.throws(
-    () => validateConfig({ b3270: { settings: { oversize: { x: 1 } } } }),
+    () => validateConfig({ b3270: { model: 4 } }),
     (err) => {
       assert.ok(err instanceof AppError);
-      assert.equal(err.code, "E1003");
+      assert.equal(err.code, "E1007");
+      assert.match(err.message, /emulator/);
       return true;
     },
   );

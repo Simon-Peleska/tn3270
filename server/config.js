@@ -1,16 +1,19 @@
 import { readFileSync } from "node:fs";
+import { DEFAULTS as EMULATOR_DEFAULTS } from "../3270/src/index.js";
 import { AppError } from "./errors.js";
 
 /**
  * @typedef {object} Config
  * @property {{ host: string, port: number }} server
- * @property {{ path: string, model: number, defaultHost: string | null, tls: boolean, settings: Record<string, string>, extraArgs: string[] }} b3270
+ * @property {{ model: number, defaultHost: string | null, tls: boolean, settings: Settings }} emulator
  * @property {{ maxSessions: number, maxViewersPerSession: number, idleTimeoutMs: number }} sessions
  * @property {{ allowedHosts: string[], trustProxyHeaders: boolean }} security
  * @property {'debug' | 'info' | 'warn' | 'error'} logLevel
  * @property {string} logFile Empty is stderr only.
  * @property {number} logMaxBytes Size at which the log rolls to `<logFile>.1`.
  */
+
+/** Emulator settings by their node3270 name. @typedef {Record<string, string | number | boolean | null>} Settings */
 
 /**
  * JSONC in, JSON out. Comments and trailing commas become spaces rather than
@@ -92,15 +95,18 @@ export function parseJsonc(text) {
 /** @type {Config} */
 const DEFAULTS = {
   server: { host: "127.0.0.1", port: 8017 },
-  b3270: {
-    path: "b3270",
+  emulator: {
     model: 2,
     defaultHost: null,
     tls: true,
-    // A TELNET NOP when the line has been quiet this long, so a firewall or
-    // NAT that drops idle connections never sees one idle.
-    settings: { nopSeconds: "60" },
-    extraArgs: [],
+    settings: {
+      // A TELNET NOP when the line has been quiet this long, so a firewall or
+      // NAT that drops idle connections never sees one idle.
+      nopSeconds: 60,
+      // The web UI never shows the scrollback, and at x3270's 4096 rows it
+      // costs a few MB per session.
+      saveLines: 0,
+    },
   },
   sessions: {
     maxSessions: 16,
@@ -215,44 +221,40 @@ function strArray(obj, path, key, fallback) {
 }
 
 /**
- * A bare name (`oversize`) is qualified as `b3270.oversize`; one written out in
- * full (`*oversize`) is passed to the emulator as given.
+ * Any of node3270's options, by name, with a value of its default's type.
  *
  * @param {Record<string, unknown>} obj
  * @param {string} path
  * @param {string} key
- * @returns {Record<string, string>}
+ * @returns {Settings}
  */
-function resources(obj, path, key) {
+function settings(obj, path, key) {
   const value = obj[key];
   if (value === undefined) return {};
   const name = named(path, key);
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new AppError(
       "E1003",
-      `"${name}" must be an object of resource names to values`,
+      `"${name}" must be an object of setting names to values`,
     );
   }
 
-  /** @type {Record<string, string>} */
+  /** @type {Settings} */
   const out = {};
-  for (const [resource, raw] of Object.entries(value)) {
-    if (
-      !/^\*?[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*$/.test(resource)
-    ) {
-      throw new AppError("E1005", `"${name}.${resource}"`);
+  for (const [setting, raw] of Object.entries(value)) {
+    if (!Object.hasOwn(EMULATOR_DEFAULTS, setting))
+      throw new AppError("E1005", `"${name}.${setting}"`);
+    const fallback = /** @type {Record<string, unknown>} */ (EMULATOR_DEFAULTS)[
+      setting
+    ];
+    const type =
+      typeof fallback === "boolean" || typeof fallback === "number"
+        ? typeof fallback
+        : "string";
+    if (typeof raw !== type && !(type === "string" && raw === null)) {
+      throw new AppError("E1003", `"${name}.${setting}" must be a ${type}`);
     }
-    if (
-      typeof raw !== "string" &&
-      typeof raw !== "number" &&
-      typeof raw !== "boolean"
-    ) {
-      throw new AppError(
-        "E1003",
-        `"${name}.${resource}" must be a string, number or boolean`,
-      );
-    }
-    out[resource] = String(raw);
+    out[setting] = /** @type {string | number | boolean | null} */ (raw);
   }
   return out;
 }
@@ -268,7 +270,9 @@ export function validateConfig(raw) {
   const root = /** @type {Record<string, unknown>} */ (raw);
 
   const serverSection = section(root, "server");
-  const b3270Section = section(root, "b3270");
+  if (root["b3270"] !== undefined)
+    throw new AppError("E1007", 'rename "b3270" to "emulator"');
+  const emulatorSection = section(root, "emulator");
   const sessionsSection = section(root, "sessions");
   const securitySection = section(root, "security");
   const rootSettings = root["settings"];
@@ -280,26 +284,36 @@ export function validateConfig(raw) {
 
   if (
     codePageAtRoot ||
-    b3270Section["codepage"] !== undefined ||
-    b3270Section["codePage"] !== undefined
+    emulatorSection["codepage"] !== undefined ||
+    emulatorSection["codePage"] !== undefined
   ) {
     throw new AppError(
       "E1006",
-      'put the code page under "b3270.settings.codePage"',
+      'put the code page under "emulator.settings.codePage"',
     );
   }
 
-  const model = num(b3270Section, "b3270", "model", DEFAULTS.b3270.model, 2, 5);
+  const model = num(
+    emulatorSection,
+    "emulator",
+    "model",
+    DEFAULTS.emulator.model,
+    2,
+    5,
+  );
   if (!Number.isInteger(model))
-    throw new AppError("E1004", '"b3270.model" must be a whole number');
+    throw new AppError("E1004", '"emulator.model" must be a whole number');
 
-  const rawDefaultHost = b3270Section["defaultHost"];
+  const rawDefaultHost = emulatorSection["defaultHost"];
   if (
     rawDefaultHost !== undefined &&
     rawDefaultHost !== null &&
     typeof rawDefaultHost !== "string"
   ) {
-    throw new AppError("E1003", '"b3270.defaultHost" must be a string or null');
+    throw new AppError(
+      "E1003",
+      '"emulator.defaultHost" must be a string or null',
+    );
   }
 
   const logLevel = str(root, "", "logLevel", DEFAULTS.logLevel);
@@ -327,21 +341,14 @@ export function validateConfig(raw) {
         65535,
       ),
     },
-    b3270: {
-      path: str(b3270Section, "b3270", "path", DEFAULTS.b3270.path),
+    emulator: {
       model,
       defaultHost: rawDefaultHost === undefined ? null : rawDefaultHost,
-      tls: bool(b3270Section, "b3270", "tls", DEFAULTS.b3270.tls),
+      tls: bool(emulatorSection, "emulator", "tls", DEFAULTS.emulator.tls),
       settings: {
-        ...DEFAULTS.b3270.settings,
-        ...resources(b3270Section, "b3270", "settings"),
+        ...DEFAULTS.emulator.settings,
+        ...settings(emulatorSection, "emulator", "settings"),
       },
-      extraArgs: strArray(
-        b3270Section,
-        "b3270",
-        "extraArgs",
-        DEFAULTS.b3270.extraArgs,
-      ),
     },
     sessions: {
       maxSessions: num(

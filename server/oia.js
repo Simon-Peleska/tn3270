@@ -16,7 +16,7 @@ export class OiaModel {
   }
 
   /**
-   * @param {import('./b3270.js').OiaIndication} oia
+   * @param {import('./indications.js').OiaIndication} oia
    * @returns {void}
    */
   applyOia(oia) {
@@ -37,7 +37,7 @@ export class OiaModel {
   }
 
   /**
-   * @param {import('./b3270.js').ConnectionIndication} connection
+   * @param {import('./indications.js').ConnectionIndication} connection
    * @returns {void}
    */
   applyConnection(connection) {

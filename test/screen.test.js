@@ -1,17 +1,27 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createServer } from "node:net";
 import { ScreenModel } from "../server/screen.js";
+import { Session } from "../server/session.js";
 import { OiaModel } from "../server/oia.js";
 import { AppError } from "../server/errors.js";
+import { Session as Emulator } from "../3270/src/index.js";
+import { collectingViewer, testConfig, waitUntil } from "./helpers.js";
 
-test("a text change writes characters and leaves the rest of the row alone", () => {
-  const screen = new ScreenModel(24, 80);
+// The characters and colours come from the emulator's render, which
+// render.test.js and roundtrip.test.js check against real traces; this is the
+// bookkeeping around it.
+
+function newScreen(model = "3279-2") {
+  const emulator = new Emulator({ model });
+  emulator.indications(() => {});
+  return new ScreenModel(emulator.s, 24, 80);
+}
+
+test("a screen indication dirties only the rows it changes", () => {
+  const screen = newScreen();
   screen.takeDirtyRows();
-  screen.applyScreen({
-    rows: [{ row: 1, changes: [{ column: 3, text: "abc" }] }],
-  });
-
-  assert.equal(screen.rowText(0).slice(0, 6), "  abc ");
+  screen.applyScreen({ rows: [1] });
   assert.deepEqual(
     screen.takeDirtyRows(),
     [0],
@@ -19,101 +29,15 @@ test("a text change writes characters and leaves the rest of the row alone", () 
   );
 });
 
-test("a count change repaints attributes without touching the characters", () => {
-  const screen = new ScreenModel(24, 80);
-  screen.applyScreen({
-    rows: [{ row: 1, changes: [{ column: 1, text: "hello" }] }],
-  });
+test("out-of-range rows are ignored", () => {
+  const screen = newScreen();
   screen.takeDirtyRows();
-
-  screen.applyScreen({
-    rows: [{ row: 1, changes: [{ column: 1, count: 5, fg: "red" }] }],
-  });
-
-  assert.equal(screen.rowText(0).slice(0, 5), "hello");
-  assert.equal(screen.cellAt(0, 0).fg, "red");
-  assert.equal(screen.cellAt(0, 5).fg, null);
-});
-
-test("an attribute the change does not mention stays as it was", () => {
-  const screen = new ScreenModel(24, 80);
-  screen.applyScreen({
-    rows: [
-      { row: 1, changes: [{ column: 1, text: "ab", fg: "red", bg: "blue" }] },
-    ],
-  });
-  screen.applyScreen({
-    rows: [{ row: 1, changes: [{ column: 1, text: "cd", fg: "green" }] }],
-  });
-
-  const cell = screen.cellAt(0, 0);
-  assert.equal(cell.ch, "c");
-  assert.equal(cell.fg, "green");
-  assert.equal(cell.bg, "blue", "an unmentioned background must be retained");
-});
-
-test("a colour changing back to the screen default is stored as the default", () => {
-  const screen = new ScreenModel(24, 80);
-  screen.applyErase({ fg: "blue", bg: "neutralBlack" });
-  screen.applyScreen({
-    rows: [
-      {
-        row: 1,
-        changes: [{ column: 1, count: 3, fg: "neutralBlack", bg: "green" }],
-      },
-    ],
-  });
-  screen.applyScreen({
-    rows: [
-      {
-        row: 1,
-        changes: [{ column: 1, count: 3, fg: "blue", bg: "neutralBlack" }],
-      },
-    ],
-  });
-
-  const cell = screen.cellAt(0, 0);
-  assert.equal(cell.fg, null);
-  assert.equal(cell.bg, null, "a named default would hide the field tint");
-});
-
-test('an empty gr clears the graphic rendition rather than setting it to ""', () => {
-  const screen = new ScreenModel(24, 80);
-  screen.applyScreen({
-    rows: [{ row: 1, changes: [{ column: 1, text: "a", gr: "underline" }] }],
-  });
-  assert.equal(screen.cellAt(0, 0).gr, "underline");
-
-  screen.applyScreen({
-    rows: [{ row: 1, changes: [{ column: 1, count: 1, gr: "" }] }],
-  });
-  assert.equal(screen.cellAt(0, 0).gr, null);
-});
-
-test("changes are clipped to the screen instead of overflowing into the next row", () => {
-  const screen = new ScreenModel(24, 80);
-  screen.applyScreen({
-    rows: [{ row: 1, changes: [{ column: 79, text: "abcd" }] }],
-  });
-
-  assert.equal(screen.rowText(0).slice(78), "ab");
-  assert.equal(screen.rowText(1).trim(), "", "the row below must be untouched");
-});
-
-test("out-of-range rows and columns are ignored", () => {
-  const screen = new ScreenModel(24, 80);
-  screen.applyScreen({
-    rows: [
-      { row: 99, changes: [{ column: 1, text: "nope" }] },
-      { row: 1, changes: [{ column: 999, text: "nope" }] },
-      { row: 0, changes: [{ column: 1, text: "nope" }] },
-    ],
-  });
-  assert.equal(screen.rowText(0).trim(), "");
+  screen.applyScreen({ rows: [99, 0] });
+  assert.deepEqual(screen.takeDirtyRows(), []);
 });
 
 test("cursor fields are individually optional and fall back to the previous value", () => {
-  const screen = new ScreenModel(24, 80);
+  const screen = newScreen();
   screen.applyScreen({ cursor: { enabled: true, row: 5, column: 10 } });
   assert.deepEqual(screen.cursor, { row: 4, col: 9, enabled: true });
 
@@ -122,7 +46,7 @@ test("cursor fields are individually optional and fall back to the previous valu
 });
 
 test("a cursor move is reported on its own, and standing still is not one", () => {
-  const screen = new ScreenModel(24, 80);
+  const screen = newScreen();
   screen.takeDirtyRows();
   screen.takeCursorMoved();
 
@@ -136,12 +60,15 @@ test("a cursor move is reported on its own, and standing still is not one", () =
   assert.equal(screen.takeCursorMoved(), false);
 });
 
-test("erase blanks everything, adopts the new defaults and homes the cursor", () => {
-  const screen = new ScreenModel(24, 80);
-  screen.applyScreen({
-    rows: [{ row: 2, changes: [{ column: 1, text: "gone", fg: "red" }] }],
-  });
+test("erase forgets the fields, adopts the new defaults and homes the cursor", () => {
+  const screen = newScreen();
+  screen.applyFields(
+    new Uint8Array(24 * 80).fill(1),
+    new Uint8Array(24 * 80),
+    true,
+  );
   screen.applyScreen({ cursor: { enabled: true, row: 5, column: 5 } });
+  screen.takeDirtyRows();
 
   screen.applyErase({
     "logical-rows": 24,
@@ -150,15 +77,16 @@ test("erase blanks everything, adopts the new defaults and homes the cursor", ()
     bg: "neutralBlack",
   });
 
-  assert.equal(screen.rowText(1).trim(), "");
-  assert.equal(screen.cellAt(1, 0).fg, null);
+  assert.equal(screen.cellAt(1, 0).editable, false);
+  assert.deepEqual(screen.inputCells, []);
   assert.equal(screen.defaultFg, "blue");
   assert.equal(screen.defaultBg, "neutralBlack");
   assert.deepEqual(screen.cursor, { row: 0, col: 0, enabled: true });
+  assert.equal(screen.takeDirtyRows().length, 24);
 });
 
 test("a screen-mode change resizes and dirties the whole screen", () => {
-  const screen = new ScreenModel(24, 80);
+  const screen = newScreen();
   screen.takeDirtyRows();
 
   screen.applyScreenMode({
@@ -175,28 +103,60 @@ test("a screen-mode change resizes and dirties the whole screen", () => {
   assert.equal(screen.takeDirtyRows().length, 43);
 });
 
-test("a monochrome screen-mode is recorded so no colour is invented", () => {
-  const screen = new ScreenModel(24, 80);
-  screen.applyScreenMode({
-    model: 2,
-    rows: 24,
-    columns: 80,
-    color: false,
-    oversize: false,
-    extended: false,
-  });
-  assert.equal(screen.color, false);
+test("a blank screen is all default colours, in colour and in monochrome", () => {
+  for (const model of ["3279-2", "3278-2"]) {
+    const cell = newScreen(model).cellAt(0, 0);
+    assert.deepEqual(
+      { fg: cell.fg, bg: cell.bg, gr: cell.gr, ch: cell.ch },
+      { fg: null, bg: null, gr: null, ch: " " },
+      model,
+    );
+  }
 });
 
 test("reading outside the screen is a stable error, not undefined", () => {
-  const screen = new ScreenModel(24, 80);
-  assert.throws(
-    () => screen.cellAt(99, 0),
-    (err) => {
-      assert.ok(err instanceof AppError);
-      assert.equal(err.code, "E3004");
-      return true;
-    },
+  const screen = newScreen();
+  for (const [row, col] of [
+    [99, 0],
+    [0, 80],
+    [-1, 0],
+  ]) {
+    assert.throws(
+      () => screen.cellAt(row, col),
+      (err) => {
+        assert.ok(err instanceof AppError);
+        assert.equal(err.code, "E3004");
+        return true;
+      },
+    );
+  }
+});
+
+test("a plain-telnet host is dropped with an error the viewers see", async (t) => {
+  const host = createServer((socket) => socket.write("login: "));
+  await new Promise((resolve) =>
+    host.listen(0, "127.0.0.1", () => resolve(undefined)),
+  );
+  const session = new Session(
+    testConfig({ emulator: { model: 2, tls: false } }),
+  );
+  t.after(() => {
+    session.close();
+    host.close();
+  });
+  await session.ready;
+  const viewer = collectingViewer("viewer");
+  session.attach(viewer);
+
+  const port = /** @type {import("node:net").AddressInfo} */ (host.address())
+    .port;
+  session.connect(`127.0.0.1:${port}`);
+  await waitUntil(
+    () =>
+      viewer.messages.some(
+        (m) => m.type === "error" && m.message.startsWith("N1203 "),
+      ),
+    "the N1203 error to reach the viewer",
   );
 });
 

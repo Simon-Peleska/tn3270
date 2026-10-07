@@ -9,14 +9,16 @@ host, sees the host's screen, and types on it. A second person opening the same
 URL sees the same screen live.
 
 Out of scope for this build: file transfer (IND$FILE), printer sessions
-(`pr3287`), DBCS / double-width characters, scripting, and login/authentication.
+(`pr3287`), DBCS / double-width characters, scripting, plain-TELNET (NVT and
+line-mode) hosts, and login/authentication. A host that sends data before
+negotiating TN3270 is dropped with `N1203`.
 
 ## 2. Session lifecycle
 
-A **session** is one `b3270` process and one host connection. b3270 _is_ one
-terminal — one screen, one host connection, one keyboard — and its JSON protocol
-has no notion of a second one, so a second session is a second process. Nothing
-can be multiplexed onto a single b3270.
+A **session** is one emulator and one host connection: one screen, one host
+connection, one keyboard. The emulator is node3270 (`3270/`), a port of x3270's
+`b3270 -json` that runs in the server's own process, on its one thread, beside
+the HTTP and websocket serving.
 
 One page holds up to **4** sessions at once and shows one, two, three or four of
 them side by side (§5, `Ctrl-B`). Every session it holds keeps its WebSocket open
@@ -36,7 +38,6 @@ at it; `Ctrl-B` and a digit does the same from the keyboard.
 | A digit with no session behind it is pressed | A session is created for that slot and appended to the fragment (`E5006` if the server refuses)                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | Browser reloads or the network drops         | The session is untouched. The page shows the disconnect and retries with exponential backoff and jitter, asking `/api/sessions` before each attempt. It keeps waiting while the server does not answer. Once the server answers, it reattaches if the session still exists, or creates a new one if the server has reaped it (`E5014` if that fails). The reconnected page reloads itself, so a server that came back with newer page code is picked up; the fragment still names the same sessions, so it reattaches to them |
 | Last viewer detaches                         | The session is kept alive for `sessions.idleTimeoutMs`, then closed. A viewer attaching inside that window cancels the reaping                                                                                                                                                                                                                                                                                                                                                                                                |
-| `b3270` exits                                | The session closes and every viewer is told (`E2002`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 Sharing the URL is how a session is shared: there is no invite step, and sharing
 a page that holds four sessions shares all four. But nobody gets in on the URL
@@ -80,14 +81,14 @@ the host.
 ## 4. The screen
 
 - Geometry follows the model: 2 = 24×80, 3 = 32×80, 4 = 43×80, 5 = 27×132.
-  `b3270.model` sets the starting model; the settings panel changes it afterwards.
-  The list it offers is the one b3270 itself reports at startup, not a second
+  `emulator.model` sets the starting model; the settings panel changes it afterwards.
+  The list it offers is the one the emulator itself reports at startup, not a second
   copy of the table above. After model 5 the list offers **Dynamic - 62x160**:
   the model underneath it with a 160×62 oversize on top, which is the biggest
   screen an IBM host will bind. It sits with the models because it behaves like
   one — a size asked for by name, with no window measured for it. A browser
-  that never chose a size gets the server's: 24×80 unless `b3270.model` or
-  `b3270.oversize` says otherwise. One that did asks for it again for every
+  that never chose a size gets the server's: 24×80 unless `emulator.model` or
+  `emulator.settings.oversize` says otherwise. One that did asks for it again for every
   session it opens, including one opened just before a reload.
 - **Fit to window** is the last choice in the same list, after the dynamic
   screen. The browser measures how many cells the session's pane would hold at a
@@ -427,7 +428,8 @@ action outside it is refused with `E4002` and never reaches the emulator.
 
 One WebSocket at `/ws/<session-id>`.
 
-**Server → browser.** Text frames only, each an object with a `type`:
+**Server → browser.** Text frames only, each an object with a `type`, or an
+array of them when one moment produced several (a paint and the status with it):
 
 ```jsonc
 {"type":"hello","sessionId":"…","rows":43,"cols":80,"model":4,"oversize":"","models":[{"model":2,"rows":24,"columns":80}],"role":"controller","owner":true,"pass":"…","viewers":1,"idleTimeoutMs":300000}
@@ -481,77 +483,44 @@ reconnecting to it is worth trying.
 
 ### HTTP
 
-| Method   | Path                        | Result                                                                                        |
-| -------- | --------------------------- | --------------------------------------------------------------------------------------------- |
-| `POST`   | `/api/sessions`             | Creates a session → `201 {id, rows, cols, model}`, after b3270 has reported its real geometry |
-| `GET`    | `/api/sessions`             | Lists sessions → `{sessions:[{id, viewers, connection, host}], defaultHost}`                  |
-| `DELETE` | `/api/sessions/<id>`        | Ends the session with its owner's `x-session-pass` → `204`; otherwise `403 E3014`             |
-| `GET`    | `/api/sessions/<id>/3270/…` | Forwarded to that session's emulator; see REST below                                          |
-| `GET`    | anything else               | Static files from `public/`                                                                   |
+| Method   | Path                 | Result                                                                                               |
+| -------- | -------------------- | ---------------------------------------------------------------------------------------------------- |
+| `POST`   | `/api/sessions`      | Creates a session → `201 {id, rows, cols, model}`, after the emulator has reported its real geometry |
+| `GET`    | `/api/sessions`      | Lists sessions → `{sessions:[{id, viewers, connection, host}], defaultHost}`                         |
+| `DELETE` | `/api/sessions/<id>` | Ends the session with its owner's `x-session-pass` → `204`; otherwise `403 E3014`                    |
+| `GET`    | anything else        | Static files from `public/`                                                                          |
 
 Errors are JSON: `{"code":"E6001","message":"…"}` with a matching status.
-
-### REST
-
-Every session's b3270 serves s3270's own `-httpd` interface on a loopback port
-of its own, and everything under `/3270/` is forwarded there unchanged and
-answered verbatim — status, content type and body:
-
-```bash
-curl "http://127.0.0.1:8017/api/sessions/$ID/3270/rest/json/Query(CodePage)"
-curl "http://127.0.0.1:8017/api/sessions/$ID/3270/rest/text/String(hello)"
-curl "http://127.0.0.1:8017/api/sessions/$ID/3270/rest/stext/Ascii1(1,1,80)"
-```
-
-So the protocol is s3270's, documented at
-<https://x3270.miraheze.org/wiki/HTTP_server>: `json`, `text` and `stext`
-flavours, the `{result, result-err, status}` envelope, s3270's action syntax and
-s3270's own error wording. An existing s3270 REST client changes its base URL
-and nothing else.
-
-The emulator's port is bound to loopback and guarded by a per-session
-`x3270-security` cookie the proxy supplies, so it can only be reached through
-this server. REST calls ignore the controller/observer rule of section 3: an
-automation client acts whoever else is watching, and watchers see the result.
-
-Every session takes REST calls from the moment it exists; there is no switch
-over it. That is what a deployment for **automation with no browser on it**
-needs — a session created over `POST /api/sessions` and driven only over REST
-has no controller who could turn one on — but it does mean whoever can reach
-this server can drive any session it is holding, including one someone is
-sitting at. Reaching the server is therefore the boundary, and a deployment that
-needs a narrower one puts authentication in front of it (section 8).
 
 ## 7. Configuration
 
 `config.jsonc`, overridable with the `TN3270_CONFIG` environment variable. JSONC:
 `//` and `/* */` comments and trailing commas are accepted.
 
-| Setting                         | Default              | Meaning                                                                                                                                                                               |
-| ------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `server.host`                   | `127.0.0.1`          | Listen address                                                                                                                                                                        |
-| `server.port`                   | `8017`               | Listen port                                                                                                                                                                           |
-| `b3270.path`                    | `b3270`              | Executable, resolved from `PATH`                                                                                                                                                      |
-| `b3270.model`                   | `2`                  | 3270 model a session starts on, 2–5; changeable from the settings panel                                                                                                               |
-| `b3270.defaultHost`             | `null`               | Connect new sessions here; `null` starts disconnected                                                                                                                                 |
-| `b3270.extraArgs`               | `[]`                 | Appended verbatim, e.g. `["-cafile","/path/ca.pem"]`                                                                                                                                  |
-| `b3270.settings`                | `{"nopSeconds": 60}` | b3270 resources, each passed as `-xrm`. `nopSeconds` sends a TELNET NOP after that many quiet seconds, so a firewall or NAT never drops the host connection as idle; `0` turns it off |
-| `sessions.maxSessions`          | `16`                 | Refuses more with `E3002`                                                                                                                                                             |
-| `sessions.maxViewersPerSession` | `8`                  | Refuses more with `E3003`                                                                                                                                                             |
-| `sessions.idleTimeoutMs`        | `300000`             | Viewer-less session lifetime; `0` disables reaping                                                                                                                                    |
-| `security.allowedHosts`         | `[]`                 | Empty = any host. An entry with a port matches exactly; without one, any port on that host                                                                                            |
-| `security.trustProxyHeaders`    | `false`              | Take the client's address from `X-Forwarded-For` and their name from `X-Remote-User`. Only with a reverse proxy in front that sets both                                               |
-| `logLevel`                      | `info`               | `debug` logs every line exchanged with b3270                                                                                                                                          |
-| `logFile`                       | `log/tn3270.log`     | Kept as well as stderr, and rolled over to `<logFile>.1`; `""` is stderr only                                                                                                         |
-| `logMaxBytes`                   | `10485760`           | Size at which the log rolls over, so the pair is never more than twice this                                                                                                           |
+| Setting                         | Default                              | Meaning                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `server.host`                   | `127.0.0.1`                          | Listen address                                                                                                                                                                                                                                                                                                                                                                 |
+| `server.port`                   | `8017`                               | Listen port                                                                                                                                                                                                                                                                                                                                                                    |
+| `emulator.model`                | `2`                                  | 3270 model a session starts on, 2–5; changeable from the settings panel                                                                                                                                                                                                                                                                                                        |
+| `emulator.defaultHost`          | `null`                               | Connect new sessions here; `null` starts disconnected                                                                                                                                                                                                                                                                                                                          |
+| `emulator.settings`             | `{"nopSeconds": 60, "saveLines": 0}` | node3270's options, which are x3270's resources under the same names, each with a value of its default's type; anything else stops the start with `E1005` or `E1003`. `nopSeconds` sends a TELNET NOP after that many quiet seconds, so a firewall or NAT never drops the host connection as idle; `0` turns it off. `saveLines` is the scrollback, which the page never shows |
+| `sessions.maxSessions`          | `16`                                 | Refuses more with `E3002`                                                                                                                                                                                                                                                                                                                                                      |
+| `sessions.maxViewersPerSession` | `8`                                  | Refuses more with `E3003`                                                                                                                                                                                                                                                                                                                                                      |
+| `sessions.idleTimeoutMs`        | `300000`                             | Viewer-less session lifetime; `0` disables reaping                                                                                                                                                                                                                                                                                                                             |
+| `security.allowedHosts`         | `[]`                                 | Empty = any host. An entry with a port matches exactly; without one, any port on that host                                                                                                                                                                                                                                                                                     |
+| `security.trustProxyHeaders`    | `false`                              | Take the client's address from `X-Forwarded-For` and their name from `X-Remote-User`. Only with a reverse proxy in front that sets both                                                                                                                                                                                                                                        |
+| `logLevel`                      | `info`                               | `debug` logs every action run and the emulator's own debug lines                                                                                                                                                                                                                                                                                                               |
+| `logFile`                       | `log/tn3270.log`                     | Kept as well as stderr, and rolled over to `<logFile>.1`; `""` is stderr only                                                                                                                                                                                                                                                                                                  |
+| `logMaxBytes`                   | `10485760`                           | Size at which the log rolls over, so the pair is never more than twice this                                                                                                                                                                                                                                                                                                    |
 
 ## 8. Error codes
 
 Every code is fixed for the lifetime of the project and appears both in the log
 and in the page. The blocks are subsystems, and a code belongs to the subsystem
 that decides it is an error rather than to the file that throws it: `E1xxx`
-config, `E2xxx` b3270, `E3xxx` session, `E4xxx` client messages, `E5xxx`
-browser, `E6xxx` server transport, `E7xxx` the REST proxy.
+config, `E2xxx` the emulator, `E3xxx` session, `E4xxx` client messages, `E5xxx`
+browser, `E6xxx` server transport. Retired codes — `E2001`–`E2003` and `E2006`
+of the old b3270 child process, `E2007` of the old emulator thread pool, `E3016` of the old session worker threads, `E7xxx` of the old REST proxy — are not reused.
 
 | Code    | Meaning                                                |
 | ------- | ------------------------------------------------------ |
@@ -559,14 +528,11 @@ browser, `E6xxx` server transport, `E7xxx` the REST proxy.
 | `E1002` | Config file is not valid JSONC                         |
 | `E1003` | Config value has the wrong type                        |
 | `E1004` | Config value is out of range                           |
-| `E1005` | Config value is not a usable b3270 resource name       |
+| `E1005` | Config setting is not an emulator setting              |
 | `E1006` | Code page is in the wrong config section               |
-| `E2001` | b3270 could not be spawned                             |
-| `E2002` | b3270 exited unexpectedly                              |
-| `E2003` | b3270 emitted a line that is not valid JSON            |
-| `E2004` | b3270 reported a protocol error                        |
-| `E2005` | b3270 action failed                                    |
-| `E2006` | b3270 stdin is closed                                  |
+| `E1007` | Config section was renamed (`b3270` is now `emulator`) |
+| `E2004` | Emulator reported a protocol error                     |
+| `E2005` | Emulator action failed                                 |
 | `E3001` | Session not found                                      |
 | `E3002` | Session limit reached                                  |
 | `E3003` | Session has too many viewers                           |
@@ -631,8 +597,6 @@ browser, `E6xxx` server transport, `E7xxx` the REST proxy.
 | `E6005` | Log file could not be opened                           |
 | `E6006` | Log file could not be written or rolled over           |
 | `E6010` | Viewer is too slow to receive the screen               |
-| `E7002` | REST is not available for this session                 |
-| `E7003` | REST request to b3270 failed                           |
 | `E0000` | An error with no code of its own; see the log          |
 
 Errors are shown as a dismissible bar at the top of the page. The page is never
@@ -641,7 +605,7 @@ navigated away from.
 ## 9. Running it
 
 ```bash
-nix develop            # node, typescript, and X11-free b3270 and s3270
+nix develop            # node, typescript, and X11-free b3270 and s3270 for node3270's comparison tests
 npm install
 npm test               # 204 tests: unit, integration, and the WASM round-trip
 npm run typecheck      # tsc --strict over JSDoc; the "no any" gate
@@ -663,7 +627,7 @@ it.
 A session saved from the Recorder panel can be played back as a host too:
 
 ```bash
-npm run start:recording -- recording.json [--codepage cp273]
+npm run start:recording -- recording.json [--codepage german]
 ```
 
 It shows the first recorded screen and answers each AID key the recording

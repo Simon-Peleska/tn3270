@@ -1,0 +1,413 @@
+import assert from "node:assert/strict";
+import {
+  TRACES,
+  assertSameLines,
+  scenario,
+  startB3270,
+  startOurs,
+  telnetUnits,
+} from "./harness.js";
+import { parseTrace } from "../../test/fakehost.js";
+import { CODE_TABLE } from "../src/ctlr.js";
+import {
+  RESOLVING,
+  Session,
+  TCP_PENDING,
+  changeCstate,
+} from "../src/session.js";
+import { netConnected, netInput } from "../src/telnet.js";
+
+// Random scenarios that b3270 and node3270 must play out identically: keyboard actions on a
+// formatted screen and random 3270 data streams from the host.
+// Every choice comes from a seeded Rng, so a failure replays exactly. Jazzer.js's coverage-guided
+// fuzz() below (npm run fuzz) runs host data streams through node3270 alone, in-process, for
+// speed; scripts/fuzz.mjs --corpus then plays what it kept against b3270.
+
+/** @typedef {[string, ...(string | number)[]]} Step */
+
+/** @typedef {import("./rng.js").Rng} Rng */
+
+const TYPED_CHARS = [
+  ..."abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+  ..."      .,;:-_+*/=()<>!?&%$#@'\"|",
+  ..."äöüÄÖÜß€¢¬",
+];
+
+/** Text for String(): mostly plain characters, sometimes x3270's escapes. @param {Rng} r */
+function typedText(r) {
+  let text = "";
+  const len = 1 + r.int(12);
+  for (let i = 0; i < len; i++) {
+    if (r.chance(0.04))
+      text += r.pick(["\\t", "\\b", "\\n", "\\r", "\\\\", "\\x41", "\\e"]);
+    else text += r.pick(TYPED_CHARS);
+  }
+  return text;
+}
+
+/** @param {Rng} r @param {number} bytes */
+function hexBytes(r, bytes) {
+  let hex = "";
+  for (let i = 0; i < bytes; i++)
+    hex += r.int(256).toString(16).padStart(2, "0");
+  return hex;
+}
+
+/** Actions that edit the screen and never wait on the host. @param {Rng} r @returns {Step} */
+function editAction(r) {
+  switch (r.int(11)) {
+    case 0:
+    case 1:
+    case 2:
+      return ["String", typedText(r)];
+    case 3:
+      return [
+        r.pick([
+          "Tab",
+          "BackTab",
+          "Home",
+          "Left",
+          "Right",
+          "Up",
+          "Down",
+          "Newline",
+          "FieldEnd",
+          "NextWord",
+          "PreviousWord",
+          "Left2",
+          "Right2",
+        ]),
+      ];
+    case 4:
+      return [
+        r.pick([
+          "Delete",
+          "BackSpace",
+          "Erase",
+          "EraseEOF",
+          "EraseInput",
+          "DeleteField",
+          "DeleteWord",
+          "Dup",
+          "FieldMark",
+          "CircumNot",
+        ]),
+      ];
+    case 5:
+      return [r.pick(["Insert", "ToggleInsert", "Reset", "ToggleReverse"])];
+    case 6:
+      return r.chance(0.5)
+        ? ["MoveCursor", r.int(26), r.int(82)]
+        : ["MoveCursor1", 1 + r.int(25), 1 + r.int(81)];
+    case 7:
+      return ["Key", r.pick(TYPED_CHARS)];
+    case 8:
+      return ["HexString", hexBytes(r, 1 + r.int(4))];
+    case 9:
+      return [
+        "PasteString",
+        Buffer.from(typedText(r).replace(/\\/g, ""), "utf8").toString("hex"),
+      ];
+    default:
+      return [
+        "Toggle",
+        r.pick([
+          "monoCase",
+          "blankFill",
+          "overlayPaste",
+          "insertMode",
+          "reverseInputMode",
+          "underscoreBlankFill",
+        ]),
+      ];
+  }
+}
+
+/** Actions that send the host an AID; the harness answers each with a keyboard unlock. @param {Rng} r @returns {Step} */
+function aidAction(r) {
+  switch (r.int(4)) {
+    case 0:
+      return ["Enter"];
+    case 1:
+      return ["PF", 1 + r.int(24)];
+    case 2:
+      return ["PA", 1 + r.int(3)];
+    default:
+      return ["Clear"];
+  }
+}
+
+/** Actions that only read; the screen must stay inside 24x80 for the ranges, as dumping from the very end crashes b3270. @param {Rng} r @returns {Step} */
+function readAction(r) {
+  switch (r.int(7)) {
+    case 0:
+      return ["Ascii"];
+    case 1:
+      return ["Ascii", r.int(24), r.int(80), 1 + r.int(80)];
+    case 2:
+      return ["Ebcdic", r.int(24), 0, 1 + r.int(80)];
+    case 3:
+      return ["ReadBuffer"];
+    case 4:
+      return ["ReadBuffer", "Ebcdic"];
+    case 5:
+      return ["AsciiField"];
+    default:
+      return [
+        "Query",
+        r.pick(["Cursor", "Cursor1", "Formatted", "ScreenCurSize"]),
+      ];
+  }
+}
+
+/** Keyboard work on three-fields.trc's formatted screen. @param {Rng} r */
+export function keyboardCase(r) {
+  /** @type {Step[]} */
+  const actions = [];
+  const steps = 20 + r.int(30);
+  for (let i = 0; i < steps; i++) {
+    const roll = r.next();
+    if (roll < 0.75) actions.push(editAction(r));
+    else if (roll < 0.83) actions.push(aidAction(r));
+    else actions.push(readAction(r));
+  }
+  actions.push(["Ascii", 0, 0, 240], ["ReadBuffer"]);
+  return { trace: "three-fields.trc", actions };
+}
+
+/** A buffer address, usually on a 24x80 screen, sometimes past even 43x80. @param {Rng} r */
+function address(r) {
+  const addr = r.chance(0.9) ? r.int(1920) : r.int(4200);
+  if (addr < 4096 && r.chance(0.8))
+    return [CODE_TABLE[addr >> 6], CODE_TABLE[addr & 0x3f]];
+  return [(addr >> 8) & 0x3f, addr & 0xff];
+}
+
+/** Mostly printable EBCDIC, now and then any byte. @param {Rng} r */
+function ebcdicChar(r) {
+  if (r.chance(0.05)) return r.int(256);
+  return r.pick([
+    0x40,
+    0x40,
+    ...[0, 1, 2, 3, 4, 5, 6, 7, 8].flatMap((i) => [
+      0x81 + i,
+      0x91 + i,
+      0xc1 + i,
+      0xd1 + i,
+    ]),
+    0xf0,
+    0xf1,
+    0xf5,
+    0xf9,
+    0x4b,
+    0x4d,
+    0x5c,
+    0x6b,
+    0x7d,
+  ]);
+}
+
+/** A field attribute: the common ones, and any byte. @param {Rng} r */
+function fieldAttr(r) {
+  return r.chance(0.8)
+    ? r.pick([0x40, 0x60, 0xc8, 0xe8, 0x4c, 0x6c, 0x50, 0xf0, 0xf8, 0x7c, 0xc1])
+    : r.int(256);
+}
+
+/** An extended attribute pair for SFE, SA and MF. @param {Rng} r */
+function extAttr(r) {
+  const type = r.pick([0xc0, 0x41, 0x42, 0x43, 0x45, 0x46, 0x00, r.int(256)]);
+  const value =
+    type === 0xc0
+      ? fieldAttr(r)
+      : type === 0x41
+        ? r.pick([0x00, 0xf1, 0xf2, 0xf4, 0xf8])
+        : type === 0x42 || type === 0x45
+          ? r.pick([0x00, 0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xff])
+          : type === 0x43
+            ? r.pick([0x00, 0xf1, 0x41])
+            : r.int(256);
+  return [type, value];
+}
+
+/** A 3270 Write, Erase/Write, Erase/Write Alternate or Erase All Unprotected, with random orders. @param {Rng} r */
+function writeRecord(r) {
+  const command = r.pick([0xf1, 0xf1, 0xf1, 0xf5, 0x7e, 0x6f, 0xf1]);
+  /** @type {number[]} */
+  const bytes = [command];
+  if (command === 0x6f) return bytes;
+  // WCC: mostly keyboard restore, sometimes reset MDT, sound alarm or nothing.
+  bytes.push(r.pick([0xc2, 0xc3, 0xc6, 0x40, 0xc0, r.int(256)]));
+  const orders = r.int(14);
+  for (let i = 0; i < orders; i++) {
+    switch (r.int(12)) {
+      case 0:
+      case 1:
+        bytes.push(0x11, ...address(r));
+        break;
+      case 2:
+        bytes.push(0x1d, fieldAttr(r));
+        break;
+      case 3: {
+        const pairs = r.int(4);
+        bytes.push(0x29, pairs);
+        for (let p = 0; p < pairs; p++) bytes.push(...extAttr(r));
+        break;
+      }
+      case 4:
+        bytes.push(0x28, ...extAttr(r));
+        break;
+      case 5: {
+        const pairs = r.int(3);
+        bytes.push(0x2c, pairs);
+        for (let p = 0; p < pairs; p++) bytes.push(...extAttr(r));
+        break;
+      }
+      case 6:
+        bytes.push(r.pick([0x13, 0x05]));
+        break;
+      case 7:
+        bytes.push(0x3c, ...address(r));
+        if (r.chance(0.2)) bytes.push(0x08);
+        bytes.push(ebcdicChar(r));
+        break;
+      case 8:
+        bytes.push(0x12, ...address(r));
+        break;
+      case 9:
+        bytes.push(0x08, ebcdicChar(r));
+        break;
+      default: {
+        const len = 1 + r.int(20);
+        for (let c = 0; c < len; c++) bytes.push(ebcdicChar(r));
+      }
+    }
+  }
+  return bytes;
+}
+
+/** Read Buffer, Read Modified, Read Modified All, or a Read Partition query. @param {Rng} r */
+function readRecord(r) {
+  if (r.chance(0.2)) return [0xf3, 0x00, 0x05, 0x01, 0xff, 0xff, 0x02];
+  return [r.pick([0xf2, 0xf6, 0x6e])];
+}
+
+/** One TN3270E 3270-DATA record, IACs doubled. @param {number[]} bytes */
+function record3270(bytes) {
+  const body = Buffer.from(bytes.flatMap((b) => (b === 0xff ? [b, b] : [b])));
+  return `0000000000${body.toString("hex")}ffef`;
+}
+
+/** Random host writes on three-fields.trc, mixed with typing and reading. @param {Rng} r */
+export function dataStreamCase(r) {
+  /** @type {Step[]} */
+  const actions = [];
+  const steps = 15 + r.int(25);
+  for (let i = 0; i < steps; i++) {
+    const roll = r.next();
+    if (roll < 0.45) actions.push(["host", record3270(writeRecord(r))]);
+    else if (roll < 0.5) actions.push(["host", record3270(readRecord(r))]);
+    else if (roll < 0.8) actions.push(editAction(r));
+    else if (roll < 0.85) actions.push(aidAction(r));
+    else actions.push(readAction(r));
+  }
+  actions.push(["Ascii"], ["ReadBuffer"]);
+  return { trace: "three-fields.trc", actions };
+}
+
+export const CASES = {
+  keyboard: keyboardCase,
+  datastream: dataStreamCase,
+};
+
+/**
+ * Plays one case against both emulators; a mismatch names the case and lists the steps to replay.
+ * b3270 hangs or crashes on some inputs; then there is nothing to compare,
+ * and the case only has to finish on our side.
+ * @param {string} label what replays it, like "keyboard seed 42"
+ * @param {{trace: string, actions: Step[]}} fuzzCase
+ * @returns {Promise<string>} "" when compared, otherwise why b3270 was skipped
+ */
+export async function check(label, { trace, actions }) {
+  const name = `fuzz ${label} (${trace})`;
+  const b3270 = startB3270();
+  const stuck = setTimeout(() => b3270.stop(), 8000);
+  const [theirs, ours] = await Promise.allSettled([
+    scenario(b3270, trace, actions),
+    scenario(startOurs(), trace, actions),
+  ]);
+  clearTimeout(stuck);
+  try {
+    if (ours.status === "rejected") throw ours.reason;
+    if (theirs.status === "rejected")
+      return `${name}: b3270 failed: ${/** @type {Error} */ (theirs.reason).message}`;
+    assertSameLines(ours.value.lines, theirs.value.lines);
+    assert.equal(ours.value.received, theirs.value.received);
+    return "";
+  } catch (e) {
+    const error = /** @type {Error} */ (e);
+    error.message = `${name}: ${error.message}\nsteps: ${JSON.stringify(actions)}`;
+    throw error;
+  }
+}
+
+const RECORD_HEADER = Buffer.alloc(5);
+const EOR = Buffer.from([0xff, 0xef]);
+
+/**
+ * A fuzz input as the host's 3270 data stream: each run of bytes between 0xFF bytes is one
+ * TN3270E record. Byte-level mutations then stay local, and Jazzer's tracing of the comparisons
+ * in ctlr.js hands it the order codes and attribute values to try.
+ * No record holds a 0xFF, so there is no IAC to double.
+ * @param {Buffer} data @returns {Buffer[]}
+ */
+function rawRecords(data) {
+  /** @type {Buffer[]} */
+  const records = [];
+  let start = 0;
+  while (start < data.length) {
+    let end = data.indexOf(0xff, start);
+    if (end === -1) end = data.length;
+    if (end > start)
+      records.push(
+        Buffer.concat([RECORD_HEADER, data.subarray(start, end), EOR]),
+      );
+    start = end + 1;
+  }
+  return records;
+}
+
+/** A fuzz input as a case to play against b3270. @param {Buffer} data */
+export function rawCase(data) {
+  /** @type {Step[]} */
+  const actions = rawRecords(data).map((record) => [
+    "host",
+    record.toString("hex"),
+  ]);
+  actions.push(["Ascii"], ["ReadBuffer"]);
+  return { trace: "three-fields.trc", actions };
+}
+
+const NEGOTIATION = telnetUnits(parseTrace(TRACES + "three-fields.trc"));
+
+/**
+ * Jazzer.js's entry point: node3270 alone, connected without a socket to three-fields.trc's
+ * negotiation, takes the input as host records. Thousands of runs a second, where a run against
+ * b3270 takes a fifth of one; Jazzer keeps the inputs that reach new code in 3270/src/, and
+ * scripts/fuzz.mjs --corpus checks those against b3270. Only a crash fails here.
+ * @param {Buffer} data
+ */
+export function fuzz(data) {
+  const session = new Session({ model: "3279-4-E" });
+  session.indications(() => {});
+  const s = session.s;
+  changeCstate(s, RESOLVING);
+  changeCstate(s, TCP_PENDING);
+  netConnected(s);
+  for (const unit of NEGOTIATION) netInput(s, unit);
+  for (const record of rawRecords(data)) {
+    if (!netInput(s, record)) break;
+    session.flush();
+  }
+  clearTimeout(s.unlockTimer ?? undefined);
+}

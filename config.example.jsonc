@@ -4,11 +4,8 @@
     "port": 8017,
   },
 
-  // One b3270 process per session.
-  "b3270": {
-    // A bare name is resolved from PATH.
-    "path": "b3270",
-
+  // Every session runs in this process, on node3270, a port of x3270.
+  "emulator": {
     // 2 = 24x80, 3 = 32x80, 4 = 43x80, 5 = 27x132.
     "model": 2,
 
@@ -18,8 +15,8 @@
     // Connect to hosts over TLS by default. Set false for plain telnet.
     "tls": true,
 
-    // Any b3270 resource, passed as -xrm. A bare name is qualified "b3270.<name>";
-    // write "b3270.x" or "*x" in full for a different qualifier.
+    // Any of x3270's resources that node3270 has, by name, with a value of its
+    // type: true/false, a number or a string. A name it lacks stops the start.
     // https://x3270.miraheze.org/wiki/Category:Resources
     "settings": {
       // "codePage": "german",
@@ -28,14 +25,13 @@
       // "oversize": "160x62",
       // "monoCase": true,
       // "typeahead": false,
-      // "verifyHostCert": true,
       // A TELNET NOP after this many quiet seconds keeps a firewall from
       // dropping the host connection; 60 unless set, 0 turns it off.
-      // "nopSeconds": 60
+      // "nopSeconds": 60,
+      // Rows of earlier screens kept per session. The web UI doesn't show
+      // them, so 0 unless set.
+      // "saveLines": 0
     },
-
-    // Appended verbatim, for options that are not resources: ["-cafile", "/path/to/ca.pem"]
-    "extraArgs": [],
   },
 
   "sessions": {
@@ -55,7 +51,7 @@
     "trustProxyHeaders": false,
   },
 
-  // "debug" logs every line exchanged with b3270. Very noisy.
+  // "debug" logs every action run and the emulator's own debug lines. Very noisy.
   "logLevel": "info",
 
   // Logged to stderr as well. Rolls over to "<logFile>.1" past logMaxBytes; "" is stderr only.

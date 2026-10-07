@@ -4,6 +4,7 @@ import { Session } from "../server/session.js";
 import { SessionRegistry } from "../server/registry.js";
 import { AppError } from "../server/errors.js";
 import { keyboardLocked } from "../public/oia.js";
+import { fullPaint } from "../server/paint.js";
 import { computeHints } from "../public/hints.js";
 import {
   testConfig,
@@ -47,9 +48,9 @@ test("a stalled host cannot grow the input queue without limit", async (t) => {
   );
 });
 
-test("a viewer receives b3270's active code page and later changes", async (t) => {
+test("a viewer receives the emulator's active code page and later changes", async (t) => {
   const config = testConfig({
-    b3270: { settings: { codePage: "german" } },
+    emulator: { settings: { codePage: "german" } },
   });
   const session = new Session(config);
   t.after(() => session.close());
@@ -122,7 +123,7 @@ test("every attached viewer receives the same delta", async (t) => {
   const beforeA = a.paints.length;
   const beforeB = b.paints.length;
 
-  session.b3270.runActions([{ action: "String", args: ["hello"] }]);
+  session.runActions([{ action: "String", args: ["hello"] }]);
   await waitUntil(() => a.paints.length > beforeA, "a delta to be broadcast");
   await waitUntil(
     () => b.paints.length > beforeB,
@@ -1033,7 +1034,7 @@ test("BackNewline on a screen with no fields falls back to the start of the row 
   });
   await settle(session);
 
-  const none = new Array(screen.cells.length).fill(false);
+  const none = new Uint8Array(screen.cells.length);
   screen.applyFields(none, none, false);
   session.handleClientMessage(controller, {
     type: "action",
@@ -1263,6 +1264,32 @@ test("undo takes the typing back out a step at a time, and redo puts it back", a
   await waitUntil(() => row() === " abc 456 789", "the paste to come back");
 });
 
+test("typing the instant the field map arrives is still a step to undo", async (t) => {
+  const fixture = await startTracedSession("test/traces/three-fields.trc", {
+    records: 0,
+  });
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  const controller = collectingViewer("controller");
+  session.attach(controller);
+  const row = () => session.screen.rowText(0).slice(0, 12);
+
+  // Before any flush has looked at the formatted screen, as a fast typist or a
+  // slow machine would.
+  const applyFields = session.screen.applyFields.bind(session.screen);
+  let typed = false;
+  session.screen.applyFields = (...args) => {
+    applyFields(...args);
+    if (typed || !session.screen.fieldsFormatted || row() !== "            ")
+      return;
+    typed = true;
+    session.handleClientMessage(controller, { type: "text", value: "abc" });
+  };
+  await fixture.host.sendRecords(1);
+  await waitUntil(() => row() === " abc        ", "the typing to land");
+  await waitUntil(() => session.undoStack.length === 1, "a step of history");
+});
+
 test("an AID key ends the history: what was typed before it cannot be undone", async (t) => {
   const fixture = await startTracedSession("test/traces/three-fields.trc");
   t.after(() => fixture.close());
@@ -1287,10 +1314,10 @@ test("an AID key ends the history: what was typed before it cannot be undone", a
   assert.equal(row(), " abc        ", "the typing stands");
 });
 
-test("a b3270 resource set in the config reaches the emulator", async (t) => {
+test("a setting in the config reaches the emulator", async (t) => {
   const session = new Session(
     testConfig({
-      b3270: { model: 2, settings: { oversize: "90x30" } },
+      emulator: { model: 2, settings: { oversize: "90x30" } },
     }),
   );
   t.after(() => session.close());
@@ -1394,10 +1421,11 @@ test("fitting the screen under a live connection drops it and reopens the same h
   assert.equal(session.lastHost, expectedHost);
 });
 
-test("the registry refuses to exceed maxSessions", async () => {
+test("the registry refuses to exceed maxSessions", async (t) => {
   const registry = new SessionRegistry(
     testConfig({ sessions: { maxSessions: 1, idleTimeoutMs: 0 } }),
   );
+  t.after(() => registry.closeAll());
   await registry.create();
   await assert.rejects(
     () => registry.create(),
@@ -1407,29 +1435,13 @@ test("the registry refuses to exceed maxSessions", async () => {
       return true;
     },
   );
-  registry.closeAll();
 });
 
-test("the registry counts sessions still starting against maxSessions", async (t) => {
-  const registry = new SessionRegistry(
-    testConfig({ sessions: { maxSessions: 1, idleTimeoutMs: 0 } }),
-  );
-  t.after(() => registry.closeAll());
-
-  const first = registry.create();
-  await assert.rejects(registry.create(), (err) => {
-    assert.ok(err instanceof AppError);
-    assert.equal(err.code, "E3002");
-    return true;
-  });
-  await first;
-  assert.equal(registry.list().length, 1);
-});
-
-test("an unknown session id is a stable error, not a crash", () => {
+test("an unknown session id is a stable error, not a crash", async (t) => {
   const registry = new SessionRegistry(testConfig());
+  t.after(() => registry.closeAll());
   assert.throws(
-    () => registry.get("nope"),
+    () => registry.terminate("nope", ""),
     (err) => {
       assert.ok(err instanceof AppError);
       assert.equal(err.code, "E3001");
@@ -1438,12 +1450,27 @@ test("an unknown session id is a stable error, not a crash", () => {
   );
 });
 
-test("a closed session removes itself from the registry", async () => {
+test("only the owner may terminate a session through the registry", async (t) => {
   const registry = new SessionRegistry(testConfig());
-  const session = await registry.create();
-  await session.ready;
+  t.after(() => registry.closeAll());
+  const { id } = await registry.create();
+  assert.throws(
+    () => registry.terminate(id, "not the owner's pass"),
+    (err) => {
+      assert.ok(err instanceof AppError);
+      assert.equal(err.code, "E3014");
+      return true;
+    },
+  );
+});
+
+test("a closed session removes itself from the registry", async (t) => {
+  const registry = new SessionRegistry(testConfig());
+  t.after(() => registry.closeAll());
+  await registry.create();
   assert.equal(registry.list().length, 1);
-  session.close();
+  registry.closeAll();
+  await waitUntil(() => registry.sessions.size === 0, "the session to close");
   assert.equal(registry.list().length, 0);
 });
 
@@ -1457,7 +1484,7 @@ test("the field map is read on every session, and rides the paint as a flag", as
 
   // Nobody asks for this: Backspace needs it on every session, tint or no tint.
   await waitUntil(
-    () => session.screen.cells.some((cell) => cell.editable),
+    () => session.screen.inputCells.length > 0,
     "the field map to be read",
   );
   await settle(session);
@@ -1543,47 +1570,33 @@ test("recording captures the screen and each step, and stops cleanly", async (t)
 });
 
 test("recording keeps a full colour paint beside the plain-text screen", async (t) => {
-  const session = new Session(testConfig());
-  t.after(() => session.close());
-  await session.ready;
+  const fixture = await startTracedSession("test/traces/reverse.trc");
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  await settle(session);
 
-  session.screen.color = true;
   session.screen.defaultFg = "green";
   session.screen.defaultBg = "black";
-  const cell = session.screen.cellAt(0, 0);
-  cell.ch = "X";
-  cell.fg = "red";
-  cell.bg = "deepBlue";
-  cell.gr = "reverse,underscore";
-  cell.editable = true;
   session.recording = { steps: [] };
   session.record("Enter");
 
   const step = session.recording.steps[0];
-  assert.equal(step?.screen[0]?.[0], "X");
-  assert.equal(step?.paint?.type, "paint");
+  assert.equal(step?.screen[0], session.screen.rowText(0));
+  assert.deepEqual(step?.paint, fullPaint(session.screen));
   assert.equal(step?.paint?.full, true);
-  assert.equal(step?.paint?.color, true);
   assert.equal(step?.paint?.defaultFg, "green");
   assert.equal(step?.paint?.defaultBg, "black");
-  assert.deepEqual(step?.paint?.size, {
-    rows: session.screen.rows,
-    cols: session.screen.cols,
-  });
-  assert.deepEqual(step?.paint?.rows[0]?.runs[0], {
-    col: 0,
-    text: "X",
-    fg: "red",
-    bg: "deepBlue",
-    gr: "reverse,underscore",
-    editable: true,
-  });
+  assert.ok(
+    step?.paint?.rows.some((row) => row.runs.some((run) => run.fg === "red")),
+    "this trace paints in red, so the recording must too",
+  );
 });
 
 test("stopping a recording saves the final screen after the last input", async (t) => {
-  const session = new Session(testConfig());
-  t.after(() => session.close());
-  await session.ready;
+  const fixture = await startTracedSession("test/traces/reverse.trc");
+  t.after(() => fixture.close());
+  const { session } = fixture;
+  await settle(session);
 
   const controller = collectingViewer("controller");
   session.attach(controller);
@@ -1591,9 +1604,6 @@ test("stopping a recording saves the final screen after the last input", async (
     type: "recorder",
     action: "start",
   });
-  const cell = session.screen.cellAt(0, 0);
-  cell.ch = "Z";
-  cell.fg = "red";
   session.handleClientMessage(controller, { type: "recorder", action: "stop" });
 
   const recorded = controller.messages.filter(
@@ -1604,8 +1614,8 @@ test("stopping a recording saves the final screen after the last input", async (
   assert.equal(recorded[0]?.type, "recorderStep");
   if (recorded[0]?.type !== "recorderStep") return;
   assert.equal(recorded[0].step.final, true);
-  assert.equal(recorded[0].step.screen[0]?.[0], "Z");
-  assert.equal(recorded[0].step.paint?.rows[0]?.runs[0]?.fg, "red");
+  assert.equal(recorded[0].step.screen[0], session.screen.rowText(0));
+  assert.deepEqual(recorded[0].step.paint, fullPaint(session.screen));
   assert.equal(recorded[1]?.type, "recorderStopped");
 });
 
@@ -1668,10 +1678,7 @@ test("Stop acknowledges a recorded cursor move without waiting for the host", as
 
   const controller = collectingViewer("controller");
   session.attach(controller);
-  await waitUntil(
-    () => !session.fieldsStale && session.fieldReadTag === null,
-    "the field map",
-  );
+  await waitUntil(() => !session.fieldsStale, "the field map");
   session.handleClientMessage(controller, {
     type: "recorder",
     action: "start",
@@ -1698,10 +1705,7 @@ test("Stop acknowledges immediately even when typing is queued behind a busy hos
 
   const controller = collectingViewer("controller");
   session.attach(controller);
-  await waitUntil(
-    () => !session.fieldsStale && session.fieldReadTag === null,
-    "the field map",
-  );
+  await waitUntil(() => !session.fieldsStale, "the field map");
   session.handleClientMessage(controller, {
     type: "recorder",
     action: "start",

@@ -44,7 +44,7 @@ async function startRecordedSession(steps) {
   );
   const session = new Session(
     testConfig({
-      b3270: { model: host.script.model, settings: { codePage: "cp273" } },
+      emulator: { model: host.script.model, settings: { codePage: "german" } },
     }),
   );
   await session.ready;

@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { B3270 } from "./b3270.js";
-import { fieldMap } from "./readbuffer.js";
+import { Session as Emulator } from "../3270/src/index.js";
 import { editableSnapshot, changedRuns } from "./history.js";
 import { ScreenModel } from "./screen.js";
 import { OiaModel } from "./oia.js";
@@ -8,7 +7,7 @@ import { fullPaint, paintDelta } from "./paint.js";
 import { pasteSegments } from "../public/paste.js";
 import { AppError, describeError } from "./errors.js";
 import { isHostAllowed } from "./protocol.js";
-import { logger } from "./log.js";
+import { logger, logsDebug } from "./log.js";
 
 /**
  * @typedef {object} Viewer
@@ -52,33 +51,25 @@ const AID_ACTIONS = new Set([
 const INTERRUPT_ACTIONS = new Set(["Reset", "Attn", "SysReq"]);
 
 export class Session {
-  /**
-   * @param {import('./config.js').Config} config
-   * @param {import('./restproxy.js').RestEndpoint | null} [rest] null leaves
-   *   b3270 without an httpd, which only tests want.
-   * @param {string} [user] shown in the process list, '' for nobody
-   * @param {string} [id]
-   */
-  constructor(config, rest = null, user = "", id = randomUUID()) {
+  /** @param {import('./config.js').Config} config */
+  constructor(config) {
     /** @type {string} */
-    this.id = id;
+    this.id = randomUUID();
     this.startedAt = new Date().toISOString();
     this.startedBy = "";
     /** @type {import('./config.js').Config} */
     this.config = config;
-    this.log = logger("session", { session: id });
+    this.log = logger("session", { session: this.id });
 
-    /** @type {ScreenModel} */
-    this.screen = new ScreenModel();
     /** @type {OiaModel} */
     this.oia = new OiaModel();
-    /** @type {number} b3270 confirms this in screen-mode. */
-    this.model = config.b3270.model;
+    /** @type {number} the emulator confirms this in screen-mode. */
+    this.model = config.emulator.model;
     /** @type {string} */
     this.codePage = "bracket";
     /** @type {Map<string, string>} */
     this.codePageNames = new Map();
-    /** @type {import('./b3270.js').ModelInfo[]} */
+    /** @type {import('./indications.js').ModelInfo[]} */
     this.models = [];
     /** @type {Set<Viewer>} */
     this.viewers = new Set();
@@ -97,16 +88,12 @@ export class Session {
     /** @type {number | null} A model waiting for the connection to go away. */
     this.pendingModel = null;
     /** @type {string} `<cols>x<rows>`, or '' for the model's own size. */
-    this.oversize =
-      config.b3270.settings["oversize"] ??
-      config.b3270.settings["b3270.oversize"] ??
-      config.b3270.settings["*oversize"] ??
-      "";
+    this.oversize = String(config.emulator.settings["oversize"] ?? "");
     /** @type {boolean} Whether an oversize is waiting for the connection to go
      * away. The size itself is already in `oversize`. */
     this.pendingOversize = false;
-    /** @type {string} What b3270 was told, not always what was asked for. */
-    this.b3270Oversize = this.oversize;
+    /** @type {string} What the emulator was told, not always what was asked for. */
+    this.emulatorOversize = this.oversize;
 
     /** @type {boolean} */
     this.flushScheduled = false;
@@ -118,13 +105,15 @@ export class Session {
     this.onClosed = null;
     /** @type {boolean} The host redrew since the field map was read. */
     this.fieldsStale = false;
-    /** @type {string | null} The r-tag of the field-map read in flight. */
-    this.fieldReadTag = null;
+    /** @type {boolean} The keyboard's state changed since viewers were told. */
+    this.statusStale = false;
     /** @type {{ steps: import('./protocol.js').RecorderStep[] } | null} */
     this.recording = null;
 
     /** @type {import('./history.js').Snapshot | null} What the fields hold now. */
     this.snapshot = null;
+    /** @type {number} The screen's version when `snapshot` was last compared. */
+    this.snapshotVersion = -1;
     /** @type {import('./history.js').Snapshot[]} States to undo back through. */
     this.undoStack = [];
     /** @type {import('./history.js').Snapshot[]} States undone, to redo forward. */
@@ -134,39 +123,55 @@ export class Session {
      * history. */
     this.historyTag = null;
 
-    /** @type {import('./protocol.js').ClientMessage[]} Input not sent to b3270 yet. */
+    /** @type {import('./protocol.js').ClientMessage[]} Input not sent to the emulator yet. */
     this.inputQueue = [];
-    /** @type {string | null} The r-tag of the input b3270 is working on. */
+    /** @type {string | null} The r-tag of the input the emulator is working on. */
     this.inputTag = null;
 
     /** @type {() => void} */
     this.markReady = () => {};
-    /** @type {Promise<void>} b3270 reports its geometry and model list a few ms
-     * after spawn; describing the session earlier hands out a placeholder 24x80. */
+    /** @type {Promise<void>} the emulator reports its geometry and model list a few ms
+     * after it starts; describing the session earlier hands out a placeholder 24x80. */
     this.ready = new Promise((resolve) => {
       this.markReady = resolve;
     });
 
-    this.b3270 = new B3270({
-      path: config.b3270.path,
-      model: config.b3270.model,
-      settings: config.b3270.settings,
-      extraArgs: config.b3270.extraArgs,
-      rest,
-      sessionId: this.id,
-      user,
-      handlers: {
-        onIndication: (indication) => this.handleIndication(indication),
-        onExit: () => this.close(),
-        onError: (err) => this.reportError(err),
-      },
-    });
-
+    const options = {
+      model: String(config.emulator.model),
+      ...config.emulator.settings,
+    };
+    this.log.info("starting emulator", { options: JSON.stringify(options) });
+    this.emulator = new Emulator(options, this.log);
+    /** @type {ScreenModel} */
+    this.screen = new ScreenModel(this.emulator.s);
+    this.emulator.on("quit", () => this.close());
+    /** @type {number} */
+    this.nextTag = 1;
     // Nothing may wait forever on an emulator that never speaks.
     this.readyTimer = setTimeout(() => this.markReady(), 5000);
     this.readyTimer.unref();
 
     this.startIdleTimer();
+
+    // Last, as the emulator's initialize block arrives right away.
+    this.emulator.indications((indication) => {
+      if (!this.closed) this.handleIndication(indication);
+    });
+  }
+
+  /**
+   * @param {Array<{ action: string, args?: string[] }>} actions
+   * @returns {string} the r-tag its run-result indication comes back with
+   */
+  runActions(actions) {
+    const tag = `t${this.nextTag++}`;
+    if (logsDebug())
+      this.log.debug("run", { tag, actions: JSON.stringify(actions) });
+    this.emulator.run(actions, tag).catch(
+      /** @param {unknown} cause */
+      (cause) => this.reportError(new AppError("E2005", tag, cause)),
+    );
+    return tag;
   }
 
   /**
@@ -182,7 +187,7 @@ export class Session {
     // b3270 reports the host back without its port, so reopening from what it
     // says would silently land on telnet 23.
     this.lastHost = host;
-    this.b3270.open(this.openTarget(host));
+    this.runActions([{ action: "Open", args: [this.openTarget(host)] }]);
   }
 
   /**
@@ -190,14 +195,14 @@ export class Session {
    * @returns {string}
    */
   openTarget(host) {
-    if (!this.config.b3270.tls || /^(?:[A-Z]:)*L:/i.test(host)) return host;
+    if (!this.config.emulator.tls || /^(?:[A-Z]:)*L:/i.test(host)) return host;
     return `L:${host}`;
   }
 
   /** @returns {void} */
   disconnect() {
     this.log.info("disconnecting");
-    this.b3270.runActions([{ action: "Disconnect" }]);
+    this.runActions([{ action: "Disconnect" }]);
   }
 
   /**
@@ -215,12 +220,12 @@ export class Session {
         host: this.lastHost ?? "",
       });
       this.pendingModel = model;
-      this.b3270.runActions([{ action: "Disconnect" }]);
+      this.runActions([{ action: "Disconnect" }]);
       return;
     }
 
     this.log.info("changing model", { model, from: this.model });
-    this.b3270.runActions(this.sizeActions(model));
+    this.runActions(this.sizeActions(model));
   }
 
   /**
@@ -240,11 +245,11 @@ export class Session {
 
     if (this.oia.connectionState !== "not-connected") {
       this.pendingOversize = true;
-      this.b3270.runActions([{ action: "Disconnect" }]);
+      this.runActions([{ action: "Disconnect" }]);
       return;
     }
 
-    this.b3270.runActions(this.sizeActions(this.model));
+    this.runActions(this.sizeActions(this.model));
   }
 
   /**
@@ -267,7 +272,7 @@ export class Session {
     let oversize = this.oversize;
     if (!fits) {
       oversize =
-        this.b3270Oversize === "" || info === undefined
+        this.emulatorOversize === "" || info === undefined
           ? ""
           : `${info.columns}x${info.rows}`;
       this.oversize = "";
@@ -276,14 +281,14 @@ export class Session {
     /** @type {string[]} */
     const args = [];
     if (model !== this.model) args.push("model", String(model));
-    if (oversize !== this.b3270Oversize) args.push("oversize", oversize);
-    this.b3270Oversize = oversize;
+    if (oversize !== this.emulatorOversize) args.push("oversize", oversize);
+    this.emulatorOversize = oversize;
 
     return args.length > 0 ? [{ action: "Set", args }] : [];
   }
 
   /**
-   * @param {import('./b3270.js').Indication} indication
+   * @param {import('./indications.js').Indication} indication
    * @returns {void}
    */
   handleIndication(indication) {
@@ -313,13 +318,11 @@ export class Session {
     }
 
     if (kind === "screen") {
-      const update = /** @type {import('./b3270.js').ScreenIndication} */ (
-        body
-      );
+      const update =
+        /** @type {import('./indications.js').ScreenIndication} */ (body);
       this.screen.applyScreen(update);
       // An indication carrying only a cursor move — an arrow key, Tab, a click —
-      // cannot have moved a field boundary, and re-reading the buffer for one is
-      // the most expensive thing on the keystroke path.
+      // cannot have moved a field boundary.
       if ((update.rows ?? []).length > 0) this.fieldsStale = true;
       this.scheduleFlush();
       return;
@@ -328,7 +331,7 @@ export class Session {
       // Erase carries the size for hosts that never use the alternate screen.
       const before = this.screenSize();
       this.screen.applyErase(
-        /** @type {import('./b3270.js').EraseIndication} */ (body),
+        /** @type {import('./indications.js').EraseIndication} */ (body),
       );
       this.announceResize(before);
       this.fieldsStale = true;
@@ -336,9 +339,8 @@ export class Session {
       return;
     }
     if (kind === "screen-mode") {
-      const mode = /** @type {import('./b3270.js').ScreenModeIndication} */ (
-        body
-      );
+      const mode =
+        /** @type {import('./indications.js').ScreenModeIndication} */ (body);
       const before = this.screenSize();
       this.model = mode.model;
       this.screen.applyScreenMode(mode);
@@ -349,29 +351,32 @@ export class Session {
     }
     if (kind === "models") {
       if (Array.isArray(body)) {
-        this.models = /** @type {import('./b3270.js').ModelInfo[]} */ (body);
+        this.models = /** @type {import('./indications.js').ModelInfo[]} */ (
+          body
+        );
       }
       return;
     }
     if (kind === "oia") {
       const { insert, lock, typeahead } = this.oia;
       this.oia.applyOia(
-        /** @type {import('./b3270.js').OiaIndication} */ (body),
+        /** @type {import('./indications.js').OiaIndication} */ (body),
       );
       // None of these reach a browser any other way: the lock is what macro
       // playback waits on, and insert mode shows only as a cursor shape.
+      // Sent with the next paint, so the two go out as one frame.
       if (
         this.oia.insert !== insert ||
         this.oia.lock !== lock ||
         this.oia.typeahead !== typeahead
       )
-        this.broadcastStatus();
+        this.statusStale = true;
       this.scheduleFlush();
       return;
     }
     if (kind === "connection") {
       const connection =
-        /** @type {import('./b3270.js').ConnectionIndication} */ (body);
+        /** @type {import('./indications.js').ConnectionIndication} */ (body);
       this.log.info("connection state", {
         state: connection.state,
         host: connection.host ?? "",
@@ -397,28 +402,28 @@ export class Session {
             action: "Open",
             args: [this.openTarget(this.lastHost)],
           });
-        this.b3270.runActions(actions);
+        this.runActions(actions);
       }
       return;
     }
     if (kind === "popup") {
-      const popup = /** @type {import('./b3270.js').PopupIndication} */ (body);
+      const popup = /** @type {import('./indications.js').PopupIndication} */ (
+        body
+      );
       const text = popup.text ?? popup.error ?? "";
       this.log.warn("popup from emulator", { type: popup.type ?? "", text });
       this.sendToAll({ type: "error", code: "E2004", message: text });
       return;
     }
     if (kind === "ui-error") {
-      const uiError = /** @type {import('./b3270.js').UiErrorIndication} */ (
-        body
-      );
+      const uiError =
+        /** @type {import('./indications.js').UiErrorIndication} */ (body);
       this.reportError(new AppError("E2004", uiError.text ?? "protocol error"));
       return;
     }
     if (kind === "run-result") {
-      const result = /** @type {import('./b3270.js').RunResultIndication} */ (
-        body
-      );
+      const result =
+        /** @type {import('./indications.js').RunResultIndication} */ (body);
       const tag = result["r-tag"];
 
       // The edit has settled, so the state it reached is a step to undo back to.
@@ -430,21 +435,6 @@ export class Session {
       if (tag !== undefined && tag === this.inputTag) {
         this.inputTag = null;
         this.runQueuedInput();
-      }
-
-      if (tag !== undefined && tag === this.fieldReadTag) {
-        this.fieldReadTag = null;
-        if (result.success) {
-          const { editable, hidden, formatted } = fieldMap(
-            result.text ?? [],
-            this.screen.rows,
-            this.screen.cols,
-          );
-          this.screen.applyFields(editable, hidden, formatted);
-        }
-        this.scheduleFlush();
-        this.runQueuedInput();
-        return;
       }
 
       if (!result.success) {
@@ -477,16 +467,18 @@ export class Session {
   flush() {
     if (this.closed) return;
 
-    // Screen indications carry no field boundaries, so the field map is a
-    // separate ReadBuffer, one in flight at a time.
-    if (this.fieldsStale && this.fieldReadTag === null) {
+    // Screen indications carry no field boundaries, so the field map comes
+    // from the emulator's own buffer.
+    if (this.fieldsStale) {
       this.fieldsStale = false;
-      this.fieldReadTag = this.b3270.runActions([
-        { action: "ReadBuffer", args: ["Ascii"] },
-      ]);
+      const { fa, rows, cols } = this.emulator.s;
+      this.screen.applyFieldAttributes(fa.subarray(0, rows * cols));
+      this.runQueuedInput();
     }
 
     this.recordHistory();
+
+    if (this.statusStale) this.broadcastStatus();
 
     const dirtyRows = this.screen.takeDirtyRows();
     // A cursor move touches no row, and it is the whole of what a Left or a Tab
@@ -498,7 +490,7 @@ export class Session {
   }
 
   /**
-   * Everything that edits the screen goes through here, so that one thing the
+   * Every edit the user makes goes through here, so that one thing the
    * user did is one undo step: b3270 reports a batch in pieces, and the states
    * in the middle of it were never anyone's.
    *
@@ -506,7 +498,10 @@ export class Session {
    * @returns {string} the r-tag
    */
   runEdit(actions) {
-    this.historyTag = this.b3270.runActions(actions);
+    // The state the edit starts from is the step to undo back to, even when no
+    // flush has recorded it yet.
+    this.recordHistory();
+    this.historyTag = this.runActions(actions);
     return this.historyTag;
   }
 
@@ -518,9 +513,13 @@ export class Session {
    */
   recordHistory() {
     if (this.historyTag !== null) return;
+    if (this.snapshot !== null && this.screen.version === this.snapshotVersion)
+      return;
+    this.snapshotVersion = this.screen.version;
 
     const snapshot = editableSnapshot(
       this.screen.cells,
+      this.screen.inputCells,
       this.screen.fieldsFormatted,
       this.screen.cols,
       this.screen.cursor,
@@ -569,6 +568,7 @@ export class Session {
    * @returns {string | null} the r-tag, or null for nothing to step to
    */
   stepHistory(back) {
+    this.recordHistory();
     const from = back ? this.undoStack : this.redoStack;
     const to = back ? this.redoStack : this.undoStack;
     const target = from.pop();
@@ -605,8 +605,9 @@ export class Session {
       args: [String(target.cursor.row + 1), String(target.cursor.col + 1)],
     });
 
+    const tag = this.runEdit(actions);
     this.snapshot = target;
-    return this.runEdit(actions);
+    return tag;
   }
 
   /** @returns {string} `<rows>x<cols>` */
@@ -766,7 +767,7 @@ export class Session {
       codePage: this.codePage,
       models: this.models,
       oversize: this.oversize,
-      hostLocked: this.config.b3270.defaultHost !== null,
+      hostLocked: this.config.emulator.defaultHost !== null,
       role: viewer.role,
       owner: viewer.owner === true,
       pass: viewer.pass,
@@ -776,9 +777,6 @@ export class Session {
 
     this.repaint(viewer);
     this.broadcastStatus();
-    // No field map was read while there were no viewers.
-    this.fieldsStale = true;
-    this.scheduleFlush();
   }
 
   /**
@@ -1087,18 +1085,14 @@ export class Session {
   }
 
   /**
-   * The field map trails the screen by a ReadBuffer, and a paste, Backspace or
-   * the typing nudge read it, so queued input also waits for that to land:
+   * The field map trails the screen until the next flush, and a paste, Backspace
+   * or the typing nudge read it, so queued input also waits for that:
    * a macro's next step must see the screen the Enter before it brought.
    *
    * @returns {void}
    */
   runQueuedInput() {
-    while (
-      this.inputTag === null &&
-      !this.fieldsStale &&
-      this.fieldReadTag === null
-    ) {
+    while (this.inputTag === null && !this.fieldsStale) {
       const next = this.inputQueue.shift();
       if (next === undefined) return;
       // Unpacked only now, so a Reset typed during it still drops what is left.
@@ -1151,7 +1145,7 @@ export class Session {
             message.action === "BackNewline"
               ? this.backNewlineTarget()
               : this.fieldStartTarget();
-          return this.b3270.runActions([
+          return this.runActions([
             {
               action: "MoveCursor1",
               args: [String(target.row + 1), String(target.col + 1)],
@@ -1216,10 +1210,9 @@ export class Session {
    */
   canBackspace() {
     if (!this.screen.fieldsFormatted) return true;
-    const { cursor, cells, cols } = this.screen;
+    const { cursor, editable, cols } = this.screen;
     const at = cursor.row * cols + cursor.col;
-    const left = cells[(at - 1 + cells.length) % cells.length];
-    return left?.editable ?? true;
+    return editable[(at - 1 + editable.length) % editable.length] === 1;
   }
 
   /**
@@ -1229,11 +1222,11 @@ export class Session {
    * @returns {{ row: number, col: number }}
    */
   backNewlineTarget() {
-    const { cursor, cells, rows, cols } = this.screen;
+    const { cursor, editable, rows, cols } = this.screen;
     for (let above = 1; above <= rows; above++) {
       const row = (cursor.row - above + rows) % rows;
       for (let col = 0; col < cols; col++) {
-        if (cells[row * cols + col]?.editable) return { row, col };
+        if (editable[row * cols + col] === 1) return { row, col };
       }
     }
     return { row: (cursor.row - 1 + rows) % rows, col: 0 };
@@ -1246,14 +1239,14 @@ export class Session {
    * @returns {{ row: number, col: number }}
    */
   fieldStartTarget() {
-    const { cursor, cells, cols } = this.screen;
+    const { cursor, editable, cols } = this.screen;
     if (!this.screen.fieldsFormatted) return { row: cursor.row, col: 0 };
     let at = cursor.row * cols + cursor.col;
-    if (!cells[at]?.editable) return { row: cursor.row, col: cursor.col };
+    if (editable[at] !== 1) return { row: cursor.row, col: cursor.col };
     // A field can wrap past the last cell of the screen back to the first.
-    for (let steps = 1; steps < cells.length; steps++) {
-      const left = (at - 1 + cells.length) % cells.length;
-      if (!cells[left]?.editable) break;
+    for (let steps = 1; steps < editable.length; steps++) {
+      const left = (at - 1 + editable.length) % editable.length;
+      if (editable[left] !== 1) break;
       at = left;
     }
     return { row: Math.floor(at / cols), col: at % cols };
@@ -1267,16 +1260,17 @@ export class Session {
    */
   typingNudge() {
     if (!this.screen.fieldsFormatted) return null;
-    const { cursor, cells, cols } = this.screen;
+    const { cursor, editable, cols } = this.screen;
     const at = cursor.row * cols + cursor.col;
-    if (cells[at]?.editable ?? true) return null;
-    const right = (at + 1) % cells.length;
-    if (!(cells[right]?.editable ?? false)) return null;
+    if (editable[at] === 1) return null;
+    const right = (at + 1) % editable.length;
+    if (editable[right] !== 1) return null;
     return { row: Math.floor(right / cols), col: right % cols };
   }
 
   /** @returns {void} */
   broadcastStatus() {
+    this.statusStale = false;
     const everyone = [...this.viewers];
     const requests = [
       ...[...this.waiting].map((guest) => ({
@@ -1364,7 +1358,7 @@ export class Session {
     this.stopIdleTimer();
     this.log.info("closing", { viewers: this.viewers.size });
     this.inputQueue = [];
-    this.b3270.stop();
+    this.emulator.close();
     this.viewers.clear();
     this.waiting.clear();
     if (this.onClosed) this.onClosed();

@@ -2,27 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
-import { createServer } from "node:net";
 import { writeFile, rm } from "node:fs/promises";
 import { readFileSync, readdirSync } from "node:fs";
 import { WebSocket } from "../vendor/ws.mjs";
 import { FakeHost } from "./fakehost.js";
-import { testConfig, waitUntil } from "./helpers.js";
+import { freePort, testConfig, waitUntil } from "./helpers.js";
 import { Grid } from "../public/grid.js";
-
-/** @returns {Promise<number>} a port that was free a moment ago */
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const probe = createServer();
-    probe.on("error", reject);
-    probe.listen(0, "127.0.0.1", () => {
-      const address = probe.address();
-      const port =
-        typeof address === "object" && address !== null ? address.port : 0;
-      probe.close(() => resolve(port));
-    });
-  });
-}
 
 /**
  * @param {'debug' | 'info' | 'warn' | 'error'} [logLevel]
@@ -95,11 +80,13 @@ async function openViewer(url, headers = {}) {
   const grid = new Grid(1, 1);
 
   socket.on("message", (data) => {
-    const message = JSON.parse(String(data));
-    messages.push(message);
-    if (message["type"] !== "paint") return;
-    paints.push(message);
-    grid.applyPaint(message);
+    const frame = JSON.parse(String(data));
+    for (const message of Array.isArray(frame) ? frame : [frame]) {
+      messages.push(message);
+      if (message["type"] !== "paint") continue;
+      paints.push(message);
+      grid.applyPaint(message);
+    }
   });
 
   await new Promise((resolve, reject) => {
@@ -111,7 +98,9 @@ async function openViewer(url, headers = {}) {
 
 test("two browsers share one session over the real server", async (t) => {
   const server = await startServer();
-  const host = await FakeHost.listen("test/traces/reverse.trc", 0);
+  const host = await FakeHost.listen("test/traces/reverse.trc", 0, {
+    tls: true,
+  });
   t.after(async () => {
     await host.close();
     await server.stop();
@@ -375,12 +364,12 @@ test("the log file names the session and the address every line came from", asyn
   await waitUntil(() => viewer.messages.length > 0, "the hello message");
 
   const attached = await logLine(server, "viewer attached");
-  const spawned = await logLine(server, "spawning");
+  const started = await logLine(server, "starting emulator");
 
   assert.match(attached, new RegExp(`session=${created.id}\\b`));
   assert.match(attached, /ip=127\.0\.0\.1\b/);
   // Even the lines no browser caused say which session they belong to.
-  assert.match(spawned, new RegExp(`session=${created.id}\\b`));
+  assert.match(started, new RegExp(`session=${created.id}\\b`));
   // Nobody authenticated, so no user field at all rather than an empty one.
   assert.doesNotMatch(attached, /user=/);
 });

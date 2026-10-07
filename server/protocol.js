@@ -27,7 +27,7 @@ import { AppError } from "./errors.js";
  * @property {number} cols
  * @property {number} model
  * @property {string} codePage b3270's active host code-page name
- * @property {import('./b3270.js').ModelInfo[]} models
+ * @property {import('./indications.js').ModelInfo[]} models
  * @property {string} oversize `<cols>x<rows>`, or '' for the model's own size
  * @property {boolean} hostLocked
  * @property {'controller' | 'observer'} role

@@ -5,7 +5,7 @@ import { Macros } from "../public/macros.js";
 import { RecordingHost } from "./recordinghost.js";
 import { availableParallelism } from "node:os";
 import { collectingViewer, testConfig, waitUntil } from "./helpers.js";
-import { rng } from "./rng.js";
+import { rng } from "../3270/test/rng.js";
 
 /**
  * @typedef {{ row: number, col: number, length: number, text?: string }} Field
@@ -66,9 +66,7 @@ async function startHost(steps) {
  */
 async function startSession(host) {
   const session = new Session(
-    testConfig({
-      b3270: { model: host.script.model },
-    }),
+    testConfig({ emulator: { model: host.script.model } }),
   );
   await session.ready;
   const viewer = collectingViewer("viewer");
@@ -89,7 +87,6 @@ function idle(session) {
     session.inputQueue.length === 0 &&
     session.inputTag === null &&
     session.historyTag === null &&
-    session.fieldReadTag === null &&
     !session.fieldsStale &&
     session.screen.fieldsFormatted &&
     !["twait", "syswait", "not-connected", "connecting"].includes(
@@ -215,7 +212,7 @@ const FUZZ_CHARS = "abcXYZ019 .-/";
  * What a person might send: mostly typing and moving about, now and then a
  * paste, a click, or an AID key the host answers.
  *
- * @param {import("./rng.js").Rng} r
+ * @param {import('../3270/test/rng.js').Rng} r
  * @param {number} count
  * @returns {import('../server/protocol.js').ClientMessage[]}
  */

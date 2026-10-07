@@ -1,18 +1,19 @@
 # tn3270
 
-An IBM 3270 terminal in a browser tab. A Node server drives one real `b3270`
-process per session; the page draws the screen onto a canvas of its own, with no
+An IBM 3270 terminal in a browser tab. A Node server runs every session on
+node3270 (`3270/`), a port of x3270's `b3270` that runs in-process; the page draws the screen onto a canvas of its own, with no
 bundler and one runtime dependency. Share the URL and the other person sees the
 same screen live.
 
 ```
-browser ──WS── node ──NDJSON── b3270 ──TN3270── mainframe
+browser ──WS── node (node3270) ──TN3270── mainframe
 ```
 
 ## Running it
 
-You need `b3270` (from the x3270 suite) on `PATH` and Node 22. With Nix, the
-flake brings both:
+You need Node 22. `b3270` and `s3270` (from the x3270 suite) on `PATH` are
+optional: node3270's tests compare against them and skip without them. With
+Nix, the flake brings all three:
 
 ```bash
 nix develop          # or: direnv allow
@@ -34,10 +35,23 @@ does the same with a session saved from the Recorder panel.
 npm test             # node --test, no browser driver and no host needed
 npm run test:browser # optional Chromium smoke test of the real page
 npm run typecheck    # tsc over the JSDoc types; this is the "no any" gate
+npm run fuzz -- -max_total_time=600 -fork=8 -ignore_crashes=1  # grow the corpus
+node 3270/scripts/fuzz.mjs --corpus 3270/test/fuzz-corpus     # replay it against b3270
 ```
 
 The optional browser smoke test needs `chromium` on `PATH` (or `CHROMIUM` set
 to its executable).
+
+Fuzzing has two stages. `npm run fuzz` is Jazzer.js's coverage-guided fuzzing
+of host data streams through node3270 alone, in process, at a few thousand
+inputs a second; it keeps the inputs that reach new code in
+`3270/test/fuzz-corpus/` and saves crashes and hangs in
+`3270/test/fuzz-findings/`. Anything after `--` goes to libFuzzer; `-fork` with
+`-ignore_crashes=1` keeps fuzzing after a finding, which `-jobs` does not.
+`scripts/fuzz.mjs --corpus` then plays every kept input through node3270 and a
+real `b3270` (needs it on `PATH`) and reports where they differ. `npm test`
+replays every file in `3270/test/fuzz-findings/`, so commit a finding once it's
+fixed.
 
 `npm test` also fuzzes macros: `test/macroreplay.test.js` types random input
 against a fake host, then plays the session recording and the page's macro on
@@ -63,15 +77,11 @@ runs more or other seeds.
   Opening a panel is a keymap command, so that key is yours to change too.
 - **Fit to window**: ask the host for a screen the size of the pane rather than
   the model's 24×80, negotiated as IBM-DYNAMIC.
-- **Automation over REST**, speaking s3270's own `-httpd` protocol, so an
-  existing s3270 client only changes its base URL. Available as soon as the
-  session exists; protect this server behind authentication if clients should
-  not be able to drive one another's sessions.
 
 ## Configuring it
 
 `config.jsonc` — hand-parsed JSONC, comments and all. The host to dial, the
-model, any `b3270` resource, session limits, the idle timeout, allowed hosts,
+model, x3270 resources by name, session limits, the idle timeout, allowed hosts,
 and where the log rolls. `TN3270_CONFIG=other.jsonc npm start` picks a different
 one.
 

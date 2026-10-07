@@ -1,23 +1,28 @@
+import { createServer } from "node:net";
 import { validateConfig } from "../server/config.js";
 import { Session } from "../server/session.js";
-import { FakeHost } from "./fakehost.js";
+import { FAKEHOST_CA, FakeHost } from "./fakehost.js";
 import { Grid } from "../public/grid.js";
 
 /**
- * The fake hosts speak plain TELNET, so tls stays off whatever b3270 settings
- * a test overrides.
- *
- * @param {{ b3270?: Record<string, unknown>, [key: string]: unknown }} [overrides]
+ * @param {Record<string, unknown>} [overrides]
  * @returns {import('../server/config.js').Config}
  */
 export function testConfig(overrides = {}) {
+  const emulator = /** @type {{ settings?: object }} */ (
+    overrides.emulator ?? {}
+  );
   return validateConfig({
     server: { host: "127.0.0.1", port: 8017 },
     sessions: { idleTimeoutMs: 0 },
     logLevel: "error",
     ...overrides,
     // The traces were recorded against a model 4 (43x80).
-    b3270: { path: "b3270", model: 4, tls: false, ...overrides.b3270 },
+    emulator: {
+      model: 4,
+      ...emulator,
+      settings: { caFile: FAKEHOST_CA, ...emulator.settings },
+    },
   });
 }
 
@@ -85,9 +90,9 @@ export async function waitUntil(predicate, message, timeoutMs = 5000) {
 }
 
 /**
- * b3270's stdout is one ordered stream: once our own run-result comes back,
- * every indication before it has been applied to the model. Input the session
- * has queued goes first, or the Reset would overtake it.
+ * A run resolves after its run-result, and with it every indication before
+ * it, has been applied to the model. Input the session has queued goes first,
+ * or the Reset would overtake it.
  *
  * @param {import('../server/session.js').Session} session
  * @returns {Promise<void>}
@@ -97,21 +102,7 @@ export async function settle(session) {
     () => session.inputQueue.length === 0 && session.inputTag === null,
     "the queued input to run",
   );
-  const b3270 = session.b3270;
-  const previous = b3270.handlers.onIndication;
-  return new Promise((resolve) => {
-    /** @type {string} */
-    let tag = "";
-    b3270.handlers.onIndication = (indication) => {
-      previous(indication);
-      const body = /** @type {Record<string, unknown>} */ (indication.body);
-      if (indication.kind === "run-result" && body["r-tag"] === tag) {
-        b3270.handlers.onIndication = previous;
-        resolve();
-      }
-    };
-    tag = b3270.runActions([{ action: "Reset" }]);
-  });
+  await session.emulator.run([{ action: "Reset" }]);
 }
 
 /**
@@ -119,7 +110,7 @@ export async function settle(session) {
  * @param {{ records?: number, config?: Record<string, unknown> }} [options]
  */
 export async function startTracedSession(traceFile, options = {}) {
-  const host = await FakeHost.listen(traceFile, 0);
+  const host = await FakeHost.listen(traceFile, 0, { tls: true });
   const session = new Session(testConfig(options.config));
 
   await session.ready;
@@ -137,4 +128,18 @@ export async function startTracedSession(traceFile, options = {}) {
       await host.close();
     },
   };
+}
+
+/** @returns {Promise<number>} a port that was free a moment ago */
+export function freePort() {
+  return new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.on("error", reject);
+    probe.listen(0, "127.0.0.1", () => {
+      const address = probe.address();
+      const port =
+        typeof address === "object" && address !== null ? address.port : 0;
+      probe.close(() => resolve(port));
+    });
+  });
 }

@@ -1,9 +1,9 @@
-import { createServer } from "node:net";
+import { createServer } from "node:tls";
 import { readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseTrace } from "./fakehost.js";
-import { CODE_PAGE_CHARTS } from "../public/codepages.js";
+import { FAKEHOST_CA, parseTrace } from "./fakehost.js";
+import { codePage, unicodeToEbcdic } from "../3270/src/charset.js";
 
 /**
  * A fake host made from a session recording, the JSON the Recorder panel saves.
@@ -11,7 +11,7 @@ import { CODE_PAGE_CHARTS } from "../public/codepages.js";
  * pressed with the screen that came after it. Any other AID gets the current
  * screen again; past the end, the last one stays. Every connection starts over.
  *
- *   npm run start:recording -- recording.json [--codepage cp273]
+ *   npm run start:recording -- recording.json [--codepage german]
  *
  * starts it together with the server, on the recording's model.
  */
@@ -72,7 +72,8 @@ const SBA = 0x11,
   SA = 0x28,
   SFE = 0x29,
   EWA = 0x7e,
-  WCC_RESTORE = 0xc2;
+  WCC_RESTORE = 0xc2,
+  GE = 0x08;
 const IAC = 0xff,
   EOR = 0xef;
 
@@ -138,7 +139,7 @@ function screenOf(step) {
  * non-display, so what is typed into it stays unseen.
  *
  * @param {Screen} screen
- * @param {string} page the code page's chart, EBCDIC 0x40 to 0xFF
+ * @param {import('../3270/src/charset.js').CodePage} page
  * @returns {Buffer}
  */
 export function screenRecord({ paint, hidden }, page) {
@@ -229,8 +230,9 @@ export function screenRecord({ paint, hidden }, page) {
       hl = cell.hl;
       bytes.push(SA, 0x41, hl);
     }
-    const at = [...page].indexOf(cell.ch);
-    bytes.push(at < 0 ? 0x40 : 0x40 + at);
+    const code = unicodeToEbcdic(page, cell.ch.codePointAt(0) ?? 0x20) || 0x40;
+    if (code & 0x100) bytes.push(GE, code & 0xff);
+    else bytes.push(code);
   }
   if (paint.cursor)
     bytes.push(
@@ -297,11 +299,9 @@ export class RecordingHost {
    * @param {import('../public/recorder.js').Recording} recording
    * @param {{ codePage?: string, log?: (line: string) => void }} options
    */
-  constructor(recording, { codePage: name = "cp273", log = () => {} }) {
+  constructor(recording, { codePage: name = "german", log = () => {} }) {
     this.script = recordedScript(recording);
-    const page =
-      CODE_PAGE_CHARTS[/** @type {keyof typeof CODE_PAGE_CHARTS} */ (name)];
-    if (page === undefined) throw new Error(`no chart for code page ${name}`);
+    const page = codePage(name);
     const first = screenRecord(this.script.first, page);
     const answers = this.script.answers.map((answer) => ({
       aid: /** @type {number} */ (AIDS.get(answer.aid)),
@@ -312,41 +312,47 @@ export class RecordingHost {
     /** @type {Set<import('node:net').Socket>} */
     this.sockets = new Set();
 
-    this.server = createServer((socket) => {
-      this.sockets.add(socket);
-      socket.on("close", () => this.sockets.delete(socket));
-      socket.setNoDelay(true);
-      socket.on("error", () => {});
-      log(`emulator connected; showing screen 0 of ${answers.length}`);
-      for (const bytes of telnet) socket.write(bytes);
-      socket.write(first);
+    this.server = createServer(
+      {
+        key: readFileSync(new URL("tls/fakehost.key", import.meta.url)),
+        cert: readFileSync(FAKEHOST_CA),
+      },
+      (socket) => {
+        this.sockets.add(socket);
+        socket.on("close", () => this.sockets.delete(socket));
+        socket.setNoDelay(true);
+        socket.on("error", () => {});
+        log(`emulator connected; showing screen 0 of ${answers.length}`);
+        for (const bytes of telnet) socket.write(bytes);
+        socket.write(first);
 
-      let next = 0;
-      let pending = "";
-      socket.on("data", (chunk) => {
-        pending += chunk.toString("latin1");
-        const records = pending.split("\xff\xef");
-        pending = records.pop() ?? "";
-        for (const record of records) {
-          // A 3270-DATA header is three zero bytes and a sequence number; the
-          // first record still has the emulator's TELNET replies in front.
-          const header = record.indexOf("\0\0\0");
-          if (header < 0) continue;
-          const aid = record.charCodeAt(header + 5);
-          const expected = answers[next];
-          if (expected !== undefined && aid === expected.aid) {
-            next += 1;
-            log(`${expected.name}: screen ${next} of ${answers.length}`);
-            socket.write(expected.record);
-            continue;
+        let next = 0;
+        let pending = "";
+        socket.on("data", (chunk) => {
+          pending += chunk.toString("latin1");
+          const records = pending.split("\xff\xef");
+          pending = records.pop() ?? "";
+          for (const record of records) {
+            // A 3270-DATA header is three zero bytes and a sequence number; the
+            // first record still has the emulator's TELNET replies in front.
+            const header = record.indexOf("\0\0\0");
+            if (header < 0) continue;
+            const aid = record.charCodeAt(header + 5);
+            const expected = answers[next];
+            if (expected !== undefined && aid === expected.aid) {
+              next += 1;
+              log(`${expected.name}: screen ${next} of ${answers.length}`);
+              socket.write(expected.record);
+              continue;
+            }
+            log(
+              `AID 0x${aid.toString(16)} where the recording ${expected ? `pressed ${expected.name}` : "ends"}: screen ${next} again`,
+            );
+            socket.write(next === 0 ? first : answers[next - 1].record);
           }
-          log(
-            `AID 0x${aid.toString(16)} where the recording ${expected ? `pressed ${expected.name}` : "ends"}: screen ${next} again`,
-          );
-          socket.write(next === 0 ? first : answers[next - 1].record);
-        }
-      });
-    });
+        });
+      },
+    );
   }
 
   /** @returns {number} */
@@ -364,14 +370,14 @@ export class RecordingHost {
   }
 }
 
-// npm run start:recording -- recording.json [--codepage cp273]
+// npm run start:recording -- recording.json [--codepage german]
 if (
   process.argv[1] &&
   import.meta.url.endsWith(process.argv[1].replace(/^.*\//, ""))
 ) {
   const args = process.argv.slice(2);
   const pageAt = args.indexOf("--codepage");
-  const page = pageAt >= 0 ? args.splice(pageAt, 2)[1] : "cp273";
+  const page = pageAt >= 0 ? args.splice(pageAt, 2)[1] : "german";
   const file = args[0];
   if (file === undefined) {
     process.stderr.write(
@@ -393,11 +399,10 @@ if (
     config,
     JSON.stringify({
       server: { host: "127.0.0.1", port: 8017 },
-      b3270: {
+      emulator: {
         model,
-        tls: false,
         defaultHost: `127.0.0.1:${host.port}`,
-        settings: { codePage: page },
+        settings: { codePage: page, caFile: FAKEHOST_CA },
       },
       logLevel: "info",
     }),

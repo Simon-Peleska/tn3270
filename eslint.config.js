@@ -5,7 +5,15 @@ export default [
   { ignores: ["vendor/ws/"] },
   js.configs.recommended,
   {
-    files: ["server/**/*.js", "test/**/*.js", "test/**/*.mjs", "vendor/*.js"],
+    files: [
+      "server/**/*.js",
+      "test/**/*.js",
+      "test/**/*.mjs",
+      "3270/**/*.js",
+      "3270/**/*.mjs",
+      "scripts/*.mjs",
+      "vendor/*.js",
+    ],
     languageOptions: {
       globals: globals.node,
     },

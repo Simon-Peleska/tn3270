@@ -5,6 +5,10 @@ each under its own licence. Everything else in `node_modules` is development
 tooling — `typescript`, `@types/*` and their trees — which is never
 redistributed and needs no notice here.
 
+`3270/` is a port of x3270's protocol core to JavaScript, so it is under
+x3270's BSD licence rather than MIT; the licence is beside it in
+`3270/LICENSE`.
+
 Two more notices live next to the files they cover: `public/fonts/NOTICE` for
 the nine vendored fonts (mostly SIL Open Font License 1.1; DejaVu's own
 licence is beside it in `public/fonts/LICENSE-DejaVu`) and `test/traces/NOTICE`

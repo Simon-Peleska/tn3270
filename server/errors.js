@@ -1,20 +1,19 @@
 // A code is an identity: append only, never renumber, never reuse. E1xxx config,
-// E2xxx b3270, E3xxx session, E4xxx client, E5xxx browser, E6xxx transport, E7xxx REST.
+// E2xxx emulator, E3xxx session, E4xxx client, E5xxx browser, E6xxx transport.
 export const ERRORS = Object.freeze({
   E1001: "Config file could not be read",
   E1002: "Config file is not valid JSONC",
   E1003: "Config value has the wrong type",
   E1004: "Config value is out of range",
-  E1005: "Config value is not a usable b3270 resource name",
+  E1005: "Config setting is not an emulator setting",
   E1006: "Code page is in the wrong config section",
+  E1007: "Config section was renamed",
   E1008: "Vendored ws does not match package-lock.json",
 
-  E2001: "b3270 could not be spawned",
-  E2002: "b3270 exited unexpectedly",
-  E2003: "b3270 emitted a line that is not valid JSON",
-  E2004: "b3270 reported a protocol error",
-  E2005: "b3270 action failed",
-  E2006: "b3270 stdin is closed",
+  // E2001-E2003 and E2006 were the b3270 child process's, which is gone. Retired, not free.
+  E2004: "Emulator reported a protocol error",
+  E2005: "Emulator action failed",
+  // E2007 was the emulator thread pool's, which sessions no longer use. Retired, not free.
 
   E3001: "Session not found",
   E3002: "Session limit reached",
@@ -31,6 +30,7 @@ export const ERRORS = Object.freeze({
   E3013: "Session input queue is full",
   E3014: "Only the session's owner may terminate it",
   E3015: "Session terminated by its owner",
+  // E3016 was the session worker threads', which are gone. Retired, not free.
 
   E4001: "WebSocket message was not valid JSON",
   E4002: "WebSocket message had an unknown type",
@@ -90,10 +90,7 @@ export const ERRORS = Object.freeze({
   // E6007-E6009 were the page inliner's, which is gone. Retired, not free.
   E6010: "Viewer is too slow to receive the screen",
 
-  // E7001 is spent.
-  E7002: "REST is not available for this session",
-  E7003: "REST request to b3270 failed",
-  // E7004 gated REST on a per-session switch, which is gone. Retired, not free.
+  // E7001-E7004 were the REST proxy's, which is gone. Retired, not free.
 });
 
 /** @typedef {keyof typeof ERRORS} ErrorCode */

@@ -10,7 +10,7 @@
  * blanks typed into fields like any other character. A newline moves one row
  * down, to the column the paste started at.
  *
- * @param {{ ch: string | null, editable: boolean }[]} cells row-major, length rows*cols
+ * @param {{ readonly length: number, at(i: number): { ch: string | null, editable: boolean } | undefined }} cells row-major, length rows*cols
  * @param {boolean} fieldsFormatted false types straight through
  * @param {number} cols
  * @param {{ row: number, col: number }} cursor 0-based, where the paste starts
@@ -27,7 +27,7 @@ export function pasteSegments(cells, fieldsFormatted, cols, cursor, text) {
   const startCol = cursor.col;
   /** @param {number} pos */
   const isEditable = (pos) =>
-    !fieldsFormatted || (cells[pos]?.editable ?? false);
+    !fieldsFormatted || (cells.at(pos)?.editable ?? false);
 
   /** @type {{ row: number, col: number, text: string }[]} */
   const segments = [];
@@ -38,7 +38,7 @@ export function pasteSegments(cells, fieldsFormatted, cols, cursor, text) {
 
     let laidOutLikeTheScreen = true;
     for (let i = 0; i < line.length && pos + i < total; i++) {
-      if (!isEditable(pos + i) && cells[pos + i].ch !== line[i]) {
+      if (!isEditable(pos + i) && cells.at(pos + i)?.ch !== line[i]) {
         laidOutLikeTheScreen = false;
         break;
       }
