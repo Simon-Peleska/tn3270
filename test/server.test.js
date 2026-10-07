@@ -12,9 +12,14 @@ import { Grid } from "../public/grid.js";
 /**
  * @param {'debug' | 'info' | 'warn' | 'error'} [logLevel]
  * @param {boolean} [trustProxyHeaders]
+ * @param {string} [userDataFile] pass the same one to two servers to share it
  * @returns {Promise<{ port: number, logFile: string, stop: () => Promise<void> }>}
  */
-async function startServer(logLevel = "warn", trustProxyHeaders = false) {
+async function startServer(
+  logLevel = "warn",
+  trustProxyHeaders = false,
+  userDataFile = ":memory:",
+) {
   const port = await freePort();
   const configFile = `test/.tmp-config-${port}.jsonc`;
   const logFile = `test/.tmp-log-${port}.log`;
@@ -28,6 +33,7 @@ async function startServer(logLevel = "warn", trustProxyHeaders = false) {
         security: { trustProxyHeaders },
         logLevel,
         logFile,
+        userDataFile,
       }),
     ),
   );
@@ -506,4 +512,153 @@ test("an upgrade to a path that is not a session is refused with its own code", 
 
   assert.equal(body.status, 404);
   assert.match(body.text, /E6002/);
+});
+
+/**
+ * @param {number} port
+ * @param {string} key
+ * @param {unknown} value
+ * @param {Record<string, string>} [headers]
+ * @returns {Promise<Response>}
+ */
+function putUserData(port, key, value, headers = {}) {
+  return fetch(`http://127.0.0.1:${port}/api/userdata/${key}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify(value),
+  });
+}
+
+/**
+ * @param {number} port
+ * @param {Record<string, string>} [headers]
+ * @returns {Promise<Record<string, unknown>>}
+ */
+async function getUserData(port, headers = {}) {
+  const response = await fetch(`http://127.0.0.1:${port}/api/userdata`, {
+    headers,
+  });
+  assert.equal(response.status, 200);
+  return response.json();
+}
+
+test("user data saved through one server is read back through it", async (t) => {
+  const server = await startServer();
+  t.after(() => server.stop());
+
+  assert.deepEqual(await getUserData(server.port), {
+    settings: null,
+    macros: null,
+    keymap: null,
+    recordings: null,
+  });
+
+  const settings = { theme: "Solarized", fitFontSize: 20 };
+  assert.equal(
+    (await putUserData(server.port, "settings", settings)).status,
+    204,
+  );
+  assert.equal((await putUserData(server.port, "macros", [])).status, 204);
+  const replaced = { theme: "Mainframe" };
+  assert.equal(
+    (await putUserData(server.port, "settings", replaced)).status,
+    204,
+  );
+
+  assert.deepEqual(await getUserData(server.port), {
+    settings: replaced,
+    macros: [],
+    keymap: null,
+    recordings: null,
+  });
+});
+
+test("blue and green servers on one database file see each other's saves", async (t) => {
+  const dataFile = `test/.tmp-userdata-shared-${process.pid}.sqlite`;
+  const blue = await startServer("warn", false, dataFile);
+  t.after(() => blue.stop());
+  const green = await startServer("warn", false, dataFile);
+  t.after(() => green.stop());
+  t.after(async () => {
+    for (const suffix of ["", "-wal", "-shm"])
+      await rm(`${dataFile}${suffix}`, { force: true });
+  });
+
+  // Both writing at once is what a deploy's overlap looks like.
+  const saves = [];
+  for (let i = 0; i < 20; i++) {
+    const server = i % 2 === 0 ? blue : green;
+    saves.push(putUserData(server.port, "keymap", { n: String(i) }));
+    saves.push(putUserData(server.port, "macros", [{ i }]));
+  }
+  for (const response of await Promise.all(saves))
+    assert.equal(response.status, 204);
+
+  assert.equal(
+    (await putUserData(blue.port, "settings", { font: "IBM 3270" })).status,
+    204,
+  );
+  const seenByGreen = await getUserData(green.port);
+  assert.deepEqual(seenByGreen["settings"], { font: "IBM 3270" });
+  assert.deepEqual(await getUserData(blue.port), seenByGreen);
+});
+
+test("user data is kept per user behind a proxy, and per address otherwise", async (t) => {
+  const server = await startServer("info", true);
+  t.after(() => server.stop());
+
+  const alice = { "x-remote-user": "alice", "x-forwarded-for": "203.0.113.9" };
+  const aliceElsewhere = {
+    "x-remote-user": "alice",
+    "x-forwarded-for": "198.51.100.7",
+  };
+  const bob = { "x-remote-user": "bob", "x-forwarded-for": "203.0.113.9" };
+  const anonymous = { "x-forwarded-for": "203.0.113.9" };
+
+  await putUserData(server.port, "settings", { theme: "alice" }, alice);
+  await putUserData(server.port, "settings", { theme: "address" }, anonymous);
+
+  assert.deepEqual(
+    (await getUserData(server.port, aliceElsewhere))["settings"],
+    {
+      theme: "alice",
+    },
+  );
+  assert.equal((await getUserData(server.port, bob))["settings"], null);
+  assert.deepEqual((await getUserData(server.port, anonymous))["settings"], {
+    theme: "address",
+  });
+  assert.match(
+    await logLine(server, "user data saved"),
+    /owner=user:alice key=settings/,
+  );
+});
+
+test("user data with an unknown key or a broken body is refused with its own code", async (t) => {
+  const server = await startServer();
+  t.after(() => server.stop());
+
+  const unknown = await putUserData(server.port, "passwords", {});
+  assert.equal(unknown.status, 404);
+  assert.equal((await unknown.json()).code, "E8004");
+
+  const broken = await fetch(
+    `http://127.0.0.1:${server.port}/api/userdata/settings`,
+    {
+      method: "PUT",
+      body: "{not json",
+    },
+  );
+  assert.equal(broken.status, 400);
+  assert.equal((await broken.json()).code, "E8006");
+
+  const tooBig = await putUserData(
+    server.port,
+    "recordings",
+    "x".repeat(33 * 1024 * 1024),
+  );
+  assert.equal(tooBig.status, 413);
+  assert.equal((await tooBig.json()).code, "E8005");
+
+  assert.equal((await getUserData(server.port))["settings"], null);
 });

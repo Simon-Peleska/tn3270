@@ -16,6 +16,9 @@ export function testConfig(overrides = {}) {
     server: { host: "127.0.0.1", port: 8017 },
     sessions: { idleTimeoutMs: 0 },
     logLevel: "error",
+    // Every test client is 127.0.0.1, so a shared file would carry one test's
+    // settings into the next.
+    userDataFile: ":memory:",
     ...overrides,
     // The traces were recorded against a model 4 (43x80).
     emulator: {

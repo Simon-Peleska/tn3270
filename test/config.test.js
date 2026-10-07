@@ -63,8 +63,17 @@ test("missing sections fall back to defaults", () => {
   assert.deepEqual(config.security.allowedHosts, []);
   // Without a proxy in front, any client could forge its own address.
   assert.equal(config.security.trustProxyHeaders, false);
-  assert.equal(config.logFile, "log/tn3270.log");
+  assert.equal(config.logFile, "../tn3270-data/log/tn3270-8017.log");
   assert.equal(config.logMaxBytes, 10 * 1024 * 1024);
+  assert.equal(config.userDataFile, "../tn3270-data/userdata.sqlite");
+});
+
+test("each port gets a log file of its own, so blue and green never share one", () => {
+  const config = validateConfig({
+    server: { port: 8018 },
+    logFile: "/var/log/tn3270/{port}.log",
+  });
+  assert.equal(config.logFile, "/var/log/tn3270/8018.log");
 });
 
 test("TLS can be disabled explicitly", () => {

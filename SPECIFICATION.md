@@ -282,7 +282,8 @@ by hand did: typing onto a protected cell locks the keyboard, a paste skips to
 the next field. A `Reset` typed while it waits drops what is left of it,
 and a `Reset` inside it runs in its turn. `RESET` on the
 Keys panel takes every macro's key away with the rest. Macros and keys are
-saved in this browser only; there is no file to import or export them.
+saved on the server with the other settings (section 6, HTTP); there is no file
+to import or export them.
 
 `Ctrl+.` replays the input from the most recently saved session recording as a
 macro; holding it repeats completed runs, as a held PF key only repeats into an
@@ -483,35 +484,43 @@ reconnecting to it is worth trying.
 
 ### HTTP
 
-| Method   | Path                 | Result                                                                                               |
-| -------- | -------------------- | ---------------------------------------------------------------------------------------------------- |
-| `POST`   | `/api/sessions`      | Creates a session → `201 {id, rows, cols, model}`, after the emulator has reported its real geometry |
-| `GET`    | `/api/sessions`      | Lists sessions → `{sessions:[{id, viewers, connection, host}], defaultHost}`                         |
-| `DELETE` | `/api/sessions/<id>` | Ends the session with its owner's `x-session-pass` → `204`; otherwise `403 E3014`                    |
-| `GET`    | anything else        | Static files from `public/`                                                                          |
+| Method   | Path                  | Result                                                                                               |
+| -------- | --------------------- | ---------------------------------------------------------------------------------------------------- |
+| `POST`   | `/api/sessions`       | Creates a session → `201 {id, rows, cols, model}`, after the emulator has reported its real geometry |
+| `GET`    | `/api/sessions`       | Lists sessions → `{sessions:[{id, viewers, connection, host}], defaultHost}`                         |
+| `DELETE` | `/api/sessions/<id>`  | Ends the session with its owner's `x-session-pass` → `204`; otherwise `403 E3014`                    |
+| `GET`    | `/api/userdata`       | This user's saved data → `{settings, macros, keymap, recordings}`, `null` for any never saved        |
+| `PUT`    | `/api/userdata/<key>` | Replaces one of those four with the JSON body → `204`; `404 E8004`, `400 E8006`, `413 E8005`         |
+| `GET`    | anything else         | Static files from `public/`                                                                          |
 
 Errors are JSON: `{"code":"E6001","message":"…"}` with a matching status.
+
+User data belongs to the `X-Remote-User` name when `security.trustProxyHeaders`
+is on and the proxy sends one, and to the client's address otherwise, so
+everyone behind one address shares it. The first time the server has nothing
+for a key, the page sends what an older version saved in the browser.
 
 ## 7. Configuration
 
 `config.jsonc`, overridable with the `TN3270_CONFIG` environment variable. JSONC:
 `//` and `/* */` comments and trailing commas are accepted.
 
-| Setting                         | Default                              | Meaning                                                                                                                                                                                                                                                                                                                                                                        |
-| ------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `server.host`                   | `127.0.0.1`                          | Listen address                                                                                                                                                                                                                                                                                                                                                                 |
-| `server.port`                   | `8017`                               | Listen port                                                                                                                                                                                                                                                                                                                                                                    |
-| `emulator.model`                | `2`                                  | 3270 model a session starts on, 2–5; changeable from the settings panel                                                                                                                                                                                                                                                                                                        |
-| `emulator.defaultHost`          | `null`                               | Connect new sessions here; `null` starts disconnected                                                                                                                                                                                                                                                                                                                          |
-| `emulator.settings`             | `{"nopSeconds": 60, "saveLines": 0}` | node3270's options, which are x3270's resources under the same names, each with a value of its default's type; anything else stops the start with `E1005` or `E1003`. `nopSeconds` sends a TELNET NOP after that many quiet seconds, so a firewall or NAT never drops the host connection as idle; `0` turns it off. `saveLines` is the scrollback, which the page never shows |
-| `sessions.maxSessions`          | `16`                                 | Refuses more with `E3002`                                                                                                                                                                                                                                                                                                                                                      |
-| `sessions.maxViewersPerSession` | `8`                                  | Refuses more with `E3003`                                                                                                                                                                                                                                                                                                                                                      |
-| `sessions.idleTimeoutMs`        | `300000`                             | Viewer-less session lifetime; `0` disables reaping                                                                                                                                                                                                                                                                                                                             |
-| `security.allowedHosts`         | `[]`                                 | Empty = any host. An entry with a port matches exactly; without one, any port on that host                                                                                                                                                                                                                                                                                     |
-| `security.trustProxyHeaders`    | `false`                              | Take the client's address from `X-Forwarded-For` and their name from `X-Remote-User`. Only with a reverse proxy in front that sets both                                                                                                                                                                                                                                        |
-| `logLevel`                      | `info`                               | `debug` logs every action run and the emulator's own debug lines                                                                                                                                                                                                                                                                                                               |
-| `logFile`                       | `log/tn3270.log`                     | Kept as well as stderr, and rolled over to `<logFile>.1`; `""` is stderr only                                                                                                                                                                                                                                                                                                  |
-| `logMaxBytes`                   | `10485760`                           | Size at which the log rolls over, so the pair is never more than twice this                                                                                                                                                                                                                                                                                                    |
+| Setting                         | Default                                | Meaning                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `server.host`                   | `127.0.0.1`                            | Listen address                                                                                                                                                                                                                                                                                                                                                                 |
+| `server.port`                   | `8017`                                 | Listen port                                                                                                                                                                                                                                                                                                                                                                    |
+| `emulator.model`                | `2`                                    | 3270 model a session starts on, 2–5; changeable from the settings panel                                                                                                                                                                                                                                                                                                        |
+| `emulator.defaultHost`          | `null`                                 | Connect new sessions here; `null` starts disconnected                                                                                                                                                                                                                                                                                                                          |
+| `emulator.settings`             | `{"nopSeconds": 60, "saveLines": 0}`   | node3270's options, which are x3270's resources under the same names, each with a value of its default's type; anything else stops the start with `E1005` or `E1003`. `nopSeconds` sends a TELNET NOP after that many quiet seconds, so a firewall or NAT never drops the host connection as idle; `0` turns it off. `saveLines` is the scrollback, which the page never shows |
+| `sessions.maxSessions`          | `16`                                   | Refuses more with `E3002`                                                                                                                                                                                                                                                                                                                                                      |
+| `sessions.maxViewersPerSession` | `8`                                    | Refuses more with `E3003`                                                                                                                                                                                                                                                                                                                                                      |
+| `sessions.idleTimeoutMs`        | `300000`                               | Viewer-less session lifetime; `0` disables reaping                                                                                                                                                                                                                                                                                                                             |
+| `security.allowedHosts`         | `[]`                                   | Empty = any host. An entry with a port matches exactly; without one, any port on that host                                                                                                                                                                                                                                                                                     |
+| `security.trustProxyHeaders`    | `false`                                | Take the client's address from `X-Forwarded-For` and their name from `X-Remote-User`. Only with a reverse proxy in front that sets both                                                                                                                                                                                                                                        |
+| `logLevel`                      | `info`                                 | `debug` logs every action run and the emulator's own debug lines                                                                                                                                                                                                                                                                                                               |
+| `logFile`                       | `../tn3270-data/log/tn3270-{port}.log` | Kept as well as stderr, and rolled over to `<logFile>.1`; `""` is stderr only. `{port}` becomes `server.port`, so two instances never roll over one file                                                                                                                                                                                                                       |
+| `logMaxBytes`                   | `10485760`                             | Size at which the log rolls over, so the pair is never more than twice this                                                                                                                                                                                                                                                                                                    |
+| `userDataFile`                  | `../tn3270-data/userdata.sqlite`       | SQLite file holding every user's settings, keymap, macros and recordings. Servers on one machine may share it, as blue and green do during a deploy; not on a network filesystem                                                                                                                                                                                               |
 
 ## 8. Error codes
 
@@ -554,14 +563,14 @@ of the old b3270 child process, `E2007` of the old emulator thread pool, `E3016`
 | `E4005` | Typed text is too large for one input                  |
 | `E5001` | Terminal renderer failed to initialise                 |
 | `E5002` | WebSocket connection to the server failed              |
-| `E5003` | Settings could not be read from the browser database   |
-| `E5004` | Settings could not be saved to the browser database    |
+| `E5003` | Settings could not be read from the server             |
+| `E5004` | Settings could not be saved on the server              |
 | `E5005` | Clipboard could not be read for a Shift+Insert paste   |
 | `E5006` | Another terminal session could not be opened           |
-| `E5008` | Macros could not be read from the browser database     |
-| `E5009` | Macros could not be saved to the browser database      |
-| `E5011` | The keymap could not be saved to the browser database  |
-| `E5013` | The keymap could not be read from the browser database |
+| `E5008` | Macros could not be read from the server               |
+| `E5009` | Macros could not be saved on the server                |
+| `E5011` | The keymap could not be saved on the server            |
+| `E5013` | The keymap could not be read from the server           |
 | `E5014` | A dropped session could not be restarted               |
 | `E5015` | A panel command is not known here                      |
 | `E5016` | A line command is not available on this line           |
@@ -597,6 +606,12 @@ of the old b3270 child process, `E2007` of the old emulator thread pool, `E3016`
 | `E6005` | Log file could not be opened                           |
 | `E6006` | Log file could not be written or rolled over           |
 | `E6010` | Viewer is too slow to receive the screen               |
+| `E8001` | User data database could not be opened                 |
+| `E8002` | User data could not be read                            |
+| `E8003` | User data could not be saved                           |
+| `E8004` | User data key is not one the server keeps              |
+| `E8005` | User data is too large to save                         |
+| `E8006` | User data to save is not valid JSON                    |
 | `E0000` | An error with no code of its own; see the log          |
 
 Errors are shown as a dismissible bar at the top of the page. The page is never

@@ -609,13 +609,13 @@ function downloadFile(filename, content) {
 
 const settings = new Settings((values) => {
   saveSettings(values).catch((cause) => {
-    showError("E5004", "Settings could not be saved in this browser.", cause);
+    showError("E5004", "Settings could not be saved on the server.", cause);
   });
 });
 
 const keymap = new Keymap((bindings) => {
   saveKeymap(bindings).catch((cause) => {
-    showError("E5011", "The keymap could not be saved in this browser.", cause);
+    showError("E5011", "The keymap could not be saved on the server.", cause);
   });
 });
 
@@ -623,7 +623,7 @@ const macros = new Macros({
   dispatch: (message) => sendTo(activeSession(), message),
   persist: (values) => {
     saveMacros(values).catch((cause) => {
-      showError("E5009", "Macros could not be saved in this browser.", cause);
+      showError("E5009", "Macros could not be saved on the server.", cause);
     });
   },
   keymap,
@@ -640,11 +640,7 @@ const recorder = new Recorder({
   exportFile: downloadFile,
   persist: (values) => {
     saveRecordings(values).catch((cause) => {
-      showError(
-        "E5028",
-        "Recordings could not be saved in this browser.",
-        cause,
-      );
+      showError("E5028", "Recordings could not be saved on the server.", cause);
     });
   },
 });
@@ -1746,7 +1742,7 @@ if (savedRecordings.status === "fulfilled")
 else {
   showError(
     "E5029",
-    "Saved recordings could not be read in this browser.",
+    `Saved recordings could not be read: ${String(savedRecordings.reason)}`,
     savedRecordings.reason,
   );
 }
