@@ -1311,6 +1311,30 @@ screenEl.addEventListener(
   true,
 );
 
+screenEl.addEventListener(
+  "wheel",
+  (event) => {
+    if (event.deltaY === 0) return;
+
+    const key = event.deltaY < 0 ? "WheelUp" : "WheelDown";
+
+    const keyEvent = new KeyboardEvent("keydown", {
+      key,
+      code: key,
+      ctrlKey: event.ctrlKey,
+      shiftKey: event.shiftKey,
+      altKey: event.altKey,
+      bubbles: true,
+      cancelable: true,
+    });
+
+    if (!screenEl.dispatchEvent(keyEvent)) {
+      event.preventDefault();
+    }
+  },
+  { passive: false },
+);
+
 // Capture: the keydown handler above would otherwise see Ctrl+V twice.
 screenEl.addEventListener(
   "paste",

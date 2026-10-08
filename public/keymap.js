@@ -401,6 +401,8 @@ const KEY_LABELS = Object.freeze({
   ShiftRight: "RShift",
   AltLeft: "LAlt",
   AltRight: "RAlt",
+  WheelUp: "WheelUp",
+  WheelDown: "WheelDown",
   ArrowUp: "Up",
   ArrowDown: "Down",
   ArrowLeft: "Left",
