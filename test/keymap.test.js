@@ -332,6 +332,17 @@ test("Ctrl-C and Ctrl-Insert are the Copy command, not a 3270 action", () => {
   );
 });
 
+test("Ctrl-X is Cut and Ctrl-V is Paste", () => {
+  assert.deepEqual(
+    mapKey(key({ key: "x", code: "KeyX", ctrlKey: true }), lookup),
+    { kind: "client", command: "Cut" },
+  );
+  assert.deepEqual(
+    mapKey(key({ key: "v", code: "KeyV", ctrlKey: true }), lookup),
+    { kind: "client", command: "Paste" },
+  );
+});
+
 test("a binding follows the character printed on the key, not its place on the board", () => {
   // QWERTZ: the key marked Z sits where a US layout keeps Y, so it reports KeyY.
   assert.deepEqual(

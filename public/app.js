@@ -1229,6 +1229,15 @@ screenEl.addEventListener(
     if (mapped === null) return;
     if (mapped.kind === "client" && SHARING_COMMANDS.has(mapped.command))
       return;
+    // Left alone, Ctrl+V becomes a paste event, which reads the clipboard
+    // without the permission prompt navigator.clipboard.readText() needs.
+    if (
+      mapped.kind === "client" &&
+      mapped.command === "Paste" &&
+      event.ctrlKey &&
+      event.key.toLowerCase() === "v"
+    )
+      return;
     event.preventDefault();
     event.stopPropagation();
 
@@ -1273,20 +1282,49 @@ screenEl.addEventListener(
       return;
     }
 
-    // Copy and Paste are this browser's clipboard, not 3270 actions, so keymap.js
-    // maps them but cannot dispatch them.
-    if (mapped.command === "Copy") {
-      if (screen.hasSelection())
+    // Copy, Cut and Paste are this browser's clipboard, not 3270 actions, so
+    // keymap.js maps them but cannot dispatch them.
+    if (mapped.command === "Copy" || mapped.command === "Cut") {
+      const cut = mapped.command === "Cut";
+      const grid = panel ? panels.host.grid() : screen.host;
+      const box = screen.selectionBox();
+      if (box !== null) {
         navigator.clipboard.writeText(screen.getSelection());
-      else {
-        const grid = panel ? panels.host.grid() : screen.host;
-        const cursor = grid?.cursor ?? null;
-        const text =
-          grid === null || cursor === null
-            ? null
-            : grid.fieldText(cursor.row, cursor.col);
-        if (text !== null) navigator.clipboard.writeText(text);
+        if (!cut || grid === null) return;
+        // Last run first: a Delete pulls the rest of its field left, over
+        // cells that would otherwise still have to be cut.
+        for (let row = box.bottom; row >= box.top; row--) {
+          let end = box.right;
+          while (end >= box.left) {
+            if (!grid.cellAt(row, end)?.editable) {
+              end--;
+              continue;
+            }
+            let start = end;
+            while (start > box.left && grid.cellAt(row, start - 1)?.editable)
+              start--;
+            deliver({
+              type: "action",
+              action: "MoveCursor1",
+              args: [String(row + 1), String(start + 1)],
+            });
+            for (let col = start; col <= end; col++)
+              deliver({ type: "action", action: "Delete", args: [] });
+            end = start - 1;
+          }
+        }
+        screen.clearSelection();
+        redraw();
+        return;
       }
+      const cursor = grid?.cursor ?? null;
+      const text =
+        grid === null || cursor === null
+          ? null
+          : grid.fieldText(cursor.row, cursor.col);
+      if (text === null) return;
+      navigator.clipboard.writeText(text);
+      if (cut) deliver({ type: "action", action: "DeleteField", args: [] });
       return;
     }
     // The panel commands are the other client commands, and the window handler

@@ -38,6 +38,7 @@ export const COMMANDS = Object.freeze([
   { id: "SysReq", label: "Sys req" },
   { id: "Clear", label: "Clear" },
   { id: "Copy", label: "Copy" },
+  { id: "Cut", label: "Cut" },
   { id: "Paste", label: "Paste" },
   { id: "SelectUp", label: "Select up" },
   { id: "SelectDown", label: "Select down" },
@@ -77,6 +78,7 @@ export const COMMANDS = Object.freeze([
  */
 export const CLIENT_COMMANDS = new Set([
   "Copy",
+  "Cut",
   "Paste",
   "SelectUp",
   "SelectDown",
@@ -189,7 +191,9 @@ export const DEFAULT_BINDINGS = Object.freeze({
   SysReq: [combo("Escape", { shift: true })],
   Clear: [combo("Pause")],
   Copy: [combo("C", { ctrl: true }), combo("Insert", { ctrl: true })],
+  Cut: [combo("X", { ctrl: true })],
   Paste: [
+    combo("V", { ctrl: true }),
     combo("Insert", { shift: true }),
     combo("PageDown", { shift: true }),
     combo("Insert", { ctrl: true, shift: true }),
