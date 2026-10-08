@@ -52,35 +52,35 @@ const SLOT_KEYS = [
  * row's "┼" is, so its lines never quite meet. Each is the arms it has from the
  * cell's centre, up, right, down and left: 0 none, 1 light, 2 heavy.
  *
- * @type {Map<string, string>}
+ * @type {Map<string, number[]>}
  */
 const BOX_ARMS = new Map([
-  ["─", "0101"],
-  ["━", "0202"],
-  ["│", "1010"],
-  ["┃", "2020"],
-  ["┌", "0110"],
-  ["┏", "0220"],
-  ["┐", "0011"],
-  ["┓", "0022"],
-  ["└", "1100"],
-  ["┗", "2200"],
-  ["┘", "1001"],
-  ["┛", "2002"],
-  ["├", "1110"],
-  ["┣", "2220"],
-  ["┤", "1011"],
-  ["┫", "2022"],
-  ["┬", "0111"],
-  ["┳", "0222"],
-  ["┴", "1101"],
-  ["┻", "2202"],
-  ["┼", "1111"],
-  ["╋", "2222"],
-  ["╴", "0001"],
-  ["╵", "1000"],
-  ["╶", "0100"],
-  ["╷", "0010"],
+  ["─", [0, 1, 0, 1]],
+  ["━", [0, 2, 0, 2]],
+  ["│", [1, 0, 1, 0]],
+  ["┃", [2, 0, 2, 0]],
+  ["┌", [0, 1, 1, 0]],
+  ["┏", [0, 2, 2, 0]],
+  ["┐", [0, 0, 1, 1]],
+  ["┓", [0, 0, 2, 2]],
+  ["└", [1, 1, 0, 0]],
+  ["┗", [2, 2, 0, 0]],
+  ["┘", [1, 0, 0, 1]],
+  ["┛", [2, 0, 0, 2]],
+  ["├", [1, 1, 1, 0]],
+  ["┣", [2, 2, 2, 0]],
+  ["┤", [1, 0, 1, 1]],
+  ["┫", [2, 0, 2, 2]],
+  ["┬", [0, 1, 1, 1]],
+  ["┳", [0, 2, 2, 2]],
+  ["┴", [1, 1, 0, 1]],
+  ["┻", [2, 2, 0, 2]],
+  ["┼", [1, 1, 1, 1]],
+  ["╋", [2, 2, 2, 2]],
+  ["╴", [0, 0, 0, 1]],
+  ["╵", [1, 0, 0, 0]],
+  ["╶", [0, 1, 0, 0]],
+  ["╷", [0, 0, 1, 0]],
 ]);
 
 const URL_PATTERN = /https?:\/\/[^\s<>"'`]+/gi;
@@ -144,7 +144,7 @@ export class Screen {
     this.dpr = window.devicePixelRatio || 1;
     /** @type {() => void} */
     this.redraw = options.redraw ?? (() => this.render());
-    /** @type {Map<string, Map<string, boolean>>} font → glyph → whether it is one cell wide */
+    /** @type {Map<string, boolean>} font and glyph → whether it is one cell wide */
     this.oneCellGlyphs = new Map();
 
     this.canvas.addEventListener("mousedown", (event) =>
@@ -315,8 +315,9 @@ export class Screen {
     // steps by it, and has to land on the same cells as the fills.
     return {
       width: m.width,
-      // No padding between rows: a box-drawing glyph spans the face's full
-      // height, so "│" stacked down the rows only joins if the rows are no taller.
+      // No padding between rows: the font's own block and double-line glyphs,
+      // like "█" or "║", span the face's full height and only join if the rows
+      // are no taller.
       height: Math.ceil(ascent + descent),
       baseline: Math.ceil(ascent),
     };
@@ -553,14 +554,8 @@ export class Screen {
           !blank &&
           arms === undefined &&
           (col === cursorCol || !this.fillsOneCell(ch, wantedFont));
-        if (
-          text !== "" &&
-          (blank ||
-            alone ||
-            arms !== undefined ||
-            wanted !== fill ||
-            wantedFont !== font)
-        ) {
+        const joins = !blank && arms === undefined && !alone;
+        if (text !== "" && (!joins || wanted !== fill || wantedFont !== font)) {
           this.ctx.fillText(text, glyphX(textStart), top + baseline);
           text = "";
         }
@@ -607,19 +602,15 @@ export class Screen {
    * @returns {boolean}
    */
   fillsOneCell(ch, font) {
-    let known = this.oneCellGlyphs.get(font);
-    if (known === undefined) {
-      known = new Map();
-      this.oneCellGlyphs.set(font, known);
-    }
-    let fits = known.get(ch);
+    const key = `${font} ${ch}`;
+    let fits = this.oneCellGlyphs.get(key);
     if (fits === undefined) {
       const current = this.ctx.font;
       this.ctx.font = font;
       fits =
         Math.abs(this.ctx.measureText(ch).width - this.metrics.width) < 0.01;
       this.ctx.font = current;
-      known.set(ch, fits);
+      this.oneCellGlyphs.set(key, fits);
     }
     return fits;
   }
@@ -629,7 +620,7 @@ export class Screen {
    * the same centre, so a line runs on through its neighbours without a seam or
    * a step. The arms reach over the crossing stroke, which fills the corner.
    *
-   * @param {string} arms up, right, down, left; see BOX_ARMS
+   * @param {number[]} arms up, right, down, left; see BOX_ARMS
    * @param {number} left snapped, like the other three
    * @param {number} top
    * @param {number} right
@@ -638,36 +629,16 @@ export class Screen {
    */
   drawBox(arms, left, top, right, bottom) {
     const light = Math.max(1, Math.round((this.metrics.width * this.dpr) / 8));
-    const [up, east, down, west] = [...arms].map(
-      (arm) => (Number(arm) * light) / this.dpr,
-    );
-    const midX = this.snap((left + right) / 2);
-    const midY = this.snap((top + bottom) / 2);
+    const [up, east, down, west] = arms.map((arm) => (arm * light) / this.dpr);
     const vertical = Math.max(up, down);
     const horizontal = Math.max(east, west);
-    const strokeX = this.snap(midX - vertical / 2);
-    const strokeY = this.snap(midY - horizontal / 2);
-    const crossLeft = vertical > 0 ? strokeX : midX;
-    const crossRight = vertical > 0 ? strokeX + vertical : midX;
-    const crossTop = horizontal > 0 ? strokeY : midY;
-    const crossBottom = horizontal > 0 ? strokeY + horizontal : midY;
+    const x = this.snap((left + right) / 2 - vertical / 2);
+    const y = this.snap((top + bottom) / 2 - horizontal / 2);
 
-    if (up > 0) {
-      const x = this.snap(midX - up / 2);
-      this.ctx.fillRect(x, top, up, crossBottom - top);
-    }
-    if (down > 0) {
-      const x = this.snap(midX - down / 2);
-      this.ctx.fillRect(x, crossTop, down, bottom - crossTop);
-    }
-    if (west > 0) {
-      const y = this.snap(midY - west / 2);
-      this.ctx.fillRect(left, y, crossRight - left, west);
-    }
-    if (east > 0) {
-      const y = this.snap(midY - east / 2);
-      this.ctx.fillRect(crossLeft, y, right - crossLeft, east);
-    }
+    if (up > 0) this.ctx.fillRect(x, top, vertical, y + horizontal - top);
+    if (down > 0) this.ctx.fillRect(x, y, vertical, bottom - y);
+    if (west > 0) this.ctx.fillRect(left, y, x + vertical - left, horizontal);
+    if (east > 0) this.ctx.fillRect(x, y, right - x, horizontal);
   }
 
   /** @returns {void} */

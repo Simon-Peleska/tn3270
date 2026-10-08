@@ -280,6 +280,12 @@ test("the character picker colors the second hex digit differently", () => {
       ?.fg,
     "turquoise",
   );
+  assert.ok(
+    panels.host
+      .layout()
+      .texts.some((text) => text.row === 17 && text.text.startsWith("=> ->")),
+    "the font panel shows ligatures to judge a font by",
+  );
 });
 
 test("the character picker accepts cursor/Enter and direct mouse selection", () => {

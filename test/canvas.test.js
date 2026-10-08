@@ -647,11 +647,27 @@ test("a drag that leaves the screen stays clamped inside it", () => {
 
 /**
  * @param {Screen} screen
- * @returns {{ text: string, x: number, style: string, font: string }[]}
+ * @returns {{ text: string, col: number, style: string, font: string }[]}
  */
 function textsOf(screen) {
   const ctx = /** @type {unknown} */ (screen.ctx);
-  return /** @type {FakeContext} */ (ctx).texts;
+  return /** @type {FakeContext} */ (ctx).texts.map(
+    ({ text, x, style, font }) => ({
+      text,
+      col: Math.round((x - screen.rect.x) / screen.metrics.width),
+      style,
+      font,
+    }),
+  );
+}
+
+/**
+ * @param {Screen} screen
+ * @returns {void}
+ */
+function forgetTexts(screen) {
+  const ctx = /** @type {unknown} */ (screen.ctx);
+  /** @type {FakeContext} */ (ctx).texts = [];
 }
 
 test("neighbours in one font and colour are drawn as one string, so a font can join them", () => {
@@ -669,10 +685,9 @@ test("neighbours in one font and colour are drawn as one string, so a font can j
   screen.layout(PAGE, "monospace");
   screen.render();
 
-  const { width } = screen.metrics;
-  const drawn = textsOf(screen).map(({ text, x, font }) => ({
+  const drawn = textsOf(screen).map(({ text, col, font }) => ({
     text,
-    col: Math.round((x - screen.rect.x) / width),
+    col,
     bold: font.startsWith("bold"),
   }));
   assert.deepEqual(drawn, [
@@ -692,10 +707,11 @@ test("neighbours in one font and colour are drawn as one string, so a font can j
 test("a selection's edge splits a string, so each side is drawn in its own ink", () => {
   const screen = page();
   mouse(screen, "mousedown", 2, 2);
+  forgetTexts(screen);
   mouse(screen, "mousemove", 2, 5);
   mouse(screen, "mouseup", 2, 5);
 
-  const lastFrame = textsOf(screen).slice(-4);
+  const lastFrame = textsOf(screen);
   const ink = lastFrame[0]?.style;
   assert.deepEqual(
     lastFrame.map(({ text, style }) => ({ text, style })),
@@ -784,12 +800,8 @@ test("the cursor splits a string around its cell, so a ligature under it comes a
   screen.layout(PAGE, "monospace");
   screen.render();
 
-  const { width } = screen.metrics;
   assert.deepEqual(
-    textsOf(screen).map(({ text, x }) => ({
-      text,
-      col: Math.round((x - screen.rect.x) / width),
-    })),
+    textsOf(screen).map(({ text, col }) => ({ text, col })),
     [
       { text: "a/", col: 0 },
       { text: "=", col: 2 },

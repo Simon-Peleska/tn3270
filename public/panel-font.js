@@ -58,6 +58,8 @@ export const fontLayout = {
     view.say(2, 23, "[Y/N]", "turquoise");
     view.say(4, 1, "S=Select", "turquoise");
     drawCodePageChart(view, panel.deps.codePage(), panel.deps.chart());
+    view.say(17, 34, "=> -> <- <= >= == != === !== /= <>", "white");
+    view.say(18, 34, ":: && || ++ ... <=> --> <-- >>= |>", "white");
   },
 
   /** @param {import('./panels.js').Panels} panel @returns {import('./panels.js').Item[]} */
