@@ -27,7 +27,6 @@
     <link rel="modulepreload" href="./panel-logon.js" />
     <link rel="modulepreload" href="./panel-theme.js" />
     <link rel="modulepreload" href="./panel-font.js" />
-    <link rel="modulepreload" href="./codepages.js" />
     <link rel="modulepreload" href="./panel-size.js" />
     <link rel="modulepreload" href="./panel-macros.js" />
     <link rel="modulepreload" href="./panel-recordings.js" />
@@ -107,12 +106,22 @@
       #canvas {
         display: block;
       }
+      #paste-target {
+        position: fixed;
+        left: -100px;
+        width: 1px;
+        height: 1px;
+        opacity: 0;
+      }
     </style>
     <!-- user's font, theme and settings -->
   </head>
   <body>
     <!-- Errors show in place on the status line; a redirect would drop the session. -->
-    <main id="screen" tabindex="0"><canvas id="canvas"></canvas></main>
+    <main id="screen" tabindex="0">
+      <canvas id="canvas"></canvas>
+      <textarea id="paste-target" tabindex="-1" aria-hidden="true"></textarea>
+    </main>
     <input
       id="recording-import"
       type="file"

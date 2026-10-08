@@ -414,6 +414,238 @@ test("the browser opens a panel", async (t) => {
   assert.deepEqual(browser.exceptions, []);
 });
 
+/** @param {Awaited<ReturnType<typeof startBrowser>>} browser */
+async function waitForAmber(browser) {
+  await waitUntil(async () => {
+    const background = await browser.command("Runtime.evaluate", {
+      expression: "document.getElementById('screen').style.background",
+      returnByValue: true,
+    });
+    // #100c00, the Amber theme's background.
+    return background.result.result.value === "rgb(16, 12, 0)";
+  }, "the Amber theme to be applied");
+}
+
+test("a theme saved in another tab is shown here without a reload", async (t) => {
+  const browser = await startBrowser(t);
+  const heard = browser.consoleMessage("another tab saved");
+  const response = await fetch(`${browser.base}/api/userdata/settings`, {
+    method: "PUT",
+    headers: { "content-type": "application/json", "x-tab": "elsewhere" },
+    body: JSON.stringify({ theme: "Amber" }),
+  });
+  assert.equal(response.status, 204);
+  await heard;
+  await waitForAmber(browser);
+  assert.deepEqual(browser.exceptions, []);
+});
+
+test("a theme saved while the tab heard nothing is shown on focus", async (t) => {
+  const browser = await startBrowser(t);
+  // Saved as this very tab, so the server tells it nothing.
+  const tab = await browser.command("Runtime.evaluate", {
+    expression: "import('./store.js').then((store) => store.TAB_ID)",
+    awaitPromise: true,
+    returnByValue: true,
+  });
+  const response = await fetch(`${browser.base}/api/userdata/settings`, {
+    method: "PUT",
+    headers: {
+      "content-type": "application/json",
+      "x-tab": tab.result.result.value,
+    },
+    body: JSON.stringify({ theme: "Amber" }),
+  });
+  assert.equal(response.status, 204);
+
+  const changed = browser.consoleMessage("user data changed elsewhere");
+  await browser.command("Runtime.evaluate", {
+    expression: "window.dispatchEvent(new Event('focus'))",
+  });
+  await changed;
+  await waitForAmber(browser);
+  assert.deepEqual(browser.exceptions, []);
+});
+
+/**
+ * @param {Awaited<ReturnType<typeof startBrowser>>} browser
+ * @param {'left' | 'middle' | 'right'} button
+ */
+async function clickScreenMiddle(browser, button) {
+  const center = await browser.command("Runtime.evaluate", {
+    expression: `(() => {
+      const rect = document.querySelector("canvas").getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    })()`,
+    returnByValue: true,
+  });
+  const { x, y } = center.result.result.value;
+  for (const type of ["mousePressed", "mouseReleased"])
+    await browser.command("Input.dispatchMouseEvent", {
+      type,
+      x,
+      y,
+      button,
+      clickCount: 1,
+    });
+  return { x, y };
+}
+
+test("a right click and a wheel turn sideways move the cursor and run what they are bound to", async (t) => {
+  const browser = await startBrowser(t);
+  const changed = browser.consoleMessage("user data changed elsewhere");
+  const response = await fetch(`${browser.base}/api/userdata/keymap`, {
+    method: "PUT",
+    headers: { "content-type": "application/json", "x-tab": "elsewhere" },
+    body: JSON.stringify({
+      Enter: [{ key: "RightClick", shift: false, ctrl: false, alt: false }],
+      PF8: [{ key: "WheelRight", shift: false, ctrl: false, alt: false }],
+    }),
+  });
+  assert.equal(response.status, 204);
+  await changed;
+
+  const moved = browser.frame(
+    "Network.webSocketFrameSent",
+    "action",
+    (message) => message.action === "MoveCursor1",
+  );
+  const entered = browser.frame(
+    "Network.webSocketFrameSent",
+    "action",
+    (message) => message.action === "Enter",
+  );
+  const { x, y } = await clickScreenMiddle(browser, "right");
+  await moved;
+  await entered;
+  const actions = browser.sentFrames
+    .filter((message) => message.type === "action")
+    .map((message) => message.action);
+  assert.ok(
+    actions.indexOf("MoveCursor1") < actions.indexOf("Enter"),
+    "the cursor moves before Enter is sent",
+  );
+
+  const paged = browser.frame(
+    "Network.webSocketFrameSent",
+    "action",
+    (message) => message.action === "PF" && message.args[0] === "8",
+  );
+  await browser.command("Input.dispatchMouseEvent", {
+    type: "mouseWheel",
+    x,
+    y,
+    deltaX: 120,
+    deltaY: 0,
+  });
+  await paged;
+  assert.deepEqual(browser.exceptions, []);
+});
+
+test("a middle click moves the cursor and pastes there", async (t) => {
+  const browser = await startBrowser(t);
+  await browser.command("Browser.grantPermissions", {
+    permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"],
+    origin: browser.base,
+  });
+  await browser.command("Emulation.setFocusEmulationEnabled", {
+    enabled: true,
+  });
+  await browser.command("Runtime.evaluate", {
+    expression: "navigator.clipboard.writeText('pasted')",
+    awaitPromise: true,
+    userGesture: true,
+  });
+
+  const moved = browser.frame(
+    "Network.webSocketFrameSent",
+    "action",
+    (message) => message.action === "MoveCursor1",
+  );
+  const pasted = browser.frame("Network.webSocketFrameSent", "paste");
+  await clickScreenMiddle(browser, "middle");
+  await moved;
+  assert.equal((await pasted).text, "pasted");
+  assert.deepEqual(browser.exceptions, []);
+});
+
+test("a middle click the browser pasted itself does not paste the clipboard as well", async (t) => {
+  const browser = await startBrowser(t);
+  await browser.command("Browser.grantPermissions", {
+    permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"],
+    origin: browser.base,
+  });
+  await browser.command("Emulation.setFocusEmulationEnabled", {
+    enabled: true,
+  });
+  await browser.command("Runtime.evaluate", {
+    expression: "navigator.clipboard.writeText('clipboard')",
+    awaitPromise: true,
+    userGesture: true,
+  });
+  // What Firefox on Linux does: paste the selection right after the click.
+  // Clipboard reads are counted: the second paste would only arrive later.
+  await browser.command("Runtime.evaluate", {
+    expression: `window.clipboardReads = 0;
+    const readText = navigator.clipboard.readText.bind(navigator.clipboard);
+    navigator.clipboard.readText = () => { window.clipboardReads++; return readText(); };
+    window.addEventListener("auxclick", (event) => {
+      if (event.button !== 1) return;
+      const data = new DataTransfer();
+      data.setData("text/plain", "selection");
+      document.getElementById("screen").dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }),
+      );
+    })`,
+  });
+
+  const pasted = browser.frame("Network.webSocketFrameSent", "paste");
+  const skipped = browser.consoleMessage(
+    "the browser pasted the middle click itself",
+  );
+  await clickScreenMiddle(browser, "middle");
+  assert.equal((await pasted).text, "selection");
+  await skipped;
+  const reads = await browser.command("Runtime.evaluate", {
+    expression: "window.clipboardReads",
+    returnByValue: true,
+  });
+  assert.equal(reads.result.result.value, 0, "the clipboard was not read");
+  assert.deepEqual(browser.exceptions, []);
+});
+
+test("Ctrl+V and Shift+Insert paste without reading the clipboard themselves", async (t) => {
+  const browser = await startBrowser(t);
+  // Writing only: reading through navigator.clipboard would be refused.
+  await browser.command("Browser.grantPermissions", {
+    permissions: ["clipboardSanitizedWrite"],
+    origin: browser.base,
+  });
+  await browser.command("Emulation.setFocusEmulationEnabled", {
+    enabled: true,
+  });
+  await browser.command("Runtime.evaluate", {
+    expression: "navigator.clipboard.writeText('pasted')",
+    awaitPromise: true,
+    userGesture: true,
+  });
+
+  for (const [name, code, modifiers, windowsVirtualKeyCode] of [
+    ["v", "KeyV", 2, 86],
+    ["Insert", "Insert", 8, 45],
+  ]) {
+    const pasted = browser.frame("Network.webSocketFrameSent", "paste");
+    await browser.key(name, code, { modifiers, windowsVirtualKeyCode });
+    assert.equal((await pasted).text, "pasted", name);
+  }
+  const focused = await browser.command("Runtime.evaluate", {
+    expression: "document.activeElement.id",
+    returnByValue: true,
+  });
+  assert.equal(focused.result.result.value, "screen");
+  assert.deepEqual(browser.exceptions, []);
+});
+
 test("the session is restored after reload", async (t) => {
   const browser = await startBrowser(t);
   const reattached = browser.frame("Network.webSocketFrameReceived", "hello");

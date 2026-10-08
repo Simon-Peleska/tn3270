@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { Session } from "./session.js";
 import { parseClientMessage, parseLogon } from "./protocol.js";
 import { AppError, describeError } from "./errors.js";
+import { ownerOf } from "./userdata.js";
 import { logger } from "./log.js";
 
 /**
@@ -96,10 +97,11 @@ export class SessionRegistry {
    * @param {string} id
    * @param {{ ip: string, user: string }} client
    * @param {string | undefined} pass
+   * @param {string} tab the id the browser tab sends with its saves
    * @param {ViewerSocket} socket
    * @returns {{ viewerId: string, message: (text: string) => void, detach: () => void }}
    */
-  attach(id, client, pass, socket) {
+  attach(id, client, pass, tab, socket) {
     const session = this.get(id);
     const viewerId = randomUUID().slice(0, 8);
     // What a viewer is sent in one turn, a paint and the status with it, goes
@@ -114,6 +116,7 @@ export class SessionRegistry {
       ip: client.ip,
       user: client.user,
       pass,
+      tab,
       sendMessage: (msg) => {
         if (outbox === null) {
           outbox = [];
@@ -153,6 +156,28 @@ export class SessionRegistry {
         session.detach(viewer);
       },
     };
+  }
+
+  /**
+   * The tab that saved already shows it; the owner's other tabs fetch it anew.
+   *
+   * @param {string} owner
+   * @param {string} savedBy the saving tab's id
+   * @param {import('./userdata.js').UserDataKey} key
+   * @returns {number} how many tabs were told
+   */
+  userDataSaved(owner, savedBy, key) {
+    let told = 0;
+    for (const session of this.sessions.values()) {
+      for (const viewer of session.viewers) {
+        if (viewer.tab === savedBy) continue;
+        if (ownerOf({ ip: viewer.ip ?? "", user: viewer.user ?? "" }) !== owner)
+          continue;
+        viewer.sendMessage({ type: "userdata", key });
+        told++;
+      }
+    }
+    return told;
   }
 
   /** @returns {void} */

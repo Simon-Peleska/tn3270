@@ -97,6 +97,7 @@ export const ERRORS = Object.freeze({
   E5043: "Page carries no saved settings from the server",
   E5044: "Logon could not be sent to the server",
   E5045: "Logon needs a user name and a password",
+  E5046: "User data another tab saved could not be read",
 
   E6001: "Static file not found",
   E6002: "WebSocket upgrade path is not a session",

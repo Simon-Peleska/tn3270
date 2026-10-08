@@ -184,6 +184,8 @@ export class Settings {
    * @returns {void}
    */
   restoreSaved(saved) {
+    // Only what differs from the defaults is saved: a key gone is a reset.
+    saved = { ...DEFAULT_SETTINGS, ...saved };
     const theme = THEMES.find((entry) => entry.name === saved.theme);
     if (theme !== undefined) this.values.theme = theme.name;
     const font = FONTS.find((entry) => entry.name === saved.font);

@@ -30,6 +30,12 @@ const LEGACY_KEYS = /** @type {const} */ ({
  * @property {boolean} fieldBackground whether a typeable field is tinted
  */
 
+/**
+ * Sent with every save, so the server tells this user's other tabs about it
+ * but not this one. Not crypto.randomUUID(): that needs HTTPS.
+ */
+export const TAB_ID = Math.random().toString(36).slice(2);
+
 /** @param {Response} response @returns {Promise<Error>} */
 export async function responseError(response) {
   const body = await response.json().catch(() => null);
@@ -70,16 +76,45 @@ async function fetchValue(key) {
 const writing = new Map();
 
 /**
+ * What this tab last read or wrote per key, as JSON, so a reload that finds
+ * the same is no news. Not recordings: they can be megabytes, and are only
+ * reloaded when another tab saved them.
+ * @type {Map<Key, string>}
+ */
+const seen = new Map();
+
+/** @param {Key} key @param {unknown} value @returns {void} */
+function remember(key, value) {
+  if (key !== "recordings") seen.set(key, JSON.stringify(value));
+}
+
+/**
+ * Bumped by every write and reload, so a reload overtaken by either is
+ * dropped: it would put back what was just replaced.
+ * @type {Map<Key, number>}
+ */
+const generations = new Map();
+
+/** @param {Key} key @returns {number} */
+function bump(key) {
+  const generation = (generations.get(key) ?? 0) + 1;
+  generations.set(key, generation);
+  return generation;
+}
+
+/**
  * Chained per key: two saves in flight at once could otherwise land in the
  * opposite order.
  *
  * @param {Key} key @param {unknown} value @returns {Promise<void>}
  */
 function write(key, value) {
+  bump(key);
+  remember(key, value);
   const put = async () => {
     const response = await fetch(`./api/userdata/${key}`, {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "x-tab": TAB_ID },
       body: JSON.stringify(value),
     });
     if (!response.ok) throw await responseError(response);
@@ -114,6 +149,7 @@ function readLegacy(key) {
 async function read(key) {
   const value =
     key === "recordings" ? await fetchValue(key) : inlinedValue(key);
+  remember(key, value);
   if (value !== null && value !== undefined) return value;
 
   /** @type {unknown} */
@@ -131,13 +167,52 @@ async function read(key) {
 }
 
 /**
+ * What is saved for `key` now, when that is news to this tab: another tab
+ * saved it since.
+ *
+ * @param {Key} key
+ * @returns {Promise<unknown>} undefined when nothing changed, or a later write
+ *   or reload overtook this one
+ */
+export async function reload(key) {
+  const generation = bump(key);
+  // A save of this tab's still on its way would be read back as it was before.
+  await writing.get(key)?.catch(() => {});
+  const response = await fetch(`./api/userdata/${key}`);
+  if (!response.ok) throw await responseError(response);
+  const text = await response.text();
+  if (generations.get(key) !== generation || seen.get(key) === text)
+    return undefined;
+  const value = JSON.parse(text);
+  remember(key, value);
+  return SHAPES[key](value);
+}
+
+/** @param {unknown} value @returns {Record<string, unknown>} empty when it is none */
+function asObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? /** @type {Record<string, unknown>} */ (value)
+    : {};
+}
+
+/** @param {unknown} value @returns {unknown[]} empty when it is none */
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+/** What a first visit, or a value of the wrong shape, reads as. */
+const SHAPES = {
+  settings: asObject,
+  macros: asArray,
+  keymap: asObject,
+  recordings: asArray,
+};
+
+/**
  * @returns {Promise<Partial<StoredSettings>>} empty on a first visit
  */
 export async function loadSettings() {
-  const value = await read("settings");
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value
-    : {};
+  return asObject(await read("settings"));
 }
 
 /**
@@ -152,8 +227,9 @@ export async function saveSettings(settings) {
  * @returns {Promise<import('./macros.js').Macro[]>} empty on a first visit
  */
 export async function loadMacros() {
-  const value = await read("macros");
-  return Array.isArray(value) ? value : [];
+  return /** @type {import('./macros.js').Macro[]} */ (
+    asArray(await read("macros"))
+  );
 }
 
 /**
@@ -168,8 +244,9 @@ export async function saveMacros(macros) {
  * @returns {Promise<import('./recorder.js').Recording[]>} empty on a first visit
  */
 export async function loadRecordings() {
-  const value = await read("recordings");
-  return Array.isArray(value) ? value : [];
+  return /** @type {import('./recorder.js').Recording[]} */ (
+    asArray(await read("recordings"))
+  );
 }
 
 /**
@@ -184,10 +261,9 @@ export async function saveRecordings(recordings) {
  * @returns {Promise<import('./keymap.js').Bindings>} empty on a first visit
  */
 export async function loadKeymap() {
-  const value = await read("keymap");
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? /** @type {import('./keymap.js').Bindings} */ (value)
-    : {};
+  return /** @type {import('./keymap.js').Bindings} */ (
+    asObject(await read("keymap"))
+  );
 }
 
 /**

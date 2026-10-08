@@ -125,7 +125,10 @@ export const MAX_CELLS = 16383;
  *
  * @typedef {{ type: 'recorderStopped' }} RecorderStoppedMessage
  *
- * @typedef {HelloMessage | ScreenMessage | PaintMessage | StatusMessage | ErrorMessage | RecorderStepMessage | RecorderStoppedMessage | WaitingMessage | RefusedMessage | LogonMessage} ServerMessage
+ * Another tab of the same user saved this key.
+ * @typedef {{ type: 'userdata', key: import('./userdata.js').UserDataKey }} UserDataMessage
+ *
+ * @typedef {HelloMessage | ScreenMessage | PaintMessage | StatusMessage | ErrorMessage | RecorderStepMessage | RecorderStoppedMessage | WaitingMessage | RefusedMessage | LogonMessage | UserDataMessage} ServerMessage
  */
 
 /**

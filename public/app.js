@@ -25,6 +25,8 @@ import {
   saveRecordings,
   loadKeymap,
   saveKeymap,
+  reload,
+  TAB_ID,
 } from "./store.js";
 import { backoffDelay } from "./reconnect.js";
 import {
@@ -62,6 +64,7 @@ const screenEl = element("screen");
 const canvasEl = element("canvas");
 if (!(canvasEl instanceof HTMLCanvasElement))
   throw new Error("#canvas is not a canvas");
+const pasteTarget = element("paste-target");
 const importInput = element("recording-import");
 if (!(importInput instanceof HTMLInputElement))
   throw new Error("#recording-import is not a file input");
@@ -801,6 +804,7 @@ function connectSocket() {
   // Per tab and never in the fragment, so sharing the URL does not share it.
   const pass = sessionStorage.getItem(`tn3270.pass.${session.id}`);
   if (pass !== null) url.searchParams.set("pass", pass);
+  url.searchParams.set("tab", TAB_ID);
 
   const ws = new WebSocket(url.href);
   session.socket = ws;
@@ -862,6 +866,14 @@ function reconnect() {
   session.retryTimer = null;
   connectSocket();
 }
+
+// A tab that was offline missed what other tabs saved meanwhile. Recordings
+// are left out: they can be megabytes, and only change when told.
+window.addEventListener("focus", () => {
+  reloadUserData("settings");
+  reloadUserData("keymap");
+  reloadUserData("macros");
+});
 
 // A hidden tab's timers are throttled to once a minute, so the backoff wait
 // can outlast the outage by far; coming back should not sit through it.
@@ -973,6 +985,11 @@ function handleServerMessage(message) {
     }
     return;
   }
+  if (message.type === "userdata") {
+    console.info("another tab saved", message.key);
+    reloadUserData(message.key);
+    return;
+  }
   if (message.type === "paint") {
     // Even behind a panel: the grid underneath is what closing it puts back.
     screen.applyHostPaint(message);
@@ -1012,6 +1029,47 @@ function handleServerMessage(message) {
   // A refused change leaves the page showing a size never accepted.
   syncSettings();
   showError(message.code, message.message);
+}
+
+/**
+ * Shows what is saved for `key` now, which another tab may have changed. A
+ * session already running keeps its size; the model and screen size are for
+ * the next one.
+ *
+ * @param {import('../server/userdata.js').UserDataKey} key
+ * @returns {Promise<void>}
+ */
+async function reloadUserData(key) {
+  /** @type {unknown} */
+  let value;
+  try {
+    value = await reload(key);
+  } catch (cause) {
+    showError(
+      "E5046",
+      `What another tab saved could not be read: ${String(cause)}`,
+      cause,
+    );
+    return;
+  }
+  if (value === undefined) return;
+  console.info("user data changed elsewhere", key);
+  if (key === "settings") {
+    settings.restoreSaved(
+      /** @type {Partial<import('./store.js').StoredSettings>} */ (value),
+    );
+    applyTheme(settings.theme());
+    screen.fieldBackground = settings.values.fieldBackground;
+    await applyFont(settings.font());
+  } else if (key === "keymap")
+    keymap.setBindings(/** @type {import('./keymap.js').Bindings} */ (value));
+  else if (key === "macros")
+    macros.load(/** @type {import('./macros.js').Macro[]} */ (value));
+  else
+    recorder.recordings = /** @type {import('./recorder.js').Recording[]} */ (
+      value
+    );
+  redraw();
 }
 
 /**
@@ -1229,15 +1287,22 @@ screenEl.addEventListener(
     if (mapped === null) return;
     if (mapped.kind === "client" && SHARING_COMMANDS.has(mapped.command))
       return;
-    // Left alone, Ctrl+V becomes a paste event, which reads the clipboard
-    // without the permission prompt navigator.clipboard.readText() needs.
+    // Left alone, Ctrl+V and Shift+Insert become a paste event, which reads the
+    // clipboard without the prompt navigator.clipboard.readText() needs: once
+    // in Chrome, on every paste in Firefox. Firefox pastes only into a text
+    // field, so one takes the focus until the paste arrives.
+    const browserPastes =
+      (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === "v") ||
+      (event.shiftKey && !event.ctrlKey && event.code === "Insert");
     if (
       mapped.kind === "client" &&
       mapped.command === "Paste" &&
-      event.ctrlKey &&
-      event.key.toLowerCase() === "v"
-    )
+      !event.altKey &&
+      browserPastes
+    ) {
+      pasteTarget.focus();
       return;
+    }
     event.preventDefault();
     event.stopPropagation();
 
@@ -1330,8 +1395,8 @@ screenEl.addEventListener(
     // The panel commands are the other client commands, and the window handler
     // claims those before this one ever runs.
     if (mapped.command !== "Paste") return;
-    // Ctrl+V arrives as a paste event instead; every other binding must read the
-    // clipboard, which Chrome asks permission for once.
+    // Ctrl+V and Shift+Insert arrive as a paste event instead; every other
+    // binding must read the clipboard itself.
     navigator.clipboard
       .readText()
       .then((text) => {
@@ -1341,7 +1406,7 @@ screenEl.addEventListener(
       .catch((cause) => {
         showError(
           "E5005",
-          `The clipboard could not be read; Ctrl+V pastes without asking: ${String(cause)}`,
+          `The clipboard could not be read; Ctrl+V and Shift+Insert paste without asking: ${String(cause)}`,
           cause,
         );
       });
@@ -1349,29 +1414,50 @@ screenEl.addEventListener(
   true,
 );
 
+/**
+ * The wheel and the mouse buttons are bound like keys: each turn or click is a
+ * keydown of its own name, so a key field in the Keys panel picks it up too.
+ *
+ * @param {string} name a combo's key, e.g. "WheelUp" or "MiddleClick"
+ * @param {MouseEvent} event
+ * @returns {boolean} whether something took it
+ */
+function pressMouseKey(name, event) {
+  const keyEvent = new KeyboardEvent("keydown", {
+    key: name,
+    code: name,
+    ctrlKey: event.ctrlKey,
+    shiftKey: event.shiftKey,
+    altKey: event.altKey,
+    bubbles: true,
+    cancelable: true,
+  });
+  return !screenEl.dispatchEvent(keyEvent);
+}
+
 screenEl.addEventListener(
   "wheel",
   (event) => {
-    if (event.deltaY === 0) return;
-
-    const key = event.deltaY < 0 ? "WheelUp" : "WheelDown";
-
-    const keyEvent = new KeyboardEvent("keydown", {
-      key,
-      code: key,
-      ctrlKey: event.ctrlKey,
-      shiftKey: event.shiftKey,
-      altKey: event.altKey,
-      bubbles: true,
-      cancelable: true,
-    });
-
-    if (!screenEl.dispatchEvent(keyEvent)) {
-      event.preventDefault();
-    }
+    const sideways = Math.abs(event.deltaX) > Math.abs(event.deltaY);
+    const delta = sideways ? event.deltaX : event.deltaY;
+    if (delta === 0) return;
+    const name = sideways
+      ? delta < 0
+        ? "WheelLeft"
+        : "WheelRight"
+      : delta < 0
+        ? "WheelUp"
+        : "WheelDown";
+    if (pressMouseKey(name, event)) event.preventDefault();
   },
   { passive: false },
 );
+
+// The paste comes before the keyup, unless there was nothing to paste.
+pasteTarget.addEventListener("keyup", () => screenEl.focus());
+
+/** Text pastes the browser made itself, so a middle click can tell it pasted. */
+let textPastes = 0;
 
 // Capture: the keydown handler above would otherwise see Ctrl+V twice.
 screenEl.addEventListener(
@@ -1379,9 +1465,11 @@ screenEl.addEventListener(
   (event) => {
     event.preventDefault();
     event.stopPropagation();
+    screenEl.focus();
     clearError();
     const text = event.clipboardData?.getData("text/plain") ?? "";
     if (text === "") return;
+    textPastes++;
     if (panels.capturingMacro()) return;
     if (panels.isOpen()) panels.receive({ type: "paste", text });
     else send({ type: "paste", text });
@@ -1395,9 +1483,39 @@ screenEl.addEventListener(
  */
 function canvasClicked(event) {
   screenEl.focus();
+  const name = MOUSE_BUTTONS[event.button];
   const hit = screen.cellAt(event.clientX, event.clientY);
-  if (hit === null) return;
+  if (name === undefined || hit === null) return;
   const { row, col } = hit;
+  /** @type {import('../server/protocol.js').ActionMessage} */
+  const moveCursor = {
+    type: "action",
+    action: "MoveCursor1",
+    args: [String(row + 1), String(col + 1)],
+  };
+
+  // Middle and right only move the cursor and run their binding; the buttons,
+  // links and panel lists drawn on the canvas answer the left one alone.
+  if (name !== "LeftClick") {
+    if (row < 0 || row >= screen.rows || col < 0 || col >= screen.cols) return;
+    if (!panels.isOpen()) sendUnrecorded(moveCursor);
+    else if (panels.isRecordingPlayback()) return;
+    // In a key field the click is the key being picked, not a move away.
+    else if (!panels.capturing()) panels.receive(moveCursor);
+    if (name !== "MiddleClick") {
+      pressMouseKey(name, event);
+      return;
+    }
+    // Firefox on Linux pastes the selection on a middle click, just after
+    // this; then the click has pasted, and reading the clipboard as well
+    // would paste twice and show Firefox's paste prompt.
+    const pastesBefore = textPastes;
+    setTimeout(() => {
+      if (textPastes === pastesBefore) pressMouseKey(name, event);
+      else console.info("the browser pasted the middle click itself");
+    }, 0);
+    return;
+  }
 
   if (row === screen.statusRow) {
     const button = statusButtons(screen.cols).find(
@@ -1440,27 +1558,28 @@ function canvasClicked(event) {
       panels.addMacroCursorMove(row, col);
       return;
     }
-    panels.receive({
-      type: "action",
-      action: "MoveCursor1",
-      args: [String(row + 1), String(col + 1)],
-    });
+    // Not LeftClick's binding: a click into a key field would be picked as the key.
+    panels.receive(moveCursor);
     return;
   }
 
   // A click ending a drag was aiming at the selection.
   if (screen.hasSelection()) return;
   const url = screen.linkAt(row, col);
-  if (event.button === 0 && url !== null) {
+  if (url !== null) {
     window.open(url, "_blank", "noopener,noreferrer");
     return;
   }
-  sendUnrecorded({
-    type: "action",
-    action: "MoveCursor1",
-    args: [String(row + 1), String(col + 1)],
-  });
+  sendUnrecorded(moveCursor);
+  pressMouseKey(name, event);
 }
+
+/** @type {Readonly<Record<number, string>>} `MouseEvent.button` to a combo's key */
+const MOUSE_BUTTONS = Object.freeze({
+  0: "LeftClick",
+  1: "MiddleClick",
+  2: "RightClick",
+});
 
 // The font has to be loaded before the first canvas, or the first screen is
 // measured in the wrong face and fitted to the wrong size. Recordings are not
@@ -1534,6 +1653,12 @@ function watchScale() {
 }
 watchScale();
 canvasEl.addEventListener("click", canvasClicked);
+canvasEl.addEventListener("auxclick", canvasClicked);
+// The right button is the terminal's, and a held middle one would scroll.
+canvasEl.addEventListener("contextmenu", (event) => event.preventDefault());
+canvasEl.addEventListener("mousedown", (event) => {
+  if (event.button === 1) event.preventDefault();
+});
 screenEl.style.background = settings.theme().colors.background;
 
 const storedHost = localStorage.getItem("tn3270.host");

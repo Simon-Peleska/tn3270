@@ -34,13 +34,16 @@ does the same with a session saved from the Recorder panel.
 ```bash
 npm test             # node --test, no browser driver and no host needed
 npm run test:browser # optional Chromium smoke test of the real page
+npm run test:firefox # optional Firefox smoke test of the real page
 npm run typecheck    # tsc over the JSDoc types; this is the "no any" gate
 npm run fuzz -- -max_total_time=600 -fork=8 -ignore_crashes=1  # grow the corpus
 node 3270/scripts/fuzz.mjs --corpus 3270/test/fuzz-corpus     # replay it against b3270
 ```
 
 The optional browser smoke test needs `chromium` on `PATH` (or `CHROMIUM` set
-to its executable).
+to its executable). The Firefox one needs `firefox` and `geckodriver` on `PATH`
+(or `FIREFOX` and `GECKODRIVER` set), e.g. from
+`nix shell nixpkgs#firefox nixpkgs#geckodriver`.
 
 Fuzzing has two stages. `npm run fuzz` is Jazzer.js's coverage-guided fuzzing
 of host data streams through node3270 alone, in process, at a few thousand

@@ -314,7 +314,7 @@ test("the page's code goes compressed to a browser that takes it", async (t) => 
   assert.equal(font.headers.get("content-encoding"), null);
 });
 
-test("the page preloads every module it imports", async (t) => {
+test("the page preloads every module it imports, and nothing else", async (t) => {
   const server = await startServer();
   t.after(() => server.stop());
   const html = await (await fetch(`http://127.0.0.1:${server.port}/`)).text();
@@ -335,6 +335,13 @@ test("the page preloads every module it imports", async (t) => {
     assert.ok(
       html.includes(`<link rel="modulepreload" href="./${file}" />`),
       `${file} is imported but never preloaded — add it to public/index.html`,
+    );
+  for (const [, file] of html.matchAll(
+    /<link rel="modulepreload" href="\.\/([\w.-]+)" \/>/g,
+  ))
+    assert.ok(
+      imported.has(String(file)),
+      `${file} is preloaded but never imported — remove it from public/index.html`,
     );
 });
 
@@ -801,6 +808,70 @@ test("user data saved through one server is read back through it", async (t) => 
     keymap: null,
     recordings: null,
   });
+});
+
+test("a save in one tab tells the user's other tabs, and nobody else's", async (t) => {
+  const server = await startServer("warn", true);
+  t.after(() => server.stop());
+  const alice = { "x-remote-user": "alice" };
+  const bob = { "x-remote-user": "bob" };
+
+  /** @param {string} tab @param {Record<string, string>} headers */
+  const openTab = async (tab, headers) => {
+    const created = await (
+      await fetch(`http://127.0.0.1:${server.port}/api/sessions`, {
+        method: "POST",
+        headers,
+      })
+    ).json();
+    const viewer = await openViewer(
+      `ws://127.0.0.1:${server.port}/ws/${created.id}?tab=${tab}`,
+      headers,
+    );
+    t.after(() => viewer.socket.close());
+    await waitUntil(
+      () => viewer.messages.some((m) => m["type"] === "hello"),
+      `tab ${tab} to be attached`,
+    );
+    return viewer;
+  };
+  /** @param {{ messages: Record<string, unknown>[] }} viewer */
+  const notices = (viewer) =>
+    viewer.messages.filter((m) => m["type"] === "userdata");
+
+  const aliceFirst = await openTab("a1", alice);
+  const aliceSecond = await openTab("a2", alice);
+  const bobs = await openTab("b1", bob);
+
+  await putUserData(
+    server.port,
+    "settings",
+    { theme: "Solarized" },
+    {
+      ...alice,
+      "x-tab": "a1",
+    },
+  );
+  await waitUntil(
+    () => notices(aliceSecond).length === 1,
+    "alice's other tab to hear of the save",
+  );
+  assert.deepEqual(notices(aliceSecond), [
+    { type: "userdata", key: "settings" },
+  ]);
+
+  // A socket delivers in order, so each tab's own notice proves the save
+  // before it sent nothing.
+  await putUserData(server.port, "keymap", {}, { ...alice, "x-tab": "a2" });
+  await waitUntil(
+    () => notices(aliceFirst).length > 0,
+    "alice's first tab to hear of the second's save",
+  );
+  assert.deepEqual(notices(aliceFirst), [{ type: "userdata", key: "keymap" }]);
+
+  await putUserData(server.port, "macros", [], bob);
+  await waitUntil(() => notices(bobs).length > 0, "bob's tab to hear");
+  assert.deepEqual(notices(bobs), [{ type: "userdata", key: "macros" }]);
 });
 
 test("blue and green servers on one database file see each other's saves", async (t) => {

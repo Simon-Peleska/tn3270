@@ -17,6 +17,7 @@ import { requestPassTicket } from "./dcas.js";
  * @property {string} [ip]
  * @property {string} [user]
  * @property {string} [pass] what the browser came back with, from an earlier hello
+ * @property {string} [tab] the id the browser tab sends with its saves
  * @property {boolean} [owner] set on attach
  * @property {boolean} [wantsEdit] an observer waiting for the owner's answer
  * @property {(message: import('./protocol.js').ServerMessage) => void} sendMessage

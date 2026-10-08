@@ -417,7 +417,8 @@ async function handleRequest(req, res) {
     }
     const owner = ownerOf(client);
     userData.save(owner, key, json);
-    log.info("user data saved", { owner, key, bytes: json.length });
+    const otherTabs = registry.userDataSaved(owner, header(req, "x-tab"), key);
+    log.info("user data saved", { owner, key, bytes: json.length, otherTabs });
     res.writeHead(204);
     res.end();
     return;
@@ -508,8 +509,9 @@ server.on("upgrade", (req, socket, head) => {
   // browser never sees an upgrade's status, only that the socket failed.
   const id = String(match[1]);
   const pass = url.searchParams.get("pass") ?? undefined;
+  const tab = url.searchParams.get("tab")?.slice(0, 64) ?? "";
   wss.handleUpgrade(req, socket, head, (ws) =>
-    attachViewer(id, ws, client, pass),
+    attachViewer(id, ws, client, pass, tab),
   );
 });
 
@@ -518,13 +520,14 @@ server.on("upgrade", (req, socket, head) => {
  * @param {import('ws').WebSocket} ws
  * @param {{ ip: string, user: string }} client
  * @param {string | undefined} pass from an earlier hello: the owner's, or a guest's let in before
+ * @param {string} tab the id the browser tab sends with its saves
  * @returns {void}
  */
-function attachViewer(id, ws, client, pass) {
+function attachViewer(id, ws, client, pass, tab) {
   /** @type {ReturnType<SessionRegistry["attach"]>} */
   let viewer;
   try {
-    viewer = registry.attach(id, client, pass, {
+    viewer = registry.attach(id, client, pass, tab, {
       send(text) {
         if (ws.readyState !== ws.OPEN) return;
         if (ws.bufferedAmount > MAX_VIEWER_BUFFERED_BYTES) {

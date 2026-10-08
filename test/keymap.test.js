@@ -343,6 +343,28 @@ test("Ctrl-X is Cut and Ctrl-V is Paste", () => {
   );
 });
 
+test("a middle click pastes, and the other buttons and wheel turns can be bound by name", () => {
+  assert.deepEqual(
+    mapKey(key({ key: "MiddleClick", code: "MiddleClick" }), lookup),
+    { kind: "client", command: "Paste" },
+  );
+  for (const name of ["LeftClick", "RightClick", "WheelLeft", "WheelRight"]) {
+    assert.equal(mapKey(key({ key: name, code: name }), lookup), null, name);
+    assert.deepEqual(
+      parseCombo(`Ctrl+${name.toLowerCase()}`),
+      { key: name, shift: false, ctrl: true, alt: false },
+      name,
+    );
+  }
+  const rightClick = parseCombo("RightClick");
+  assert.ok(rightClick);
+  const bound = buildLookup({ Enter: [rightClick] });
+  assert.deepEqual(
+    mapKey(key({ key: "RightClick", code: "RightClick" }), bound),
+    { kind: "action", action: "Enter", args: [] },
+  );
+});
+
 test("a binding follows the character printed on the key, not its place on the board", () => {
   // QWERTZ: the key marked Z sits where a US layout keeps Y, so it reports KeyY.
   assert.deepEqual(
