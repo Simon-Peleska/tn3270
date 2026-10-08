@@ -31,6 +31,8 @@ class FakeContext {
   constructor() {
     /** @type {Fill[]} */
     this.fills = [];
+    /** @type {{ text: string, x: number, style: string, font: string }[]} */
+    this.texts = [];
     /** @type {string} */
     this.fillStyle = "";
     /** @type {string} */
@@ -86,9 +88,11 @@ class FakeContext {
    * @returns {{ width: number, fontBoundingBoxAscent: number, fontBoundingBoxDescent: number }}
    */
   measureText(text) {
-    const size = Number.parseFloat(this.font) || 16;
+    const size = Number.parseFloat(this.font.replace("bold ", "")) || 16;
+    // A glyph only a wider fallback font has, as CJK usually is.
+    const wide = [...text].filter((ch) => ch === "漢").length;
     return {
-      width: text.length * size * 0.6,
+      width: (text.length + wide) * size * 0.6,
       fontBoundingBoxAscent: size * 0.8,
       fontBoundingBoxDescent: size * 0.25,
     };
@@ -108,8 +112,19 @@ class FakeContext {
     if (clipped.w > 0 && clipped.h > 0) this.fills.push(clipped);
   }
 
-  /** @returns {void} */
-  fillText() {}
+  /**
+   * @param {string} text
+   * @param {number} x
+   * @returns {void}
+   */
+  fillText(text, x) {
+    this.texts.push({
+      text,
+      x,
+      style: String(this.fillStyle),
+      font: this.font,
+    });
+  }
 
   /** @returns {void} */
   setTransform() {}
@@ -628,4 +643,159 @@ test("a drag that leaves the screen stays clamped inside it", () => {
     bottom: 24,
     right: 79,
   });
+});
+
+/**
+ * @param {Screen} screen
+ * @returns {{ text: string, x: number, style: string, font: string }[]}
+ */
+function textsOf(screen) {
+  const ctx = /** @type {unknown} */ (screen.ctx);
+  return /** @type {FakeContext} */ (ctx).texts;
+}
+
+test("neighbours in one font and colour are drawn as one string, so a font can join them", () => {
+  const screen = new Screen({
+    canvas: fakeCanvas(),
+    theme: THEME,
+    fieldBackground: true,
+  });
+  screen.resize(80, 24);
+  const plain = { fg: null, bg: null, gr: null };
+  screen.host.put(0, 0, "a => b", plain);
+  screen.host.put(1, 0, "ab", plain);
+  screen.host.put(1, 2, "cd", { ...plain, gr: "highlight" });
+  screen.host.put(1, 4, "e漢f", plain);
+  screen.layout(PAGE, "monospace");
+  screen.render();
+
+  const { width } = screen.metrics;
+  const drawn = textsOf(screen).map(({ text, x, font }) => ({
+    text,
+    col: Math.round((x - screen.rect.x) / width),
+    bold: font.startsWith("bold"),
+  }));
+  assert.deepEqual(drawn, [
+    { text: "a", col: 0, bold: false },
+    { text: "=>", col: 2, bold: false },
+    { text: "b", col: 5, bold: false },
+    { text: "ab", col: 0, bold: false },
+    { text: "cd", col: 2, bold: true },
+    // A glyph wider than its cell would push the rest of a string along, so
+    // it is drawn on its own and its neighbours keep their cells.
+    { text: "e", col: 4, bold: false },
+    { text: "漢", col: 5, bold: false },
+    { text: "f", col: 6, bold: false },
+  ]);
+});
+
+test("a selection's edge splits a string, so each side is drawn in its own ink", () => {
+  const screen = page();
+  mouse(screen, "mousedown", 2, 2);
+  mouse(screen, "mousemove", 2, 5);
+  mouse(screen, "mouseup", 2, 5);
+
+  const lastFrame = textsOf(screen).slice(-4);
+  const ink = lastFrame[0]?.style;
+  assert.deepEqual(
+    lastFrame.map(({ text, style }) => ({ text, style })),
+    [
+      { text: "PA", style: ink },
+      { text: "NE", style: THEME.selectionForeground },
+      { text: "0", style: THEME.selectionForeground },
+      { text: "TEXT", style: ink },
+    ],
+  );
+  assert.notEqual(ink, THEME.selectionForeground);
+});
+
+test("box-drawing lines are filled, not typed, and meet their neighbours exactly", () => {
+  const window = Reflect.get(globalThis, "window");
+  window.devicePixelRatio = 1.4;
+  try {
+    const screen = new Screen({
+      canvas: fakeCanvas(),
+      theme: THEME,
+      fieldBackground: true,
+    });
+    screen.resize(80, 24);
+    const plain = { fg: null, bg: null, gr: null };
+    screen.host.put(0, 0, "┌─┐", plain);
+    screen.host.put(1, 0, "│=>┼", plain);
+    screen.host.put(2, 0, "└─┘", plain);
+    screen.layout(PAGE, "monospace");
+    screen.render();
+
+    assert.deepEqual(
+      textsOf(screen).map(({ text }) => text),
+      ["=>"],
+      "only the text between the lines is typed",
+    );
+    assertOnDeviceGrid(screen, 1.4);
+
+    const { width, height } = screen.metrics;
+    const ink = textsOf(screen)[0]?.style;
+    // The test theme has no slot colours, so the rows' background is the same
+    // white as the ink; a line is what fits in one cell.
+    const lines = fillsOf(screen).filter(
+      (fill) =>
+        fill.style === ink && fill.w <= width + 1 && fill.h <= height + 1,
+    );
+    const tall = lines.filter((fill) => fill.h > fill.w);
+    const flat = lines.filter((fill) => fill.w > fill.h);
+
+    // Column 0 down the rows: ┌ down, │ up and down, └ up. One x and one
+    // width, and no row's piece ends short of the next one's start.
+    const column = tall
+      .filter((fill) => fill.x < screen.rect.x + width)
+      .sort((a, b) => a.y - b.y);
+    assert.equal(new Set(column.map((fill) => fill.x)).size, 1);
+    assert.equal(new Set(column.map((fill) => fill.w)).size, 1);
+    for (let i = 1; i < column.length; i++) {
+      const above = column[i - 1];
+      const below = column[i];
+      if (above === undefined || below === undefined) continue;
+      assert.ok(below.y <= above.y + above.h + 1e-9, "a gap down the line");
+    }
+    assert.ok(
+      (column.at(-1)?.y ?? 0) + (column.at(-1)?.h ?? 0) - (column[0]?.y ?? 0) >
+        height,
+      "the line runs from the top row into the bottom one",
+    );
+
+    // Row 0 across: ┌ right, ─ both ways, ┐ left, all at one height.
+    const top = flat.filter((fill) => fill.y < screen.rect.y + height);
+    assert.equal(new Set(top.map((fill) => fill.y)).size, 1);
+    assert.equal(new Set(top.map((fill) => fill.h)).size, 1);
+  } finally {
+    window.devicePixelRatio = 1;
+  }
+});
+
+test("the cursor splits a string around its cell, so a ligature under it comes apart", () => {
+  const screen = new Screen({
+    canvas: fakeCanvas(),
+    theme: THEME,
+    fieldBackground: true,
+  });
+  screen.resize(80, 24);
+  screen.host.put(0, 0, "a/=b", { fg: null, bg: null, gr: null });
+  screen.host.cursor = { row: 0, col: 2, visible: true };
+  screen.layout(PAGE, "monospace");
+  screen.render();
+
+  const { width } = screen.metrics;
+  assert.deepEqual(
+    textsOf(screen).map(({ text, x }) => ({
+      text,
+      col: Math.round((x - screen.rect.x) / width),
+    })),
+    [
+      { text: "a/", col: 0 },
+      { text: "=", col: 2 },
+      { text: "b", col: 3 },
+      // and again in the accent, over the block
+      { text: "=", col: 2 },
+    ],
+  );
 });

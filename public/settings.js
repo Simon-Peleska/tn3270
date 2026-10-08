@@ -16,6 +16,11 @@ export const FONTS = Object.freeze([
     file: "FiraMono-Regular.woff2",
   },
   {
+    name: "Fira Code",
+    family: '"Fira Code", monospace',
+    file: "FiraCode-Regular.woff2",
+  },
+  {
     name: "IBM 3270",
     family: '"IBM 3270", monospace',
     file: "3270-Regular.woff2",

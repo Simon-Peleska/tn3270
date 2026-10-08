@@ -10,7 +10,7 @@ export const MIN_FONT_SIZE = 6;
 export const MAX_FONT_SIZE = 64;
 
 /**
- * Largest size at which the grid still fits the box. Cell sizes are rounded up,
+ * Largest size at which the grid still fits the box. Cell heights are rounded up,
  * so the scaled guess can land either side of the answer and the search walks both ways.
  *
  * @param {object} fit

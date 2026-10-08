@@ -13,6 +13,11 @@ redistribution as part of a larger work:
   FiraMono-Regular.woff2       "Fira Mono" by Carrois Apostrophe / Mozilla.
                                https://github.com/mozilla/Fira
 
+  FiraCode-Regular.woff2       "Fira Code" 6.2 by the Fira Code Project
+                               Authors, Fira Mono with programming
+                               ligatures. The release's own WOFF2.
+                               https://github.com/tonsky/FiraCode
+
   IBMPlexMono-Regular.woff2    "IBM Plex Mono" by IBM.
                                https://github.com/IBM/plex
 

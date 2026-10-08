@@ -63,6 +63,27 @@
 //   ord.sba 10 1
 //   ord.sf protect,skip
 //   text "keyboard: the replay has no host to answer it. Reset clears."
+//   ord.sba 12 1
+//   ord.sf protect,skip
+//   text "Box drawing, and ligatures in a font that has them, like JetBrains Mono:"
+//   ord.sba 14 1
+//   ord.sf protect,skip
+//   text "=> -> <- <= >= == === /= <> <=> --> <-- :: && ... >>= =<<"
+//   ord.sba 16 1
+//   ord.sf protect,skip
+//   text "┌────────────┬────────────┐"
+//   ord.sba 17 1
+//   ord.sf protect,skip
+//   text "│ arrow  =>  │ not   /=   │"
+//   ord.sba 18 1
+//   ord.sf protect,skip
+//   text "├────────────┼────────────┤"
+//   ord.sba 19 1
+//   ord.sf protect,skip
+//   text "│ left   <-  │ same  ==   │"
+//   ord.sba 20 1
+//   ord.sf protect,skip
+//   text "└────────────┴────────────┘"
 //   ord.sba 3 12
 //   ord.ic
 //  telnet.eor
@@ -73,4 +94,16 @@
 < 0x80  a240818296a5854b40e38182409496a585a26b40c595a385994093968392a240
 < 0xa0  a38885114b501df09285a882968199847a40a38885409985979381a8408881a2
 < 0xc0  409596408896a2a340a396408195a2a685994089a34b40d985a285a340839385
-< 0xe0  8199a24b11c26b13ffef
+< 0xe0  8199a24b114df01df0c296a740849981a68995876b408195844093898781a3a4
+< 0x100 9985a2408995408140869695a340a38881a3408881a240a38885946b40938992
+< 0x120 8540d185a3c299818995a240d49695967a1150501df07e6e40606e404c60404c
+< 0x140 7e406e7e407e7e407e7e7e40617e404c6e404c7e6e4060606e404c6060407a7a
+< 0x160 405050404b4b4b406e6e7e407e4c4c11d2f01df008c508a208a208a208a208a2
+< 0x180 08a208a208a208a208a208a208a208d708a208a208a208a208a208a208a208a2
+< 0x1a0 08a208a208a208a208d511d4401df008854081999996a640407e6e4040088540
+< 0x1c0 9596a3404040617e404040088511d5501df008c608a208a208a208a208a208a2
+< 0x1e0 08a208a208a208a208a208a208d308a208a208a208a208a208a208a208a208a2
+< 0x200 08a208a208a208d611d6601df0088540938586a34040404c604040088540a281
+< 0x220 948540407e7e404040088511d7f01df008c408a208a208a208a208a208a208a2
+< 0x240 08a208a208a208a208a208c708a208a208a208a208a208a208a208a208a208a2
+< 0x260 08a208a208d411c26b13ffef

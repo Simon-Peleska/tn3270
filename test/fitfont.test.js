@@ -14,7 +14,7 @@ import {
  * @returns {{ width: number, height: number }}
  */
 function cell(size) {
-  return { width: Math.ceil(size * 0.547), height: Math.ceil(size * 1.06) + 2 };
+  return { width: Math.ceil(size * 0.547), height: Math.ceil(size * 1.06) };
 }
 
 /**

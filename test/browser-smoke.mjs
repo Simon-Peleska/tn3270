@@ -862,8 +862,8 @@ test("clicking a URL on the host screen opens a new tab", async (t) => {
     expression: `(() => {
       const canvas = document.querySelector("canvas");
       const metrics = canvas.getContext("2d").measureText("M");
-      const width = Math.ceil(metrics.width);
-      const height = Math.ceil(metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent) + 2;
+      const width = metrics.width;
+      const height = Math.ceil(metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent);
       const rect = canvas.getBoundingClientRect();
       return {
         x: rect.left + (rect.width - 80 * width) / 2 + 12 * width,

@@ -46,6 +46,43 @@ const SLOT_KEYS = [
   "brightWhite",
 ];
 
+/**
+ * Box-drawing characters are drawn as rectangles rather than taken from the
+ * font: a font's "│" is rarely exactly one row tall or centred where the next
+ * row's "┼" is, so its lines never quite meet. Each is the arms it has from the
+ * cell's centre, up, right, down and left: 0 none, 1 light, 2 heavy.
+ *
+ * @type {Map<string, string>}
+ */
+const BOX_ARMS = new Map([
+  ["─", "0101"],
+  ["━", "0202"],
+  ["│", "1010"],
+  ["┃", "2020"],
+  ["┌", "0110"],
+  ["┏", "0220"],
+  ["┐", "0011"],
+  ["┓", "0022"],
+  ["└", "1100"],
+  ["┗", "2200"],
+  ["┘", "1001"],
+  ["┛", "2002"],
+  ["├", "1110"],
+  ["┣", "2220"],
+  ["┤", "1011"],
+  ["┫", "2022"],
+  ["┬", "0111"],
+  ["┳", "0222"],
+  ["┴", "1101"],
+  ["┻", "2202"],
+  ["┼", "1111"],
+  ["╋", "2222"],
+  ["╴", "0001"],
+  ["╵", "1000"],
+  ["╶", "0100"],
+  ["╷", "0010"],
+]);
+
 const URL_PATTERN = /https?:\/\/[^\s<>"'`]+/gi;
 const URL_END_PUNCTUATION = /[.,;:!?)}\]]+$/;
 
@@ -107,6 +144,8 @@ export class Screen {
     this.dpr = window.devicePixelRatio || 1;
     /** @type {() => void} */
     this.redraw = options.redraw ?? (() => this.render());
+    /** @type {Map<string, Map<string, boolean>>} font → glyph → whether it is one cell wide */
+    this.oneCellGlyphs = new Map();
 
     this.canvas.addEventListener("mousedown", (event) =>
       this.beginSelection(event),
@@ -272,10 +311,14 @@ export class Screen {
     const m = this.ctx.measureText("M");
     const ascent = m.fontBoundingBoxAscent || size * 0.8;
     const descent = m.fontBoundingBoxDescent || size * 0.2;
+    // The exact advance, not rounded: a run of neighbours drawn as one string
+    // steps by it, and has to land on the same cells as the fills.
     return {
-      width: Math.ceil(m.width),
-      height: Math.ceil(ascent + descent) + 2,
-      baseline: Math.ceil(ascent) + 1,
+      width: m.width,
+      // No padding between rows: a box-drawing glyph spans the face's full
+      // height, so "│" stacked down the rows only joins if the rows are no taller.
+      height: Math.ceil(ascent + descent),
+      baseline: Math.ceil(ascent),
     };
   }
 
@@ -315,6 +358,7 @@ export class Screen {
       max: maxFontSize,
     });
     this.metrics = this.measure(fontFamily, this.fontSize);
+    this.oneCellGlyphs.clear();
     const width = this.cols * this.metrics.width;
     const height = this.displayRows * this.metrics.height;
     this.rect = {
@@ -402,6 +446,7 @@ export class Screen {
     const boldFont = `bold ${regularFont}`;
     const underlineThickness = Math.max(1, Math.round(height * 0.06));
     const box = this.selectionBox();
+    const cursor = visibleCursor(this.host, this.overlay);
 
     // Every row shares one set of column edges, and every column one set of row
     // edges, so the snapping is done once here instead of four times per cell.
@@ -411,6 +456,11 @@ export class Screen {
     const rowEdge = new Array(rows + 1);
     for (let row = 0; row <= rows; row++)
       rowEdge[row] = this.snap(this.rect.y + row * height);
+
+    // Glyphs go on the exact grid, not the snapped edges: inside a string they
+    // step by the exact advance, so a glyph drawn on its own has to as well, or
+    // a "│" on its own row is a fraction of a pixel off the "┼" below it.
+    const glyphX = (/** @type {number} */ col) => this.rect.x + col * width;
 
     /** @type {(import('./grid.js').Cell | null)[]} */
     const cells = new Array(cols);
@@ -426,6 +476,12 @@ export class Screen {
       const underlineBottom = this.snap(bottom - 1);
       const underlineTop = this.snap(bottom - underlineThickness - 1);
       const rowSelected = box !== null && row >= box.top && row <= box.bottom;
+      // The cursor's cell is drawn on its own, so a ligature it sits in comes
+      // apart rather than leaving half of itself beside the cursor.
+      const cursorCol =
+        cursor !== null && cursor.visible && cursor.row === row
+          ? cursor.col
+          : -1;
 
       // Decoded once per row: the backgrounds and the glyphs want the same
       // answer for the same cell, and working it out is this loop's real cost.
@@ -476,18 +532,40 @@ export class Screen {
         runStart = col;
       }
 
+      // Neighbours in one font and colour are drawn as one string, so a font
+      // with ligatures can join "=>" or "───" the way it was designed to. One
+      // column past the last closes whatever string is open.
       let font = "";
       let fill = "";
-      for (let col = 0; col < cols; col++) {
+      let text = "";
+      let textStart = 0;
+      for (let col = 0; col <= cols; col++) {
         const cell = cells[col];
         const style = styles[col];
-        if (style === undefined || style === null) continue;
-        if (cell?.ch === undefined || cell.ch === null || cell.ch === " ")
-          continue;
+        const ch = cell?.ch ?? " ";
+        const blank = style === undefined || style === null || ch === " ";
         const selected =
           rowSelected && box !== null && col >= box.left && col <= box.right;
-        const wanted = selected ? selectedInk : style.fg;
-        const wantedFont = style.bold ? boldFont : regularFont;
+        const wanted = blank ? "" : selected ? selectedInk : style.fg;
+        const wantedFont = blank ? "" : style.bold ? boldFont : regularFont;
+        const arms = blank ? undefined : BOX_ARMS.get(ch);
+        const alone =
+          !blank &&
+          arms === undefined &&
+          (col === cursorCol || !this.fillsOneCell(ch, wantedFont));
+        if (
+          text !== "" &&
+          (blank ||
+            alone ||
+            arms !== undefined ||
+            wanted !== fill ||
+            wantedFont !== font)
+        ) {
+          this.ctx.fillText(text, glyphX(textStart), top + baseline);
+          text = "";
+        }
+        if (blank) continue;
+
         if (wantedFont !== font) {
           this.ctx.font = wantedFont;
           font = wantedFont;
@@ -496,7 +574,6 @@ export class Screen {
           this.ctx.fillStyle = wanted;
           fill = wanted;
         }
-        this.ctx.fillText(cell.ch, colEdge[col], top + baseline);
         if (style.underline)
           this.ctx.fillRect(
             colEdge[col],
@@ -504,10 +581,93 @@ export class Screen {
             colEdge[col + 1] - colEdge[col],
             underlineBottom - underlineTop,
           );
+        if (arms !== undefined) {
+          this.drawBox(arms, colEdge[col], top, colEdge[col + 1], bottom);
+          continue;
+        }
+        if (alone) {
+          this.ctx.fillText(ch, glyphX(col), top + baseline);
+          continue;
+        }
+        if (text === "") textStart = col;
+        text += ch;
       }
     }
 
     this.renderCursor();
+  }
+
+  /**
+   * A glyph the font lacks comes from a fallback font, at that font's width.
+   * Inside a string it would push every neighbour after it off its cell, so it
+   * is drawn on its own.
+   *
+   * @param {string} ch
+   * @param {string} font
+   * @returns {boolean}
+   */
+  fillsOneCell(ch, font) {
+    let known = this.oneCellGlyphs.get(font);
+    if (known === undefined) {
+      known = new Map();
+      this.oneCellGlyphs.set(font, known);
+    }
+    let fits = known.get(ch);
+    if (fits === undefined) {
+      const current = this.ctx.font;
+      this.ctx.font = font;
+      fits =
+        Math.abs(this.ctx.measureText(ch).width - this.metrics.width) < 0.01;
+      this.ctx.font = current;
+      known.set(ch, fits);
+    }
+    return fits;
+  }
+
+  /**
+   * Every edge lands on the device pixel grid and every cell of a column finds
+   * the same centre, so a line runs on through its neighbours without a seam or
+   * a step. The arms reach over the crossing stroke, which fills the corner.
+   *
+   * @param {string} arms up, right, down, left; see BOX_ARMS
+   * @param {number} left snapped, like the other three
+   * @param {number} top
+   * @param {number} right
+   * @param {number} bottom
+   * @returns {void}
+   */
+  drawBox(arms, left, top, right, bottom) {
+    const light = Math.max(1, Math.round((this.metrics.width * this.dpr) / 8));
+    const [up, east, down, west] = [...arms].map(
+      (arm) => (Number(arm) * light) / this.dpr,
+    );
+    const midX = this.snap((left + right) / 2);
+    const midY = this.snap((top + bottom) / 2);
+    const vertical = Math.max(up, down);
+    const horizontal = Math.max(east, west);
+    const strokeX = this.snap(midX - vertical / 2);
+    const strokeY = this.snap(midY - horizontal / 2);
+    const crossLeft = vertical > 0 ? strokeX : midX;
+    const crossRight = vertical > 0 ? strokeX + vertical : midX;
+    const crossTop = horizontal > 0 ? strokeY : midY;
+    const crossBottom = horizontal > 0 ? strokeY + horizontal : midY;
+
+    if (up > 0) {
+      const x = this.snap(midX - up / 2);
+      this.ctx.fillRect(x, top, up, crossBottom - top);
+    }
+    if (down > 0) {
+      const x = this.snap(midX - down / 2);
+      this.ctx.fillRect(x, crossTop, down, bottom - crossTop);
+    }
+    if (west > 0) {
+      const y = this.snap(midY - west / 2);
+      this.ctx.fillRect(left, y, crossRight - left, west);
+    }
+    if (east > 0) {
+      const y = this.snap(midY - east / 2);
+      this.ctx.fillRect(crossLeft, y, right - crossLeft, east);
+    }
   }
 
   /** @returns {void} */
@@ -539,10 +699,15 @@ export class Screen {
     const cell = visibleCell(this.host, this.overlay, row, col);
     const ch = cell?.ch ?? null;
     if (ch === null || ch === " ") return;
+    this.ctx.fillStyle = this.theme["cursorAccent"] ?? "#000000";
+    const arms = BOX_ARMS.get(ch);
+    if (arms !== undefined) {
+      this.drawBox(arms, left, top, right, bottom);
+      return;
+    }
     const { bold } = this.styleOf(cell ?? this.host.blankCell());
     this.ctx.font = `${bold ? "bold " : ""}${this.fontSize}px ${this.fontFamily}`;
-    this.ctx.fillStyle = this.theme["cursorAccent"] ?? "#000000";
-    this.ctx.fillText(ch, left, top + baseline);
+    this.ctx.fillText(ch, this.rect.x + col * width, top + baseline);
   }
 
   /**
