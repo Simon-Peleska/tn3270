@@ -1,6 +1,7 @@
-// Port of x3270's ft.c and ft_dft.c, the receiving half: Transfer() types IND$FILE GET into the
-// host's input field, answers the DFT structured fields the host sends back, and emits what
-// arrives as text instead of writing a local file. Sending, binary mode and CUT mode are left out.
+// Port of x3270's ft.c and ft_dft.c: Transfer() types IND$FILE GET or PUT into the host's input
+// field and answers the DFT structured fields the host sends back. Text stands in for the local
+// file: what arrives is emitted, and what is sent was handed to Session.upload() beforehand.
+// Binary mode and CUT mode are left out.
 import {
   AID_SF,
   add,
@@ -25,10 +26,14 @@ const TR_OPEN_REQ = 0x0012,
   TR_DATA_INSERT = 0x4704;
 const TR_OPEN_ACK = 0x0009,
   TR_CLOSE_REPLY = 0x4109,
+  TR_GET_REPLY = 0x4605,
   TR_NORMAL_REPLY = 0x4705,
   TR_ERROR_REPLY = 0x08,
   TR_RECNUM_HDR = 0x6306,
   TR_ERROR_HDR = 0x6904,
+  TR_NOT_COMPRESSED = 0xc080,
+  TR_BEGIN_DATA = 0x61,
+  TR_ERR_EOF = 0x2200,
   TR_ERR_CMDFAIL = 0x0100;
 const SF_TRANSFER_DATA = 0xd0;
 
@@ -49,6 +54,21 @@ const ASC2FT = Uint8Array.from(
   ),
 );
 
+/** EBCDIC to IND$FILE's "ASCII", as ft.c's i_ft2asc[]. */
+const FT2ASC = Uint8Array.from(
+  Buffer.from(
+    "000102039c09867f978d0a0b0c0d0e0f101112139d8508871819928f1c1d1e1f" +
+      "808182838400171b88898a8b8c050607909116939495960498999a9b14159e1a" +
+      "20a0a1a2a3a4a5a6a7a85b2e3c282b5d26a9aaabacadaeafb0b121242a293b5e" +
+      "2d2fb2b3b4b5b6b7b8b97c2c255f3e3fbabbbcbdbebfc0c1c2603a2340273d22" +
+      "c3616263646566676869c4c5c6c7c8c9ca6a6b6c6d6e6f707172cbcccdcecfd0" +
+      "d17e737475767778797ad2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7" +
+      "7b414243444546474849e8e9eaebeced7d4a4b4c4d4e4f505152eeeff0f1f2f3" +
+      "5c9f535455565758595af4f5f6f7f8f930313233343536373839fafbfcfdfeff",
+    "hex",
+  ),
+);
+
 /** @typedef {import("./session.js").State} State */
 /** @typedef {import("./session.js").RunText} RunText */
 
@@ -62,6 +82,9 @@ const ASC2FT = Uint8Array.from(
  * @property {boolean} cr strip the CRs and ^Zs IND$FILE adds
  * @property {boolean} remap turn IND$FILE's ASCII back into the host code page's characters
  * @property {boolean} message the host opened FT:MSG rather than FT:DATA
+ * @property {Uint8Array | null} upload what a send sends, already in IND$FILE's ASCII
+ * @property {number} sent how much of it the host has asked for
+ * @property {number} bufferSize
  * @property {number} recnum
  * @property {number} length bytes of text so far
  * @property {number} started
@@ -167,11 +190,19 @@ export function transfer(s, ...args) {
     popupError(s, "Transfer(): File transfer already in progress");
     return false;
   }
+  const text = s.ftUpload;
+  s.ftUpload = null;
   const values = parseKeywords(args);
   const error = typeof values === "string" ? values : checkKeywords(values);
   if (typeof values === "string" || error) {
     s.log.warn(`N5001 ${error}`);
     popupError(s, error);
+    return false;
+  }
+  const receive = (values["Direction"] ?? "receive") === "receive";
+  if (!receive && text === null) {
+    s.log.warn("N5009 a send with no text handed to Session.upload()");
+    popupError(s, "Transfer(): Nothing to send");
     return false;
   }
 
@@ -180,11 +211,32 @@ export function transfer(s, ...args) {
   const crValue = values["Cr"] ?? "auto";
   const cr = crValue === "auto" ? ascii : crValue !== "keep";
   const remap = !ascii || (values["Remap"] ?? "yes") === "yes";
-  let command = `${values["HostCommand"] ?? "IND\\e005BFILE"} GET ${values["HostFile"]} ${host !== "tso" ? "(" : ""}`;
+  const recfm = values["Recfm"] ?? "default";
+  const allocation = values["Allocation"] ?? "default";
+  const number = (/** @type {string} */ name) => parseInt(values[name], 10);
+  let command = `${values["HostCommand"] ?? "IND\\e005BFILE"} ${receive ? "GET" : "PUT"} ${values["HostFile"]} ${host !== "tso" ? "(" : ""}`;
   if (ascii) command += "ASCII";
   else if (host === "cics") command += "BINARY";
   if (ascii && cr) command += " CRLF";
   else if (host === "cics") command += " NOCRLF";
+  if (!receive && values["Exist"] === "append") command += " APPEND";
+  if (!receive && host === "tso") {
+    if (recfm !== "default") {
+      command += ` RECFM(${recfm[0].toUpperCase()})`;
+      if (values["Lrecl"]) command += ` LRECL(${number("Lrecl")})`;
+      if (values["Blksize"]) command += ` BLKSIZE(${number("Blksize")})`;
+    }
+    if (allocation !== "default") {
+      command += ` SPACE(${number("PrimarySpace")}`;
+      if (values["SecondarySpace"]) command += `,${number("SecondarySpace")}`;
+      command += ")";
+      if (allocation === "avblock") command += ` AVBLOCK(${number("Avblock")})`;
+      else command += ` ${allocation.toUpperCase()}`;
+    }
+  } else if (!receive && host === "vm" && recfm !== "default") {
+    command += ` RECFM ${{ fixed: "F", variable: "V" }[recfm] ?? ""}`;
+    if (values["Lrecl"]) command += ` LRECL ${number("Lrecl")}`;
+  }
   if (values["OtherOptions"]) command += ` ${values["OtherOptions"]}`;
   command += "\\n";
 
@@ -212,6 +264,15 @@ export function transfer(s, ...args) {
       cr,
       remap,
       message: false,
+      upload: text === null ? null : uploadBytes(s, text, cr, remap),
+      sent: 0,
+      bufferSize: Math.min(
+        Math.max(
+          values["BufferSize"] ? number("BufferSize") : s.options.ftBufferSize,
+          256,
+        ),
+        32767,
+      ),
       recnum: 1,
       length: 0,
       started: performance.now(),
@@ -222,24 +283,66 @@ export function transfer(s, ...args) {
   });
 }
 
-/** The rest of parse_ft_keywords(): what receiving ASCII cannot have. @param {Record<string, string>} values */
+/** The rest of parse_ft_keywords(): the values that contradict each other. @param {Record<string, string>} values */
 function checkKeywords(values) {
   const receive = (values["Direction"] ?? "receive") === "receive";
+  const host = values["Host"] ?? "tso";
   const ascii = (values["Mode"] ?? "ascii") === "ascii";
+  const allocation = values["Allocation"] ?? "default";
   if (values["Cr"] && values["Cr"] !== "auto" && !ascii)
     return "Transfer(): Invalid 'Cr' option for ASCII mode";
   if (!values["HostFile"]) return "Transfer(): Missing 'HostFile' option";
+  if (host === "tso" && !receive && allocation !== "default") {
+    if (!values["PrimarySpace"])
+      return "Transfer(): Missing or invalid 'PrimarySpace'";
+    if (allocation === "avblock" && !(parseInt(values["Avblock"], 10) > 0))
+      return "Transfer(): Missing or invalid 'Avblock'";
+  }
   if (values["Cr"] && !ascii)
     return "Transfer(): 'Cr' is only for ASCII transfers";
   if (values["Remap"] && !ascii)
     return "Transfer(): 'Remap' is only for ASCII transfers";
-  if (receive)
-    for (const name of SEND_ONLY)
-      if (values[name])
-        return `Transfer(): '${name}' is only for sending files`;
-  if (!receive) return "Transfer(): Only receiving files is supported";
+  for (const name of SEND_ONLY) {
+    if (!values[name]) continue;
+    if (receive) return `Transfer(): '${name}' is only for sending files`;
+    if (name === "Recfm" && host !== "tso" && host !== "vm")
+      return "Transfer(): 'Recfm' is only for TSO and VM hosts";
+    if (name !== "Recfm" && name !== "Lrecl" && host !== "tso")
+      return `Transfer(): '${name}' is only for TSO hosts`;
+  }
   if (!ascii) return "Transfer(): Only ASCII transfers are supported";
   return "";
+}
+
+/**
+ * dft_ascii_read() over the whole text at once: a CR before each bare LF, and each character
+ * through the host code page to what IND$FILE turns back into it.
+ * @param {State} s @param {string} text @param {boolean} cr @param {boolean} remap
+ */
+function uploadBytes(s, text, cr, remap) {
+  const input = remap
+    ? Array.from(text, (c) => /** @type {number} */ (c.codePointAt(0)))
+    : Buffer.from(text, "utf8");
+  /** @type {number[]} */
+  const bytes = [];
+  let lastCr = false;
+  for (const u of input) {
+    if (cr && !lastCr && u === 0x0a) {
+      bytes.push(0x0d, 0x0a);
+      continue;
+    }
+    lastCr = u === 0x0d;
+    if (!remap) {
+      bytes.push(u);
+      continue;
+    }
+    let e;
+    if (u < 0x20 || (u >= 0x80 && u < 0x9f)) e = ASC2FT[u];
+    else if (u === 0x9f) e = 0xff;
+    else e = s.codePage.toEbcdic.get(u) ?? 0;
+    bytes.push(e ? FT2ASC[e] : 0x3f);
+  }
+  return Uint8Array.from(bytes);
 }
 
 /**
@@ -401,7 +504,8 @@ export function ftData(s, field) {
     case TR_SET_CUR_REQ:
       return;
     case TR_GET_REQ:
-      s.log.warn("N5006 the host asked for data to receive, ignored");
+      if (ft.upload) getRequest(s, ft, ft.upload);
+      else s.log.warn("N5006 the host asked for data to receive, ignored");
       return;
     default:
       s.log.warn(
@@ -450,6 +554,60 @@ function dataInsert(s, ft, field) {
   dataAck(s, ft);
 }
 
+/** dft_get_request(): the next buffer of the upload, or EOF once it is all sent. @param {State} s @param {Transfer} ft @param {Uint8Array} upload */
+function getRequest(s, ft, upload) {
+  if (!ft.message && ft.state === "abort-wait") {
+    abort(s, "Transfer canceled by user", TR_GET_REQ);
+    return;
+  }
+  // x3270 reads 5 bytes less than the buffer allows.
+  const data = upload.subarray(ft.sent, ft.sent + ft.bufferSize - 27);
+  ft.sent += data.length;
+  if (data.length === 0) {
+    s.ftSaved = reply(s, [
+      TR_GET_REQ >> 8,
+      TR_ERROR_REPLY,
+      TR_ERROR_HDR >> 8,
+      TR_ERROR_HDR & 0xff,
+      TR_ERR_EOF >> 8,
+      TR_ERR_EOF & 0xff,
+    ]);
+  } else {
+    const n = ft.recnum++;
+    const length = data.length + 5;
+    s.ftSaved = reply(s, [
+      TR_GET_REPLY >> 8,
+      TR_GET_REPLY & 0xff,
+      TR_RECNUM_HDR >> 8,
+      TR_RECNUM_HDR & 0xff,
+      (n >>> 24) & 0xff,
+      (n >> 16) & 0xff,
+      (n >> 8) & 0xff,
+      n & 0xff,
+      TR_NOT_COMPRESSED >> 8,
+      TR_NOT_COMPRESSED & 0xff,
+      TR_BEGIN_DATA,
+      length >> 8,
+      length & 0xff,
+      ...data,
+    ]);
+    ft.length += data.length;
+  }
+  s.aid = AID_SF;
+  running(s, ft);
+}
+
+/**
+ * dft_read_modified(): a Read Modified after a Get request gets the same answer again.
+ * @param {State} s
+ */
+export function ftReadModified(s) {
+  if (!s.ftSaved) return;
+  s.out.reset();
+  s.out.push(...s.ftSaved);
+  netOutput(s);
+}
+
 /** dft_data_ack() @param {State} s @param {Transfer} ft */
 function dataAck(s, ft) {
   const n = ft.recnum++;
@@ -489,10 +647,18 @@ function running(s, ft) {
   s.ui?.out("ft", { state: "running", bytes: ft.length, cause: "ui" });
 }
 
-/** An AID_SF reply carrying one Transfer Data field. @param {State} s @param {number[]} body */
+/** An AID_SF reply carrying one Transfer Data field. @param {State} s @param {number[]} body @returns {number[]} what was sent */
 function reply(s, body) {
   const length = body.length + 3;
+  const record = [
+    AID_SF,
+    length >> 8,
+    length & 0xff,
+    SF_TRANSFER_DATA,
+    ...body,
+  ];
   s.out.reset();
-  s.out.push(AID_SF, length >> 8, length & 0xff, SF_TRANSFER_DATA, ...body);
+  s.out.push(...record);
   netOutput(s);
+  return record;
 }

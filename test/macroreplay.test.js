@@ -2,6 +2,7 @@ import test from "node:test";
 import { keyboardLocked } from "../public/oia.js";
 import assert from "node:assert/strict";
 import { Session } from "../server/session.js";
+import { Transfers } from "../public/transfers.js";
 import { Macros } from "../public/macros.js";
 import { RecordingHost } from "./recordinghost.js";
 import { availableParallelism } from "node:os";
@@ -124,7 +125,12 @@ async function playRecording(session, viewer, recording) {
  */
 function macrosFor(session, viewer) {
   return new Macros({
-    dispatch: (message) => session.handleClientMessage(viewer, message),
+    dispatch: (message) => {
+      session.handleClientMessage(viewer, message);
+      return true;
+    },
+    prepareTransfer: (step, sources) =>
+      new Transfers({ saveFile: () => {} }).prepare(step, sources),
     persist() {},
     keymap: /** @type {any} */ ({}),
   });

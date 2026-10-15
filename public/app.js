@@ -29,6 +29,7 @@ import {
   TAB_ID,
 } from "./store.js";
 import { backoffDelay } from "./reconnect.js";
+import { TransferFailed, Transfers } from "./transfers.js";
 import {
   createSessionRequest,
   listSessions,
@@ -80,15 +81,10 @@ let screen;
 /** @type {Map<number, string>} The print jobs still arriving, by number. */
 const printJobs = new Map();
 
-/** The data set arriving now, asked for by the download panel or a macro. */
-let downloadChunks = /** @type {string[]} */ ([]);
-
-/**
- * The download panel waiting on the data set it asked for.
- *
- * @type {{ resolve: (said: string) => void, reject: (err: Error) => void } | null}
- */
-let downloadWaiter = null;
+const transfers = new Transfers({
+  saveFile: (name, text) =>
+    downloadFile(name, text, "text/plain;charset=utf-8"),
+});
 
 /** Whether the on-screen keyboard is drawn over the screen. */
 let keyboardShown =
@@ -574,6 +570,18 @@ const keymap = new Keymap((bindings) => {
 
 const macros = new Macros({
   dispatch: (message) => sendUnrecorded(message),
+  prepareTransfer: (step, sources) => {
+    const prepared = transfers.prepare(step, sources);
+    // A macro's transfer has no panel to show how it went, so the screen does.
+    prepared.end.then(
+      (said) => console.info("macro transfer done", said),
+      (err) =>
+        err instanceof TransferFailed
+          ? showError(err.code, err.text)
+          : showError("E5053", "The transfer failed", err),
+    );
+    return prepared;
+  },
   persist: (values) => {
     saveMacros(values).catch((cause) => {
       showError("E5009", "Macros could not be saved on the server.", cause);
@@ -651,16 +659,8 @@ const panels = new Panels({
   insertCharacter: (character) => {
     deliver({ type: "text", value: character });
   },
-  download: (hostFile, hostCommand) =>
-    new Promise((resolve, reject) => {
-      if (!sendQuietly({ type: "transfer", hostFile, hostCommand })) {
-        reject(new Error("not connected to the server"));
-        return;
-      }
-      console.info("download asked for", { hostFile, hostCommand });
-      downloadWaiter = { resolve, reject };
-    }),
-  cancelDownload: () => sendQuietly({ type: "transferCancel" }),
+  transfer: (step) => transfers.start(step, sendQuietly),
+  cancelTransfer: () => sendQuietly({ type: "transferCancel" }),
 });
 
 importInput.addEventListener("change", async () => {
@@ -826,12 +826,12 @@ function send(message) {
 
 /**
  * @param {import('../server/protocol.js').ClientMessage} message
- * @returns {void}
+ * @returns {boolean} whether it went out
  */
 function sendUnrecorded(message) {
-  if (!sendQuietly(message)) {
-    showError("E5002", "Not connected to the server; your input was not sent.");
-  }
+  if (sendQuietly(message)) return true;
+  showError("E5002", "Not connected to the server; your input was not sent.");
+  return false;
 }
 
 /**
@@ -881,10 +881,7 @@ function connectSocket() {
 
   ws.addEventListener("close", (event) => {
     session.socket = null;
-    // The server cancels a download whose viewer left, and says so to nobody.
-    downloadWaiter?.reject(new Error("the connection to the server closed"));
-    downloadWaiter = null;
-    downloadChunks = [];
+    transfers.closed();
     if (event.reason === "E3015") {
       session.refusal = "[E3015] Session terminated by its owner";
       showError("E3015", "The session was terminated by its owner.");
@@ -1065,32 +1062,8 @@ function handleServerMessage(message) {
     );
     return;
   }
-  if (message.type === "download") {
-    downloadChunks.push(message.text);
-    return;
-  }
-  if (message.type === "downloadEnd") {
-    const text = downloadChunks.join("");
-    const waiter = downloadWaiter;
-    downloadChunks = [];
-    downloadWaiter = null;
-    if (!message.ok) {
-      const code = message.code ?? "E3030";
-      // A macro's download has no panel to show it, so it shows on the screen.
-      if (waiter === null) showError(code, message.message);
-      else {
-        console.error(`[${code}] ${message.message}`);
-        waiter.reject(new Error(`[${code}] ${message.message}`));
-      }
-      return;
-    }
-    console.info("data set downloaded", {
-      hostFile: message.hostFile,
-      chars: text.length,
-    });
-    const name = message.hostFile.replace(/'/g, "").replace(/[^\w.()-]/g, "_");
-    downloadFile(`${name}.txt`, text, "text/plain;charset=utf-8");
-    waiter?.resolve(message.message);
+  if (message.type === "download" || message.type === "transferEnd") {
+    transfers.received(message);
     return;
   }
   if (message.type === "userdata") {

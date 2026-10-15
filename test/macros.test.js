@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { Transfers } from "../public/transfers.js";
 import { Macros } from "../public/macros.js";
 import { Keymap } from "../public/keymap.js";
 
@@ -12,7 +13,9 @@ function fixture() {
   // The real keymap, since that is where a macro's key is kept.
   const keymap = new Keymap(() => {});
   const macros = new Macros({
-    dispatch: (message) => calls.dispatched.push(message),
+    dispatch: (message) => calls.dispatched.push(message) > 0,
+    prepareTransfer: (step, sources) =>
+      new Transfers({ saveFile: () => {} }).prepare(step, sources),
     persist: (values) => calls.saved.push(structuredClone(values)),
     keymap,
   });

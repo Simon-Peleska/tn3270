@@ -4,11 +4,12 @@
  */
 
 import { macroCommand } from "./keymap.js";
+import { TransferFailed, macroTransfer } from "./transfers.js";
 
 /**
  * A step types its text as keys, or runs its action; a paste is the action
- * PasteString, so it still lands as a paste does, and Download takes the data
- * set and the IND$FILE command as its args.
+ * PasteString, so it still lands as a paste does, and Download and Upload take
+ * the data set, the IND$FILE command and "file" or "clipboard" as their args.
  *
  * @typedef {{ text: string, action: string, args: string[] }} MacroStep
  * @typedef {{ name: string, steps: MacroStep[] }} Macro
@@ -25,8 +26,10 @@ export function textSteps(text) {
 
 /**
  * @typedef {object} MacrosDeps
- * @property {(message: import('../server/protocol.js').ClientMessage) => void} dispatch
+ * @property {(message: import('../server/protocol.js').ClientMessage) => boolean} dispatch
  *   bypasses app.js's recording tap, so playback is never recorded into itself
+ * @property {(step: import('./transfers.js').TransferStep, sources: Map<import('./transfers.js').Place, Promise<string>>) => import('./transfers.js').Prepared} prepareTransfer
+ *   called from the key press, for the clipboard and the file picker
  * @property {(macros: Macro[]) => void} persist
  * @property {import('./keymap.js').Keymap} keymap
  */
@@ -190,29 +193,61 @@ export class Macros {
    * @returns {void}
    */
   play(macro, repeat = false) {
-    /** @type {import('../server/protocol.js').MacroMessage['steps']} */
+    /** @type {(import('../server/protocol.js').MacroMessage['steps'][number] | Promise<import('../server/protocol.js').TransferMessage>)[]} */
     const steps = [];
+    /** @type {import('./transfers.js').Prepared[]} */
+    const transfers = [];
+    const sources = new Map();
     for (const step of macro.steps) {
       const last = steps.at(-1);
-      if (step.text !== "" && last?.type === "text") last.value += step.text;
+      if (
+        step.text !== "" &&
+        !(last instanceof Promise) &&
+        last?.type === "text"
+      )
+        last.value += step.text;
       else if (step.text !== "") steps.push({ type: "text", value: step.text });
       if (step.action === "PasteString")
         steps.push({ type: "paste", text: step.args[0] ?? "" });
-      else if (step.action === "Download")
-        steps.push({
-          type: "transfer",
-          hostFile: step.args[0] ?? "",
-          hostCommand: step.args[1] ?? "",
-        });
-      else if (step.action !== "")
+      else if (step.action === "Download" || step.action === "Upload") {
+        const prepared = this.deps.prepareTransfer(
+          macroTransfer(step),
+          sources,
+        );
+        transfers.push(prepared);
+        steps.push(prepared.message);
+      } else if (step.action !== "")
         steps.push({ type: "action", action: step.action, args: step.args });
     }
     console.info("macro playing", { name: macro.name, steps: steps.length });
-    this.deps.dispatch(
-      repeat
-        ? { type: "macro", steps, repeat: true }
-        : { type: "macro", steps },
-    );
+    /** @param {import('../server/protocol.js').MacroMessage['steps']} ready */
+    const dispatch = (ready) => {
+      const sent = this.deps.dispatch(
+        repeat
+          ? { type: "macro", steps: ready, repeat: true }
+          : { type: "macro", steps: ready },
+      );
+      if (!sent)
+        for (const transfer of transfers)
+          transfer.drop(
+            new TransferFailed(
+              "E5053",
+              "The transfer could not be sent to the server",
+            ),
+          );
+    };
+    // An upload's text comes in after the key press; a macro without one goes now.
+    if (!steps.some((step) => step instanceof Promise)) {
+      dispatch(
+        /** @type {import('../server/protocol.js').MacroMessage['steps']} */ (
+          steps
+        ),
+      );
+      return;
+    }
+    Promise.all(steps).then(dispatch, (/** @type {Error} */ err) => {
+      for (const transfer of transfers) transfer.drop(err);
+    });
   }
 
   /**

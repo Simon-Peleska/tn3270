@@ -6,7 +6,11 @@ import {
   validateConfig,
   loadConfig,
 } from "../server/config.js";
-import { parseClientMessage, isHostAllowed } from "../server/protocol.js";
+import {
+  MAX_UPLOAD_CHARS,
+  parseClientMessage,
+  isHostAllowed,
+} from "../server/protocol.js";
 import { AppError } from "../server/errors.js";
 
 test("comments are stripped and JSON survives", () => {
@@ -458,13 +462,15 @@ test("single sign-on is on only when asked for and with every key it needs, and 
   assert.equal(none.readyText, "");
 });
 
-test("a download names a data set and a command that fit on one line", () => {
+test("a transfer names a data set and a command that fit on one line, and an upload carries its text", () => {
   const transfer = {
     type: "transfer",
     hostFile: "'USER.DATA(MEM)'",
     hostCommand: "TSO IND\\e005BFILE",
   };
   assert.deepEqual(parseClientMessage(JSON.stringify(transfer)), transfer);
+  const upload = { ...transfer, id: 7, upload: "LINE 1\nLINE 2\n" };
+  assert.deepEqual(parseClientMessage(JSON.stringify(upload)), upload);
   assert.deepEqual(parseClientMessage('{"type":"transferCancel"}'), {
     type: "transferCancel",
   });
@@ -474,6 +480,14 @@ test("a download names a data set and a command that fit on one line", () => {
     { hostFile: "A\nB", hostCommand: "IND$FILE" },
     { hostFile: "A", hostCommand: "X".repeat(81) },
     { hostFile: "A", hostCommand: 5 },
+    { hostFile: "A", hostCommand: "IND$FILE", upload: 5 },
+    { hostFile: "A", hostCommand: "IND$FILE", id: 0 },
+    { hostFile: "A", hostCommand: "IND$FILE", id: "1" },
+    {
+      hostFile: "A",
+      hostCommand: "IND$FILE",
+      upload: "X".repeat(MAX_UPLOAD_CHARS + 1),
+    },
   ]) {
     assert.throws(
       () => parseClientMessage(JSON.stringify({ type: "transfer", ...body })),

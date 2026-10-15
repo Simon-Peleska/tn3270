@@ -335,6 +335,10 @@ export function createState(opts = {}, io = {}) {
     disconnectSets: [],
     /** @type {import("./ft.js").Transfer | null} the IND$FILE transfer under way */
     ft: null,
+    /** @type {string | null} what the next Transfer(Direction=send) sends */
+    ftUpload: null,
+    /** @type {number[] | null} the last answer to a Get request, for a Read Modified to repeat */
+    ftSaved: null,
 
     write: io.write ?? (() => {}),
     emit: io.emit ?? (() => {}),
@@ -675,6 +679,14 @@ export class Session extends EventEmitter {
       },
       log,
     });
+  }
+
+  /**
+   * The text the next Transfer(Direction=send) sends, where x3270 would read its LocalFile.
+   * @param {string} text
+   */
+  upload(text) {
+    this.s.ftUpload = text;
   }
 
   /**

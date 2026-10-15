@@ -13,7 +13,8 @@ import { sizeMode } from "./settings.js";
 import { comboLabel } from "./keymap.js";
 import { settingsLayout } from "./panel-settings.js";
 import { logonLayout } from "./panel-logon.js";
-import { downloadLayout } from "./panel-download.js";
+import { transferLayout } from "./panel-transfer.js";
+import { TRANSFER_WAYS } from "./transfers.js";
 import { themeLayout } from "./panel-theme.js";
 import { fontLayout } from "./panel-font.js";
 import { sizeLayout } from "./panel-size.js";
@@ -21,7 +22,7 @@ import {
   macrosLayout,
   macroEditLayout,
   macroCursorLayout,
-  macroDownloadLayout,
+  macroTransferLayout,
 } from "./panel-macros.js";
 import {
   recordingsLayout,
@@ -58,9 +59,10 @@ import { charsLayout, printableCharacter } from "./panel-chars.js";
  * @property {(id: string) => boolean} ownsSession
  * @property {(id: string) => Promise<void>} terminateSession
  * @property {(user: string, password: string) => Promise<void>} logon
- * @property {(hostFile: string, hostCommand: string) => Promise<string>} download
- *   the data set saved by the browser; resolves with the host's word on it
- * @property {() => void} cancelDownload
+ * @property {(step: import('./transfers.js').TransferStep) => Promise<string>} transfer
+ *   call it from the key press, for the clipboard and the file picker; resolves
+ *   with the host's word on it once a download's text went where it should
+ * @property {() => void} cancelTransfer
  * @property {(character: string) => void} insertCharacter
  *
  * @typedef {object} Edit an input field in place of the line's value
@@ -124,14 +126,14 @@ const LAYOUTS = {
   admin: adminLayout,
   chars: charsLayout,
   logon: logonLayout,
-  download: downloadLayout,
+  transfer: transferLayout,
 };
 
 /** @param {string} id @returns {PanelLayout} */
 function layoutFor(id) {
   if (id.startsWith("keys:")) return bindingsLayout;
   if (id.startsWith("macro-cursor:")) return macroCursorLayout;
-  if (id.startsWith("macro-download:")) return macroDownloadLayout;
+  if (id.startsWith("macro-transfer:")) return macroTransferLayout;
   if (id.startsWith("macro:")) return macroEditLayout;
   if (id.startsWith("recording:")) return createMacroLayout;
   return LAYOUTS[id] ?? settingsLayout;
@@ -181,22 +183,34 @@ export class Panels {
     this.pickerReturn = null;
     /** @type {string} kept for the next try, unlike the password */
     this.logonUser = "";
-    this.downloadHostFile = "";
+    this.transferOption = "1";
+    this.transferHostFile = "";
     // x3270's own: \e005B is the EBCDIC $, whatever the code page puts there.
-    this.downloadCommand = "TSO IND\\e005BFILE";
-    this.downloading = false;
+    this.transferCommand = "TSO IND\\e005BFILE";
+    this.transferring = false;
   }
 
   /**
+   * Runs from the Enter that asked for it: the clipboard and the file picker
+   * need the key press, so nothing is awaited before deps.transfer.
+   *
+   * @param {string} option one of TRANSFER_WAYS
    * @param {string} hostFile
    * @param {string} hostCommand
    * @returns {Promise<void>}
    */
-  async download(hostFile, hostCommand) {
-    this.downloadHostFile = hostFile;
-    this.downloadCommand = hostCommand;
-    if (this.downloading) {
-      this.message = problem("E5047", "A download is already running");
+  async transfer(option, hostFile, hostCommand) {
+    this.transferOption = option;
+    this.transferHostFile = hostFile;
+    this.transferCommand = hostCommand;
+    const way = TRANSFER_WAYS.find((entry) => entry.option === option);
+    if (this.transferring) {
+      this.message = problem("E5047", "A transfer is already running");
+      this.deps.redraw();
+      return;
+    }
+    if (way === undefined) {
+      this.message = problem("E5051", "Type an option from 1 to 4");
       this.deps.redraw();
       return;
     }
@@ -205,20 +219,22 @@ export class Panels {
       this.deps.redraw();
       return;
     }
-    this.downloading = true;
-    this.message = `Downloading ${hostFile}...`;
+    const step = { ...way, hostFile, hostCommand };
+    const running = this.deps.transfer(step);
+    this.transferring = true;
+    this.message = `Transferring ${hostFile}...`;
     this.deps.redraw();
     try {
-      this.message = await this.deps.download(hostFile, hostCommand);
-      console.info("download finished", { hostFile });
+      this.message = await running;
+      console.info("transfer finished", step);
     } catch (cause) {
-      console.error("[E5049] download failed", cause);
+      console.error("[E5049] transfer failed", cause);
       const text = cause instanceof Error ? cause.message : String(cause);
       this.message = text.startsWith("[E")
         ? text
-        : problem("E5049", "The download could not be sent to the server");
+        : problem("E5049", "The transfer failed");
     } finally {
-      this.downloading = false;
+      this.transferring = false;
     }
     this.deps.redraw();
   }
@@ -599,10 +615,10 @@ export class Panels {
   }
 
   /** @param {number} index */
-  openMacroDownload(index) {
+  openMacroTransfer(index) {
     const frame = this.stack.at(-1);
     if (frame === undefined || !frame.id.startsWith("macro:")) return;
-    this.push(`macro-download:${frame.id.slice(6)}`, index);
+    this.push(`macro-transfer:${frame.id.slice(6)}`, index);
   }
 
   /** @param {number} row 0-based @param {number} col 0-based */

@@ -11,6 +11,7 @@ import { FakeHost, sharedPort } from "./fakehost.js";
 import { freePort, testConfig, waitUntil } from "./helpers.js";
 import {
   CLOSE,
+  GET,
   UNFORMATTED,
   insert,
   message,
@@ -987,7 +988,7 @@ test("a print job from the host downloads as a UTF-8 text file", async (t) => {
   assert.deepEqual(browser.exceptions, []);
 });
 
-test("a data set downloads as a UTF-8 text file from the download panel", async (t) => {
+test("a data set downloads as a UTF-8 text file from the transfer panel", async (t) => {
   const browser = await startBrowser(t);
   const downloads = join(browser.temp, "downloads");
   await browser.command("Browser.setDownloadBehavior", {
@@ -1005,6 +1006,7 @@ test("a data set downloads as a UTF-8 text file from the download panel", async 
   await browser.key("m", "KeyM", { modifiers: 1, windowsVirtualKeyCode: 77 });
   await type("8");
   await enter();
+  await browser.key("Tab", "Tab", { windowsVirtualKeyCode: 9 });
   await browser.key("Tab", "Tab", { windowsVirtualKeyCode: 9 });
   await type("'USER.DATA'");
   await enter();
@@ -1100,3 +1102,170 @@ test("a macro's download step saves the data set without the panel", async (t) =
   );
   assert.deepEqual(browser.exceptions, []);
 });
+
+test("a file uploads into a data set from the transfer panel", async (t) => {
+  const browser = await startBrowser(t);
+  const local = join(browser.temp, "upload.txt");
+  await writeFile(local, "Grüße\nZWEI\n");
+  await browser.command("Page.setInterceptFileChooserDialog", {
+    enabled: true,
+  });
+  browser.host.socket?.write(Buffer.from(UNFORMATTED, "hex"));
+  /** @param {string} text */
+  const type = async (text) => {
+    for (const ch of text) await browser.key(ch, "", { text: ch });
+  };
+  const tab = () => browser.key("Tab", "Tab", { windowsVirtualKeyCode: 9 });
+
+  await browser.key("m", "KeyM", { modifiers: 1, windowsVirtualKeyCode: 77 });
+  await type("8");
+  await browser.key("Enter", "Enter", {
+    modifiers: 2,
+    windowsVirtualKeyCode: 13,
+  });
+  await tab();
+  // The one-cell option field skips on to the data set's.
+  await type("3");
+  await type("'USER.DATA'");
+  const chooser = browser.event("Page.fileChooserOpened");
+  await browser.key("Enter", "Enter", {
+    modifiers: 2,
+    windowsVirtualKeyCode: 13,
+  });
+  const { backendNodeId } = await chooser;
+  const finished = browser.consoleMessage("transfer finished");
+  await browser.command("DOM.setFileInputFiles", {
+    files: [local],
+    backendNodeId,
+  });
+  await browser.host.waitUntil(
+    () => browser.host.received.includes("7d"),
+    5000,
+    "the IND$FILE command",
+  );
+  answer(browser.host, [open("FT:DATA"), GET]);
+  // ü and ß, as IND$FILE's ASCII table has them.
+  const data = Buffer.from("Gr\xf0\xb1e\r\nZWEI\r\n", "latin1").toString("hex");
+  await browser.host.waitUntil(
+    () => browser.host.received.includes(data),
+    5000,
+    "the file's text",
+  );
+  answer(browser.host, [
+    GET,
+    CLOSE,
+    ...message("TRANS03 File transfer complete"),
+  ]);
+  await finished;
+  assert.deepEqual(browser.exceptions, []);
+});
+
+test("macros upload from the clipboard and download to it", async (t) => {
+  const browser = await startBrowser(t);
+  await browser.command("Browser.grantPermissions", {
+    permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"],
+    origin: browser.base,
+  });
+  await browser.command("Emulation.setFocusEmulationEnabled", {
+    enabled: true,
+  });
+  await browser.command("Runtime.evaluate", {
+    expression: "navigator.clipboard.writeText('COPIED\\n')",
+    awaitPromise: true,
+    userGesture: true,
+  });
+  browser.host.socket?.write(Buffer.from(UNFORMATTED, "hex"));
+  for (const [key, body] of /** @type {const} */ ([
+    [
+      "macros",
+      [
+        {
+          name: "Put",
+          steps: [
+            {
+              text: "",
+              action: "Upload",
+              args: ["'U.IN'", "TSO IND\\e005BFILE", "clipboard"],
+            },
+          ],
+        },
+        {
+          name: "Get",
+          steps: [
+            {
+              text: "",
+              action: "Download",
+              args: ["'U.OUT'", "TSO IND\\e005BFILE", "clipboard"],
+            },
+          ],
+        },
+      ],
+    ],
+    [
+      "keymap",
+      {
+        "Macro:Put": [{ key: "F11", shift: false, ctrl: false, alt: false }],
+        "Macro:Get": [{ key: "F12", shift: false, ctrl: false, alt: false }],
+      },
+    ],
+  ])) {
+    const changed = browser.consoleMessage("user data changed elsewhere");
+    const response = await fetch(`${browser.base}/api/userdata/${key}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", "x-tab": "elsewhere" },
+      body: JSON.stringify(body),
+    });
+    assert.equal(response.status, 204);
+    await changed;
+  }
+
+  let done = browser.consoleMessage("macro transfer done");
+  await browser.key("F11", "F11", { windowsVirtualKeyCode: 122 });
+  await browser.host.waitUntil(
+    () => browser.host.received.includes("7d"),
+    5000,
+    "the IND$FILE PUT command",
+  );
+  answer(browser.host, [open("FT:DATA"), GET]);
+  const data = Buffer.from("COPIED\r\n").toString("hex");
+  await browser.host.waitUntil(
+    () => browser.host.received.includes(data),
+    5000,
+    "the clipboard's text",
+  );
+  answer(browser.host, [
+    GET,
+    CLOSE,
+    ...message("TRANS03 File transfer complete"),
+  ]);
+  await done;
+
+  done = browser.consoleMessage("macro transfer done");
+  const mark = browser.host.received.length;
+  await browser.key("F12", "F12", { windowsVirtualKeyCode: 123 });
+  await browser.host.waitUntil(
+    () => browser.host.received.slice(mark).includes("7d"),
+    5000,
+    "the IND$FILE GET command",
+  );
+  answer(browser.host, [
+    open("FT:DATA"),
+    insert(Buffer.from("JOB OUTPUT\r\n")),
+    CLOSE,
+    ...message("TRANS03 File transfer complete"),
+  ]);
+  await done;
+  const clipboard = await browser.command("Runtime.evaluate", {
+    expression: "navigator.clipboard.readText()",
+    awaitPromise: true,
+    userGesture: true,
+    returnByValue: true,
+  });
+  assert.equal(clipboard.result.result.value, "JOB OUTPUT\n");
+  assert.deepEqual(browser.exceptions, []);
+});
+
+/** @param {FakeHost} host @param {string[]} records */
+function answer(host, records) {
+  for (const record of records) host.socket?.write(Buffer.from(record, "hex"));
+}

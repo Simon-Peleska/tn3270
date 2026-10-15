@@ -1,4 +1,5 @@
 import { macroCommand } from "./keymap.js";
+import { TRANSFER_WAYS, macroTransfer, wayLabel } from "./transfers.js";
 
 export const macrosLayout = {
   title: "TN3270 Macros",
@@ -77,7 +78,10 @@ export const macrosLayout = {
 /** @param {import('./macros.js').MacroStep} step @returns {string} */
 function stepLabel(step) {
   if (step.text) return step.text;
-  if (step.action === "Download") return `Download ${step.args[0] ?? ""}`;
+  if (step.action === "Download" || step.action === "Upload") {
+    const transfer = macroTransfer(step);
+    return `${wayLabel(transfer)}: ${transfer.hostFile}`;
+  }
   return `${step.action}${step.args.join("")}`;
 }
 
@@ -111,7 +115,7 @@ export const macroEditLayout = {
     view.say(
       2,
       3,
-      "E=Edit A=Add C=Cursor Move F=Download D=Delete F5=Exit",
+      "E=Edit A=Add C=Cursor Move F=Transfer D=Delete F5=Exit",
       "turquoise",
     );
   },
@@ -134,7 +138,7 @@ export const macroEditLayout = {
       e: () => panel.startMacroCapture(index, true),
       a: () => panel.startMacroCapture(index + 1),
       c: () => panel.openMacroCursor(index + 1),
-      f: () => panel.openMacroDownload(index + 1),
+      f: () => panel.openMacroTransfer(index + 1),
       d: () => {
         const removedAt = macro.steps.indexOf(step);
         macro.steps.splice(removedAt, 1);
@@ -186,7 +190,7 @@ export const macroEditLayout = {
       label: "New step",
       a: () => panel.startMacroCapture(macro.steps.length),
       c: () => panel.openMacroCursor(macro.steps.length),
-      f: () => panel.openMacroDownload(macro.steps.length),
+      f: () => panel.openMacroTransfer(macro.steps.length),
     });
     return items;
   },
@@ -233,35 +237,47 @@ export const macroCursorLayout = {
   },
 };
 
-export const macroDownloadLayout = {
-  title: "TN3270 Add Download",
+export const macroTransferLayout = {
+  title: "TN3270 Add Transfer",
 
   /** @param {import('./panels.js').Panels} panel @param {import('./panels.js').PanelView} view */
   render(panel, view) {
-    view.say(1, 2, "Data set ===>", "green");
-    view.field("hostFile", 1, 16, 56, panel.downloadHostFile);
-    view.say(2, 2, "Command  ===>", "green");
-    view.field("hostCommand", 2, 16, 30, panel.downloadCommand);
+    view.say(1, 2, "Option   ===>", "green");
+    view.field("option", 1, 16, 1, panel.transferOption);
+    TRANSFER_WAYS.forEach((way, index) =>
+      view.say(2 + index, 4, `${way.option}  ${wayLabel(way)}`, "turquoise"),
+    );
+    view.say(7, 2, "Data set ===>", "green");
+    view.field("hostFile", 7, 16, 56, panel.transferHostFile);
+    view.say(8, 2, "Command  ===>", "green");
+    view.field("hostCommand", 8, 16, 30, panel.transferCommand);
     view.say(
-      4,
+      10,
       2,
-      "Enter adds a step that downloads the data set, as the Download",
+      "Enter adds a step that transfers the data set, as the Transfer",
       "turquoise",
     );
     view.say(
-      5,
+      11,
       2,
-      "panel does. The steps after it wait until the file has arrived.",
+      "panel does. The steps after it wait until the transfer is done.",
       "turquoise",
     );
   },
 
   /** @param {import('./panels.js').Panels} panel @param {Record<string, string>} values */
   input(panel, values) {
+    const option = (values.option ?? "").trim();
     const hostFile = (values.hostFile ?? "").trim();
     const hostCommand = (values.hostCommand ?? "").trim();
-    panel.downloadHostFile = hostFile;
-    panel.downloadCommand = hostCommand;
+    panel.transferOption = option;
+    panel.transferHostFile = hostFile;
+    panel.transferCommand = hostCommand;
+    const way = TRANSFER_WAYS.find((entry) => entry.option === option);
+    if (way === undefined) {
+      panel.message = panel.problem("E5058", "Type an option from 1 to 4");
+      return;
+    }
     if (hostFile === "" || hostCommand === "") {
       panel.message = panel.problem(
         "E5050",
@@ -271,8 +287,8 @@ export const macroDownloadLayout = {
     }
     panel.addMacroStep({
       text: "",
-      action: "Download",
-      args: [hostFile, hostCommand],
+      action: way.direction === "upload" ? "Upload" : "Download",
+      args: [hostFile, hostCommand, way.place],
     });
   },
 };

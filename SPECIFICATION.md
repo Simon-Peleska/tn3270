@@ -8,8 +8,8 @@ A browser-based IBM 3270 terminal. The user opens a page, connects to a TN3270
 host, sees the host's screen, and types on it. A second person opening the same
 URL sees the same screen live.
 
-Out of scope for this build: file transfer beyond downloading a data set as
-text, DBCS / double-width characters, scripting, plain-TELNET (NVT and
+Out of scope for this build: file transfer beyond moving a data set as text,
+DBCS / double-width characters, scripting, plain-TELNET (NVT and
 line-mode) hosts, and login/authentication. A host that sends data before
 negotiating TN3270 is dropped with `N1203`.
 
@@ -231,23 +231,38 @@ sessions this browser owns; the server also checks the owner's private session
 pass before ending one. Other viewers are disconnected with `E3015` and do not
 reconnect to a terminated session.
 
-**Download data set** (option 8 of Settings) fetches a data set as text with
-`IND$FILE` and has the browser save it as `<data set>.txt`, in UTF-8. The command
-is typed on the host screen behind the panel, so the owner starts it from where
-a command line takes it: `TSO IND\e005BFILE` from ISPF (the default), or
-`IND\e005BFILE` from TSO's READY. `\e005B` is x3270's escape for EBCDIC X'5B',
-the `$` of US code pages, which keeps the command right whatever the session's
-code page puts there. SDSF job output is saved to a data set with `XDC` first.
-`CANCEL` on the command line stops a download that is running. Only the
-session's owner may download; anyone else gets `E3029`, and a failed or
-cancelled download `E3030` with the host's own message.
+**Transfer data sets** (option 8 of Settings) moves a data set as text with
+`IND$FILE`, one of four ways picked by the Option field: 1 downloads it and has
+the browser save it as `<data set>.txt`, 2 downloads it onto the clipboard, 3
+uploads a file the browser asks for, and 4 uploads the clipboard's text (`E5051`
+for any other option). Text is UTF-8 in the browser and IND$FILE's ASCII on the
+host, lines ending CRLF there; an upload is at most 2 MiB characters (`E5057`).
+The command is typed on the host screen behind the panel, so the owner starts it
+from where a command line takes it: `TSO IND\e005BFILE` from ISPF (the default),
+or `IND\e005BFILE` from TSO's READY. `\e005B` is x3270's escape for EBCDIC
+X'5B', the `$`of US code pages, which keeps the command right whatever the
+session's code page puts there. SDSF job output is saved to a data set with`XDC`first. Text goes into an open ISPF edit by uploading it to a scratch data
+set, then`COPY 'dsname'`with an`A`or`B` line command.
 
-A macro can download too: `F` in a macro's editor adds a **Download** step,
-asking for the data set and the command as the panel does (`E5050` without
-them). The step takes its turn in the macro like any other, and the steps after
-it wait until the data set has arrived. The file is saved as from the panel; a
-failure shows its code on the screen, as there is no panel to show it. With a
-fixed scratch data set, `XDC` in SDSF and one key give the job output as a file.
+The clipboard and the file picker need the key press that asked for them: the
+clipboard is read (`E5054` when the browser refuses) or its write begun, and
+the file picker opened (`E5056` when no file is chosen), before the transfer
+goes to the server. A download's clipboard write finishes when the text is in
+(`E5055` when the browser refuses it). `CANCEL` on the command line stops a
+transfer that is running. Only the session's owner may transfer; anyone else
+gets `E3029`, and a failed or cancelled transfer `E3030` with the host's own
+message. A transfer the server never got fails with `E5053`, and one cut off by
+the connection closing with `E5052`.
+
+A macro can transfer too: `F` in a macro's editor adds a **Download** or
+**Upload** step, asking for the option, the data set and the command as the
+panel does (`E5058`, `E5050` without them). The step takes its turn in the
+macro like any other, and the steps after it wait until the transfer is done.
+A macro with uploads reads their text first, the clipboard once and one file
+for all of them, and goes to the server when it has it; a failure shows its code
+on the screen, as there is no panel to show it. With fixed scratch data sets,
+one key gives SDSF output saved with `XDC` on the clipboard, and another puts
+the clipboard into a data set for `COPY`.
 
 **Keys.** A panel has no keyboard of its own. It answers to the 3270 commands
 of §5, so a key does the same thing in a panel as on the screen behind it, and
@@ -430,13 +445,14 @@ array of them when one moment produced several (a paint and the status with it):
 {"type":"refused","code":"E3008","message":"bob did not let you in."}
 {"type":"error","code":"E3006","message":"This session is being controlled by someone else."}
 {"type":"logon","code":"E9003","message":"DCAS refused the PassTicket request: …"}
-{"type":"download","text":"HELLO, WORLD\n"}
-{"type":"downloadEnd","hostFile":"'USER.DATA'","ok":true,"message":"Transfer complete, 13 bytes transferred 2.1 Kbytes/sec in DFT mode"}
-{"type":"downloadEnd","hostFile":"'USER.DATA'","ok":false,"code":"E3030","message":"Data set download failed: TRANS34 …"}
+{"type":"download","id":1,"text":"HELLO, WORLD\n"}
+{"type":"transferEnd","id":1,"hostFile":"'USER.DATA'","ok":true,"message":"Transfer complete, 13 bytes transferred 2.1 Kbytes/sec in DFT mode"}
+{"type":"transferEnd","hostFile":"'USER.DATA'","ok":false,"code":"E3030","message":"Data set transfer failed: TRANS34 …"}
 ```
 
 `download` streams a data set's text to the viewer that asked for it, and
-`downloadEnd` closes it.
+`transferEnd` closes a download or an upload. Both carry the `id` the transfer
+was sent with, so the browser knows which panel or macro step they answer.
 
 `logon` goes to the owner when single sign-on failed, and opens the logon
 dialog with the error in it. An owner who attaches later still gets it, once.
@@ -478,7 +494,8 @@ paint to a grid of the wrong size.
 {"type":"answer","viewer":"ab12cd34","allow":true}
 {"type":"stopSharing"}
 {"type":"stopEditing"}
-{"type":"transfer","hostFile":"'USER.DATA(MEM)'","hostCommand":"TSO IND\\e005BFILE"}
+{"type":"transfer","id":1,"hostFile":"'USER.DATA(MEM)'","hostCommand":"TSO IND\\e005BFILE"}
+{"type":"transfer","id":2,"hostFile":"'U.SCRATCH'","hostCommand":"TSO IND\\e005BFILE","upload":"one\ntwo\n"}
 {"type":"transferCancel"}
 ```
 
@@ -579,8 +596,8 @@ of the old b3270 child process, `E2007` of the old emulator thread pool, `E3016`
 | `E3026` | A logon is already running                                  |
 | `E3027` | Logon could not be typed                                    |
 | `E3028` | Session closed during the logon                             |
-| `E3029` | Only the session's owner may download data sets             |
-| `E3030` | Data set download failed                                    |
+| `E3029` | Only the session's owner may transfer data sets             |
+| `E3030` | Data set transfer failed                                    |
 | `E4001` | WebSocket message was not valid JSON                        |
 | `E4002` | WebSocket message had an unknown type                       |
 | `E4003` | Pasted text is too large to type into a screen              |
@@ -626,10 +643,18 @@ of the old b3270 child process, `E2007` of the old emulator thread pool, `E3016`
 | `E5043` | Page carries no saved settings from the server              |
 | `E5044` | Logon could not be sent to the server                       |
 | `E5045` | Logon needs a user name and a password                      |
-| `E5047` | A download is already running                               |
-| `E5048` | Download needs a data set name and a command                |
-| `E5049` | Download could not be sent to the server                    |
-| `E5050` | A macro's download step needs a data set name and a command |
+| `E5047` | A transfer is already running                               |
+| `E5048` | Transfer needs a data set name and a command                |
+| `E5049` | Transfer failed in the browser                              |
+| `E5050` | A macro's transfer step needs a data set name and a command |
+| `E5051` | The transfer panel's option must be 1 to 4                  |
+| `E5052` | The connection to the server closed during a transfer       |
+| `E5053` | A transfer could not be sent to the server                  |
+| `E5054` | The clipboard could not be read for an upload               |
+| `E5055` | The clipboard could not be written with a download          |
+| `E5056` | No file was chosen for an upload                            |
+| `E5057` | The text to upload is too long                              |
+| `E5058` | A macro's transfer step's option must be 1 to 4             |
 | `E6001` | Static file not found                                       |
 | `E6002` | WebSocket upgrade path is not a session                     |
 | `E6003` | WebSocket closed unexpectedly                               |

@@ -98,6 +98,7 @@ function transferAction(message) {
     args: [
       `HostFile=${message.hostFile}`,
       `HostCommand=${message.hostCommand}`,
+      ...(message.upload === undefined ? [] : ["Direction=send"]),
     ],
   };
 }
@@ -201,7 +202,7 @@ export class Session {
     this.inputQueue = [];
     /** @type {Promise<void> | null} The input the emulator is working on. */
     this.input = null;
-    /** @type {WeakMap<import('./protocol.js').TransferMessage, Viewer>} A macro's downloads, by who played it. */
+    /** @type {WeakMap<import('./protocol.js').TransferMessage, Viewer>} A macro's transfers, by who played it. */
     this.macroTransfers = new WeakMap();
 
     const options = {
@@ -238,10 +239,16 @@ export class Session {
         owner.sendMessage({ type: "printEnd", job: this.printJob });
       this.printJob++;
     });
-    /** @type {Viewer | null} who asked for the download running now */
+    /** @type {Viewer | null} who asked for the transfer running now */
     this.transferViewer = null;
+    /** @type {number | undefined} the browser's id for it, echoed back */
+    this.transferId = undefined;
     this.emulator.on("transfer", (/** @type {string} */ text) => {
-      this.transferViewer?.sendMessage({ type: "download", text });
+      this.transferViewer?.sendMessage({
+        type: "download",
+        id: this.transferId,
+        text,
+      });
     });
     this.emulator.on("print-error", (/** @type {Error} */ err) => {
       this.reportError(new AppError("E2008", err.message, err));
@@ -993,7 +1000,7 @@ export class Session {
     }
     if (!this.viewers.delete(viewer)) return;
     if (this.transferViewer === viewer) {
-      this.log.info("download canceled: its viewer left", {
+      this.log.info("transfer canceled: its viewer left", {
         viewer: viewer.id,
       });
       this.emulator.run([{ action: "Transfer", args: ["Cancel"] }]);
@@ -1102,7 +1109,7 @@ export class Session {
         return;
       case "transferCancel":
         if (this.transferViewer !== viewer) return;
-        this.log.info("download canceled", { viewer: viewer.id });
+        this.log.info("transfer canceled", { viewer: viewer.id });
         this.emulator.run([{ action: "Transfer", args: ["Cancel"] }]);
         return;
     }
@@ -1138,7 +1145,8 @@ export class Session {
     const refuse = (/** @type {AppError} */ err) => {
       this.log.warn(`${err.code} ${err.summary}`, { viewer: viewer.id });
       viewer.sendMessage({
-        type: "downloadEnd",
+        type: "transferEnd",
+        id: message.id,
         hostFile: message.hostFile,
         ok: false,
         code: err.code,
@@ -1149,13 +1157,17 @@ export class Session {
     if (viewer.owner !== true) return refuse(new AppError("E3029"));
     if (this.loggingOn) return refuse(new AppError("E3018"));
     if (this.transferViewer !== null)
-      return refuse(new AppError("E3030", "another download is running"));
-    this.log.info("download starts", {
+      return refuse(new AppError("E3030", "another transfer is running"));
+    this.log.info("transfer starts", {
       viewer: viewer.id,
       hostFile: message.hostFile,
       hostCommand: message.hostCommand,
+      upload: message.upload?.length,
     });
     this.transferViewer = viewer;
+    this.transferId = message.id;
+    // Only one transfer runs at a time, so the next Transfer() is this one.
+    if (message.upload !== undefined) this.emulator.upload(message.upload);
     return true;
   }
 
@@ -1172,7 +1184,8 @@ export class Session {
       const err = new AppError("E3030", said);
       this.log.warn(`${err.code} ${err.summary}`, { viewer: viewer.id });
       viewer.sendMessage({
-        type: "downloadEnd",
+        type: "transferEnd",
+        id: message.id,
         hostFile: message.hostFile,
         ok: false,
         code: err.code,
@@ -1180,9 +1193,10 @@ export class Session {
       });
       return;
     }
-    this.log.info("download finished", { viewer: viewer.id, result: said });
+    this.log.info("transfer finished", { viewer: viewer.id, result: said });
     viewer.sendMessage({
-      type: "downloadEnd",
+      type: "transferEnd",
+      id: message.id,
       hostFile: message.hostFile,
       ok: true,
       message: said,

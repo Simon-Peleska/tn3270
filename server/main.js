@@ -511,7 +511,11 @@ const server = createServer((req, res) => {
   });
 });
 
-const wss = new WebSocketServer({ noServer: true, maxPayload: 65536 });
+// Uploads ride in one message: protocol.js's MAX_UPLOAD_CHARS, escaped.
+const wss = new WebSocketServer({
+  noServer: true,
+  maxPayload: 16 * 1024 * 1024,
+});
 const MAX_VIEWER_BUFFERED_BYTES = 1024 * 1024;
 
 server.on("upgrade", (req, socket, head) => {

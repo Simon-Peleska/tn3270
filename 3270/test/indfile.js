@@ -42,3 +42,6 @@ export const message = (text) => [
   open("FT:MSG"),
   insert(Buffer.from(`${text}$`.padEnd(80))),
 ];
+
+// IND$FILE PUT asks for the next buffer of the file.
+export const GET = record(sf("d04611"));

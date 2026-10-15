@@ -10,6 +10,7 @@ import {
 import { in3270, inSscp, isConnected } from "./session.js";
 import { netOutput } from "./telnet.js";
 import { writeStructuredField } from "./sf.js";
+import { ftReadModified } from "./ft.js";
 import {
   enableCursor,
   popupError,
@@ -1113,6 +1114,10 @@ function insertSa(
 /** ctlr_read_modified(): Read Modified, Read Modified All and every AID. @param {State} s @param {number} aid @param {boolean} all */
 export function readModified(s, aid, all) {
   if (inSscp(s) && aid !== AID_ENTER) return;
+  if (aid === AID_SF) {
+    ftReadModified(s);
+    return;
+  }
   const shortRead =
     !all &&
     (aid === AID_PA1 ||
@@ -1209,6 +1214,10 @@ export function hasFields(s) {
 
 /** ctlr_read_buffer() @param {State} s @param {number} aid */
 export function readBuffer(s, aid) {
+  if (aid === AID_SF) {
+    ftReadModified(s);
+    return;
+  }
   const prev = { fg: 0, bg: 0, gr: 0, cs: 0 };
   s.out.reset();
   s.out.push(aid);

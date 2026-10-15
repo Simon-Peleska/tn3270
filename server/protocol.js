@@ -2,6 +2,8 @@ import { AppError, describeError } from "./errors.js";
 
 /** The most cells a 3270 buffer address reaches: x3270's ctlr.c limit. */
 export const MAX_CELLS = 16383;
+// Some 25,000 lines of 80; the WebSocket's payload limit leaves room for JSON's escapes.
+export const MAX_UPLOAD_CHARS = 2 * 1024 * 1024;
 
 /**
  * Wire format: one ordered channel of JSON messages, screen paints among them.
@@ -20,7 +22,7 @@ export const MAX_CELLS = 16383;
  * @typedef {{ type: 'stopSharing' }} StopSharingMessage
  * @typedef {{ type: 'stopEditing' }} StopEditingMessage
  * @typedef {{ type: 'recorder', action: 'start' | 'stop' }} RecorderMessage
- * @typedef {{ type: 'transfer', hostFile: string, hostCommand: string }} TransferMessage IND$FILE GET of a data set, as text
+ * @typedef {{ type: 'transfer', id?: number, hostFile: string, hostCommand: string, upload?: string }} TransferMessage IND$FILE GET of a data set as text, or PUT of the upload text; the replies carry its id
  * @typedef {{ type: 'transferCancel' }} TransferCancelMessage
  * @typedef {ActionMessage | TextMessage | PasteMessage | MacroMessage | ConnectMessage | DisconnectMessage | ModelMessage | OversizeMessage | AskEditMessage | AnswerMessage | StopSharingMessage | StopEditingMessage | RecorderMessage | TransferMessage | TransferCancelMessage} ClientMessage
  *
@@ -133,14 +135,14 @@ export const MAX_CELLS = 16383;
  * @typedef {{ type: 'printEnd', job: number }} PrintEndMessage
  *
  * A data set's text as IND$FILE sends it, to the viewer that asked only;
- * downloadEnd closes it, with the host's or the emulator's word on why it failed.
- * @typedef {{ type: 'download', text: string }} DownloadMessage
- * @typedef {{ type: 'downloadEnd', hostFile: string, ok: boolean, code?: string, message: string }} DownloadEndMessage
+ * transferEnd closes it, or an upload, with the host's or the emulator's word on why it failed.
+ * @typedef {{ type: 'download', id?: number, text: string }} DownloadMessage
+ * @typedef {{ type: 'transferEnd', id?: number, hostFile: string, ok: boolean, code?: string, message: string }} TransferEndMessage
  *
  * Another tab of the same user saved this key.
  * @typedef {{ type: 'userdata', key: import('./userdata.js').UserDataKey }} UserDataMessage
  *
- * @typedef {HelloMessage | ScreenMessage | PaintMessage | StatusMessage | ErrorMessage | RecorderStepMessage | RecorderStoppedMessage | WaitingMessage | RefusedMessage | LogonMessage | UserDataMessage | PrintMessage | PrintEndMessage | DownloadMessage | DownloadEndMessage} ServerMessage
+ * @typedef {HelloMessage | ScreenMessage | PaintMessage | StatusMessage | ErrorMessage | RecorderStepMessage | RecorderStoppedMessage | WaitingMessage | RefusedMessage | LogonMessage | UserDataMessage | PrintMessage | PrintEndMessage | DownloadMessage | TransferEndMessage} ServerMessage
  */
 
 /**
@@ -413,11 +415,27 @@ function parseMessage(message) {
         "E4002",
         "transfer.hostCommand must be 1 to 80 characters",
       );
-    return {
+    const id = message["id"];
+    if (id !== undefined && !(Number.isSafeInteger(id) && Number(id) > 0))
+      throw new AppError("E4002", "transfer.id must be a positive integer");
+    const upload = message["upload"];
+    if (
+      upload !== undefined &&
+      (typeof upload !== "string" || upload.length > MAX_UPLOAD_CHARS)
+    )
+      throw new AppError(
+        "E4002",
+        `transfer.upload must be text of at most ${MAX_UPLOAD_CHARS} characters`,
+      );
+    /** @type {TransferMessage} */
+    const transfer = {
       type: "transfer",
       hostFile: /** @type {string} */ (hostFile),
       hostCommand: /** @type {string} */ (hostCommand),
     };
+    if (id !== undefined) transfer.id = /** @type {number} */ (id);
+    if (upload !== undefined) transfer.upload = upload;
+    return transfer;
   }
 
   if (type === "transferCancel") return { type: "transferCancel" };
