@@ -241,6 +241,33 @@ export class Panels {
     else this.open(id);
   }
 
+  /**
+   * Reopens the panels a reloaded page had on show, as far as each still makes
+   * sense: logging on, a playback or a macro step's cursor lived on state the
+   * reload lost.
+   *
+   * @param {string[]} ids from the address, the one on show last
+   * @returns {void}
+   */
+  restore(ids) {
+    /** @type {Frame[]} */
+    const frames = [];
+    for (const id of ids) {
+      const known =
+        (id in LAYOUTS && id !== "logon") ||
+        id.startsWith("keys:") ||
+        (id.startsWith("macro:") &&
+          this.deps.macros.macros.some(
+            (macro) => `macro:${macro.name}` === id,
+          ));
+      if (!known) break;
+      frames.push({ id, top: 0 });
+    }
+    if (frames.length === 0) return;
+    console.info("panels restored", { ids: frames.map((frame) => frame.id) });
+    this.show(frames);
+  }
+
   /** @returns {void} */
   close() {
     if (!this.isOpen()) return;

@@ -1378,3 +1378,27 @@ test("the logon dialog asks for both fields and shows the server's refusal", asy
   assert.match(screenOf(panels)[4] ?? "", /simon/, "the user name stays");
   assert.equal(panels.isOpen(), true);
 });
+
+test("restoring from the address stops at the first panel a reload cannot rebuild", () => {
+  const { panels } = fixture();
+  panels.deps.macros.macros.push({ name: "Logon", steps: [] });
+  const ids = () => panels.stack.map((frame) => frame.id);
+
+  panels.restore(["menu", "macros", "macro:Logon"]);
+  assert.deepEqual(ids(), ["menu", "macros", "macro:Logon"]);
+  assert.equal(
+    panels.macroCapture,
+    false,
+    "an empty macro restored is not recorded into",
+  );
+
+  panels.restore(["menu", "macros", "macro:Gone", "keys:PF3"]);
+  assert.deepEqual(ids(), ["menu", "macros"]);
+
+  panels.restore(["menu", "playback:1"]);
+  assert.deepEqual(ids(), ["menu"]);
+
+  panels.close();
+  panels.restore(["logon"]);
+  assert.equal(panels.isOpen(), false);
+});

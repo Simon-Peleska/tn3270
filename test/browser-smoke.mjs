@@ -659,6 +659,32 @@ test("the session is restored after reload", async (t) => {
   assert.deepEqual(browser.exceptions, []);
 });
 
+test("the address keeps the panels and the keyboard on show across a reload", async (t) => {
+  const browser = await startBrowser(t);
+  const addressAfterPaint = async () =>
+    (
+      await browser.command("Runtime.evaluate", {
+        expression:
+          "new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => done(location.search))))",
+        awaitPromise: true,
+        returnByValue: true,
+      })
+    ).result.result.value;
+
+  await browser.key("m", "KeyM", { modifiers: 1, windowsVirtualKeyCode: 77 });
+  await browser.key("k", "KeyK", { modifiers: 2, windowsVirtualKeyCode: 75 });
+  assert.equal(await addressAfterPaint(), "?panel=menu&keyboard=1");
+
+  // A playback needs the recording a reload lost, so the stack stops short of it.
+  const restored = browser.consoleMessage("panels restored");
+  await browser.command("Page.navigate", {
+    url: `${browser.base}/?panel=menu&panel=font&panel=playback%3A1&keyboard=1#${browser.sessionId}`,
+  });
+  await restored;
+  assert.equal(await addressAfterPaint(), "?panel=menu&panel=font&keyboard=1");
+  assert.deepEqual(browser.exceptions, []);
+});
+
 test("a link to a session that is gone starts a new one", async (t) => {
   const browser = await startBrowser(t);
   const gone = "00000000-0000-0000-0000-000000000000";

@@ -78,7 +78,33 @@ if (!(importInput instanceof HTMLInputElement))
 let screen;
 
 /** Whether the on-screen keyboard is drawn over the screen. */
-let keyboardShown = false;
+let keyboardShown =
+  new URLSearchParams(location.search).get("keyboard") === "1";
+
+/**
+ * The panels the address had on show, waiting for the session's first status:
+ * that status opens or closes panels itself, so restoring sooner is undone.
+ *
+ * @type {string[] | null}
+ */
+let addressPanels = new URLSearchParams(location.search).getAll("panel");
+
+/**
+ * The address says which panels and whether the keyboard are on show, so a
+ * reload or a shared link comes back to the same place.
+ *
+ * @returns {void}
+ */
+function writeAddress() {
+  const url = new URL(location.href);
+  url.searchParams.delete("panel");
+  url.searchParams.delete("keyboard");
+  for (const id of addressPanels ?? panels.stack.map((frame) => frame.id))
+    url.searchParams.append("panel", id);
+  if (keyboardShown) url.searchParams.set("keyboard", "1");
+  // Some browsers throttle replaceState, so only a real change is written.
+  if (url.href !== location.href) history.replaceState(null, "", url.href);
+}
 
 /**
  * @typedef {object} StatusButton
@@ -365,6 +391,7 @@ function redraw() {
     chromeFrame = null;
     drawChrome();
     screen.render();
+    writeAddress();
   });
 }
 
@@ -1023,6 +1050,12 @@ function handleServerMessage(message) {
       } else {
         panels.open("settings");
       }
+    }
+    if (addressPanels !== null) {
+      // A panel already open, like the logon, has something to say first.
+      if (!panels.isOpen()) panels.restore(addressPanels);
+      addressPanels = null;
+      redraw();
     }
     return;
   }
