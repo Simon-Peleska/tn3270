@@ -330,13 +330,14 @@ test("a paste far larger than a screen is refused", () => {
   );
 });
 
-test("a macro carries only actions, text and pastes, each checked like one sent alone", () => {
+test("a macro carries only actions, text, pastes and transfers, each checked like one sent alone", () => {
   const macro = {
     type: "macro",
     steps: [
       { type: "text", value: "1.3" },
       { type: "paste", text: "1.3.4" },
       { type: "action", action: "Enter", args: [] },
+      { type: "transfer", hostFile: "'U.DL'", hostCommand: "TSO IND$FILE" },
     ],
   };
   assert.deepEqual(parseClientMessage(JSON.stringify(macro)), macro);
@@ -345,6 +346,7 @@ test("a macro carries only actions, text and pastes, each checked like one sent 
     [{ type: "connect", host: "elsewhere:23" }],
     [{ type: "action", action: "Script", args: [] }],
     [{ type: "macro", steps: [] }],
+    [{ type: "transfer", hostFile: "", hostCommand: "TSO IND$FILE" }],
     [null],
   ])
     assert.throws(
@@ -454,4 +456,33 @@ test("single sign-on is on only when asked for and with every key it needs, and 
   assert.equal(none.sso, false);
   assert.deepEqual(none.ssoMissing, [], "nothing set is nothing to warn about");
   assert.equal(none.readyText, "");
+});
+
+test("a download names a data set and a command that fit on one line", () => {
+  const transfer = {
+    type: "transfer",
+    hostFile: "'USER.DATA(MEM)'",
+    hostCommand: "TSO IND\\e005BFILE",
+  };
+  assert.deepEqual(parseClientMessage(JSON.stringify(transfer)), transfer);
+  assert.deepEqual(parseClientMessage('{"type":"transferCancel"}'), {
+    type: "transferCancel",
+  });
+  for (const body of [
+    { hostCommand: "IND$FILE" },
+    { hostFile: "", hostCommand: "IND$FILE" },
+    { hostFile: "A\nB", hostCommand: "IND$FILE" },
+    { hostFile: "A", hostCommand: "X".repeat(81) },
+    { hostFile: "A", hostCommand: 5 },
+  ]) {
+    assert.throws(
+      () => parseClientMessage(JSON.stringify({ type: "transfer", ...body })),
+      (err) => {
+        assert.ok(err instanceof AppError);
+        assert.equal(err.code, "E4002");
+        return true;
+      },
+      JSON.stringify(body),
+    );
+  }
 });

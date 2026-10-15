@@ -1,11 +1,14 @@
 export {
   ACTIONS,
+  ACTION_NAMES,
   DEFAULTS,
   MODEL_SIZES,
   Session,
   createState,
 } from "./session.js";
 export { NodeError } from "./errors.js";
+export { parseCommand, parseJsonCommand } from "./command.js";
+export { statusString } from "./read.js";
 export { FA_INTENSITY, FA_INT_ZERO_NSEL, FA_PROTECT } from "./ctlr.js";
 export {
   BLUE,

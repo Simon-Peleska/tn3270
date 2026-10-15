@@ -1,0 +1,4 @@
+smoke.trc and smoke.out are unmodified from the x3270 project's pr3287 tests
+(https://github.com/pmattes/x3270, suite3270 4.5, pr3287/Test). smoke.out is
+the second job pr3287 prints from the trace; smoke-job1.out is the first, as
+pr3287 4.5 printed it. x3270 is distributed under the licence in ../../../LICENSE.

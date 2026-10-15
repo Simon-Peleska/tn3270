@@ -8,7 +8,7 @@ import { FakeHost, parseTrace } from "../../test/fakehost.js";
 import { Session } from "../src/index.js";
 import { CSTATE_NAMES } from "../src/ui.js";
 import { TRACES, UNLOCK_KEYBOARD, noB3270, startB3270 } from "./harness.js";
-import { screenText, statusString } from "./read.js";
+import { screenText, statusString } from "../src/read.js";
 
 // Every trace is replayed into our Session and into a real s3270 with the same options.
 // Everything each one sends to the host, from the first TELNET byte on, must match,

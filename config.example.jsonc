@@ -30,7 +30,11 @@
       // "nopSeconds": 60,
       // Rows of earlier screens kept per session. The web UI doesn't show
       // them, so 0 unless set.
-      // "saveLines": 0
+      // "saveLines": 0,
+      // A printer LU next to each session, as pr3287 would run it: "." associates
+      // it with the session's own LU (TN3270E), any other name connects to that
+      // LU. Each print job the host sends downloads in the owner's browser.
+      // "printerLu": "."
     },
   },
 

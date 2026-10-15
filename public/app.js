@@ -77,6 +77,19 @@ if (!(importInput instanceof HTMLInputElement))
  */
 let screen;
 
+/** @type {Map<number, string>} The print jobs still arriving, by number. */
+const printJobs = new Map();
+
+/** The data set arriving now, asked for by the download panel or a macro. */
+let downloadChunks = /** @type {string[]} */ ([]);
+
+/**
+ * The download panel waiting on the data set it asked for.
+ *
+ * @type {{ resolve: (said: string) => void, reject: (err: Error) => void } | null}
+ */
+let downloadWaiter = null;
+
 /** Whether the on-screen keyboard is drawn over the screen. */
 let keyboardShown =
   new URLSearchParams(location.search).get("keyboard") === "1";
@@ -534,10 +547,11 @@ function connectHost(host) {
 /**
  * @param {string} filename
  * @param {string} content
+ * @param {string} [type]
  * @returns {void}
  */
-function downloadFile(filename, content) {
-  const blob = new Blob([content], { type: "application/json" });
+function downloadFile(filename, content, type = "application/json") {
+  const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -637,6 +651,16 @@ const panels = new Panels({
   insertCharacter: (character) => {
     deliver({ type: "text", value: character });
   },
+  download: (hostFile, hostCommand) =>
+    new Promise((resolve, reject) => {
+      if (!sendQuietly({ type: "transfer", hostFile, hostCommand })) {
+        reject(new Error("not connected to the server"));
+        return;
+      }
+      console.info("download asked for", { hostFile, hostCommand });
+      downloadWaiter = { resolve, reject };
+    }),
+  cancelDownload: () => sendQuietly({ type: "transferCancel" }),
 });
 
 importInput.addEventListener("change", async () => {
@@ -857,6 +881,10 @@ function connectSocket() {
 
   ws.addEventListener("close", (event) => {
     session.socket = null;
+    // The server cancels a download whose viewer left, and says so to nobody.
+    downloadWaiter?.reject(new Error("the connection to the server closed"));
+    downloadWaiter = null;
+    downloadChunks = [];
     if (event.reason === "E3015") {
       session.refusal = "[E3015] Session terminated by its owner";
       showError("E3015", "The session was terminated by its owner.");
@@ -1010,6 +1038,59 @@ function handleServerMessage(message) {
       recorder.stopped();
       redraw();
     }
+    return;
+  }
+  if (message.type === "print") {
+    const sofar = printJobs.get(message.job) ?? "";
+    printJobs.set(message.job, sofar + message.text);
+    return;
+  }
+  if (message.type === "printEnd") {
+    const text = printJobs.get(message.job);
+    printJobs.delete(message.job);
+    // A tab that joined after the job's text went out has nothing to save.
+    if (text === undefined) {
+      console.warn("print job ended before this tab saw it", message.job);
+      return;
+    }
+    const stamp = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
+    console.info("print job downloaded", {
+      job: message.job,
+      chars: text.length,
+    });
+    downloadFile(
+      `print-${stamp}-${message.job}.txt`,
+      text,
+      "text/plain;charset=utf-8",
+    );
+    return;
+  }
+  if (message.type === "download") {
+    downloadChunks.push(message.text);
+    return;
+  }
+  if (message.type === "downloadEnd") {
+    const text = downloadChunks.join("");
+    const waiter = downloadWaiter;
+    downloadChunks = [];
+    downloadWaiter = null;
+    if (!message.ok) {
+      const code = message.code ?? "E3030";
+      // A macro's download has no panel to show it, so it shows on the screen.
+      if (waiter === null) showError(code, message.message);
+      else {
+        console.error(`[${code}] ${message.message}`);
+        waiter.reject(new Error(`[${code}] ${message.message}`));
+      }
+      return;
+    }
+    console.info("data set downloaded", {
+      hostFile: message.hostFile,
+      chars: text.length,
+    });
+    const name = message.hostFile.replace(/'/g, "").replace(/[^\w.()-]/g, "_");
+    downloadFile(`${name}.txt`, text, "text/plain;charset=utf-8");
+    waiter?.resolve(message.message);
     return;
   }
   if (message.type === "userdata") {

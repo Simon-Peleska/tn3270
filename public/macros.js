@@ -7,7 +7,8 @@ import { macroCommand } from "./keymap.js";
 
 /**
  * A step types its text as keys, or runs its action; a paste is the action
- * PasteString, so it still lands as a paste does.
+ * PasteString, so it still lands as a paste does, and Download takes the data
+ * set and the IND$FILE command as its args.
  *
  * @typedef {{ text: string, action: string, args: string[] }} MacroStep
  * @typedef {{ name: string, steps: MacroStep[] }} Macro
@@ -197,6 +198,12 @@ export class Macros {
       else if (step.text !== "") steps.push({ type: "text", value: step.text });
       if (step.action === "PasteString")
         steps.push({ type: "paste", text: step.args[0] ?? "" });
+      else if (step.action === "Download")
+        steps.push({
+          type: "transfer",
+          hostFile: step.args[0] ?? "",
+          hostCommand: step.args[1] ?? "",
+        });
       else if (step.action !== "")
         steps.push({ type: "action", action: step.action, args: step.args });
     }

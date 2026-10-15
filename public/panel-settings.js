@@ -6,6 +6,7 @@ const OPTIONS = [
   { id: "5", screen: "macros", label: "Macros" },
   { id: "6", screen: "recorder", label: "Recordings" },
   { id: "7", screen: "admin", label: "Sessions" },
+  { id: "8", screen: "download", label: "Download data set" },
 ];
 
 export const settingsLayout = {

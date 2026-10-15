@@ -9,7 +9,7 @@ export const MAX_CELLS = 16383;
  * @typedef {{ type: 'action', action: string, args?: string[], repeat?: boolean }} ActionMessage
  * @typedef {{ type: 'text', value: string }} TextMessage
  * @typedef {{ type: 'paste', text: string }} PasteMessage
- * @typedef {{ type: 'macro', steps: (ActionMessage | TextMessage | PasteMessage)[], repeat?: boolean }} MacroMessage
+ * @typedef {{ type: 'macro', steps: (ActionMessage | TextMessage | PasteMessage | TransferMessage)[], repeat?: boolean }} MacroMessage
  *   played in order, as one entry in the input queue
  * @typedef {{ type: 'connect', host: string | null }} ConnectMessage
  * @typedef {{ type: 'disconnect' }} DisconnectMessage
@@ -20,7 +20,9 @@ export const MAX_CELLS = 16383;
  * @typedef {{ type: 'stopSharing' }} StopSharingMessage
  * @typedef {{ type: 'stopEditing' }} StopEditingMessage
  * @typedef {{ type: 'recorder', action: 'start' | 'stop' }} RecorderMessage
- * @typedef {ActionMessage | TextMessage | PasteMessage | MacroMessage | ConnectMessage | DisconnectMessage | ModelMessage | OversizeMessage | AskEditMessage | AnswerMessage | StopSharingMessage | StopEditingMessage | RecorderMessage} ClientMessage
+ * @typedef {{ type: 'transfer', hostFile: string, hostCommand: string }} TransferMessage IND$FILE GET of a data set, as text
+ * @typedef {{ type: 'transferCancel' }} TransferCancelMessage
+ * @typedef {ActionMessage | TextMessage | PasteMessage | MacroMessage | ConnectMessage | DisconnectMessage | ModelMessage | OversizeMessage | AskEditMessage | AnswerMessage | StopSharingMessage | StopEditingMessage | RecorderMessage | TransferMessage | TransferCancelMessage} ClientMessage
  *
  * @typedef {object} HelloMessage
  * @property {'hello'} type
@@ -125,10 +127,20 @@ export const MAX_CELLS = 16383;
  *
  * @typedef {{ type: 'recorderStopped' }} RecorderStoppedMessage
  *
+ * Text the host printed on the session's printer LU, as it arrives; the owner
+ * only. A job's chunks share its number, and printEnd closes it.
+ * @typedef {{ type: 'print', job: number, text: string }} PrintMessage
+ * @typedef {{ type: 'printEnd', job: number }} PrintEndMessage
+ *
+ * A data set's text as IND$FILE sends it, to the viewer that asked only;
+ * downloadEnd closes it, with the host's or the emulator's word on why it failed.
+ * @typedef {{ type: 'download', text: string }} DownloadMessage
+ * @typedef {{ type: 'downloadEnd', hostFile: string, ok: boolean, code?: string, message: string }} DownloadEndMessage
+ *
  * Another tab of the same user saved this key.
  * @typedef {{ type: 'userdata', key: import('./userdata.js').UserDataKey }} UserDataMessage
  *
- * @typedef {HelloMessage | ScreenMessage | PaintMessage | StatusMessage | ErrorMessage | RecorderStepMessage | RecorderStoppedMessage | WaitingMessage | RefusedMessage | LogonMessage | UserDataMessage} ServerMessage
+ * @typedef {HelloMessage | ScreenMessage | PaintMessage | StatusMessage | ErrorMessage | RecorderStepMessage | RecorderStoppedMessage | WaitingMessage | RefusedMessage | LogonMessage | UserDataMessage | PrintMessage | PrintEndMessage | DownloadMessage | DownloadEndMessage} ServerMessage
  */
 
 /**
@@ -324,11 +336,12 @@ function parseMessage(message) {
       if (
         step?.type !== "action" &&
         step?.type !== "text" &&
-        step?.type !== "paste"
+        step?.type !== "paste" &&
+        step?.type !== "transfer"
       )
         throw new AppError(
           "E4002",
-          "macro.steps must be actions, text and pastes",
+          "macro.steps must be actions, text, pastes and transfers",
         );
       return step;
     });
@@ -378,6 +391,36 @@ function parseMessage(message) {
     }
     return { type: "recorder", action };
   }
+
+  if (type === "transfer") {
+    const hostFile = message["hostFile"];
+    const hostCommand = message["hostCommand"];
+    // Typed on the host's command line, so nothing that would end it early.
+    const typeable = (
+      /** @type {unknown} */ value,
+      /** @type {number} */ max,
+    ) =>
+      typeof value === "string" &&
+      value.length <= max &&
+      !/[\x00-\x1f\x7f]/.test(value);
+    if (!typeable(hostFile, 256) || hostFile === "")
+      throw new AppError(
+        "E4002",
+        "transfer.hostFile must be 1 to 256 characters",
+      );
+    if (!typeable(hostCommand, 80) || hostCommand === "")
+      throw new AppError(
+        "E4002",
+        "transfer.hostCommand must be 1 to 80 characters",
+      );
+    return {
+      type: "transfer",
+      hostFile: /** @type {string} */ (hostFile),
+      hostCommand: /** @type {string} */ (hostCommand),
+    };
+  }
+
+  if (type === "transferCancel") return { type: "transferCancel" };
 
   if (type === "model") {
     const model = message["model"];

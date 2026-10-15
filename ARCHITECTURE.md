@@ -161,7 +161,7 @@ a redirect would throw away the session the user is looking at.
 | `E4xxx` | websocket |
 | `E5xxx` | frontend  |
 | `E6xxx` | http      |
-| `E7xxx` | retired   |
+| `E7xxx` | REST      |
 | `E8xxx` | user data |
 
 Codes are an identity, not a label: once assigned to a site, a code never

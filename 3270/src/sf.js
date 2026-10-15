@@ -21,6 +21,7 @@ import {
   readModified,
   write,
 } from "./ctlr.js";
+import { ftData } from "./ft.js";
 import { kybdInhibit } from "./kybd.js";
 import { netOutput } from "./telnet.js";
 
@@ -31,6 +32,7 @@ const SF_READ_PART = 0x01,
   SF_SET_REPLY_MODE = 0x09,
   SF_CREATE_PART = 0x0c;
 const SF_OUTBOUND_DS = 0x40;
+const SF_TRANSFER_DATA = 0xd0;
 const SF_RP_QUERY = 0x02,
   SF_RP_QLIST = 0x03,
   SF_RPQ_LIST = 0x00,
@@ -91,6 +93,10 @@ export function writeStructuredField(s, buf) {
         break;
       case SF_OUTBOUND_DS:
         rvThis = outboundDs(s, field);
+        break;
+      case SF_TRANSFER_DATA:
+        ftData(s, field);
+        rvThis = rv;
         break;
       default:
         s.log.warn(

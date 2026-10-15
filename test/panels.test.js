@@ -37,6 +37,8 @@ function fixture() {
     /** @type {string[]} */ terminated: [],
     /** @type {{ user: string, password: string }[]} */ logons: [],
     /** @type {string[]} */ characters: [],
+    /** @type {{ hostFile: string, hostCommand: string }[]} */ downloads: [],
+    cancels: 0,
     /** @type {import('../public/recorder.js').Recording[][]} */ savedRecordings:
       [],
   };
@@ -92,6 +94,13 @@ function fixture() {
     },
     logon: async (user, password) => {
       calls.logons.push({ user, password });
+    },
+    download: async (hostFile, hostCommand) => {
+      calls.downloads.push({ hostFile, hostCommand });
+      return "Transfer complete, 12 bytes transferred";
+    },
+    cancelDownload: () => {
+      calls.cancels += 1;
     },
     insertCharacter: (character) => {
       calls.characters.push(character);
@@ -1401,4 +1410,84 @@ test("restoring from the address stops at the first panel a reload cannot rebuil
   panels.close();
   panels.restore(["logon"]);
   assert.equal(panels.isOpen(), false);
+});
+
+test("the download panel asks for a data set, offers x3270's command and cancels", async () => {
+  const { panels, calls } = fixture();
+  panels.open("menu");
+  type(panels, "8");
+  press(panels, "Enter");
+  assert.match(screenOf(panels)[4] ?? "", /TSO IND\\e005BFILE/);
+
+  press(panels, "Enter");
+  assert.match(screenOf(panels).join("\n"), /\[E5048\]/);
+  assert.deepEqual(calls.downloads, []);
+
+  press(panels, "MoveCursor1", ["4", "17"]);
+  type(panels, "'USER.DATA(MEM)'");
+  press(panels, "Enter");
+  await Promise.resolve();
+  assert.deepEqual(calls.downloads, [
+    { hostFile: "'USER.DATA(MEM)'", hostCommand: "TSO IND\\e005BFILE" },
+  ]);
+  assert.match(screenOf(panels).join("\n"), /Transfer complete, 12 bytes/);
+
+  /** @type {(value: string) => void} */
+  let finish = () => {};
+  panels.deps.download = () => new Promise((resolve) => (finish = resolve));
+  press(panels, "Enter");
+  assert.match(screenOf(panels).join("\n"), /Downloading 'USER\.DATA\(MEM\)'/);
+  press(panels, "MoveCursor1", ["2", "16"]);
+  type(panels, "cancel");
+  press(panels, "Enter");
+  assert.equal(calls.cancels, 1);
+  assert.equal(
+    panels.stack.at(-1)?.id,
+    "download",
+    "CANCEL stays while one runs",
+  );
+  finish("[E3030] Data set download failed: Transfer canceled by user");
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.match(screenOf(panels).join("\n"), /\[E3030\]/);
+});
+
+test("F in a macro's editor adds a download step, which plays as a transfer", () => {
+  const { panels, macros, calls } = fixture();
+  macros.macros.push({
+    name: "Get",
+    steps: [{ text: "", action: "Enter", args: [] }],
+  });
+  panels.open("macro:Get");
+  onLine(panels, "New step", "f");
+  press(panels, "Enter");
+  assert.equal(panels.stack.at(-1)?.id, "macro-download:Get");
+  assert.match(screenOf(panels).join("\n"), /TSO IND\\e005BFILE/);
+  press(panels, "Enter");
+  assert.match(screenOf(panels).join("\n"), /\[E5050\]/);
+  assert.equal(macros.macros[0].steps.length, 1);
+
+  press(panels, "MoveCursor1", ["2", "17"]);
+  type(panels, "'U.TN3270.DL'");
+  press(panels, "Enter");
+  assert.equal(panels.isMacroEditor(), true);
+  assert.deepEqual(macros.macros[0].steps[1], {
+    text: "",
+    action: "Download",
+    args: ["'U.TN3270.DL'", "TSO IND\\e005BFILE"],
+  });
+  assert.match(screenOf(panels).join("\n"), /Download 'U\.TN3270\.DL'/);
+
+  macros.play(macros.macros[0]);
+  assert.deepEqual(calls.sent.at(-1), {
+    type: "macro",
+    steps: [
+      { type: "action", action: "Enter", args: [] },
+      {
+        type: "transfer",
+        hostFile: "'U.TN3270.DL'",
+        hostCommand: "TSO IND\\e005BFILE",
+      },
+    ],
+  });
 });

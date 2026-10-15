@@ -459,10 +459,6 @@ const EXTENDED = [
     type: "string",
     set(s, _typed, value) {
       s.options.printerLu = value || null;
-      if (value)
-        s.log.warn(
-          `N9034 printerLu ${value} stored, but there is no printer session`,
-        );
       return OK;
     },
   },

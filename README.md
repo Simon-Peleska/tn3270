@@ -78,6 +78,9 @@ runs more or other seeds.
   `=1` jump from anywhere. `[Rec]` on the status row records the session as a
   script.
   Opening a panel is a keymap command, so that key is yours to change too.
+- **Data sets to the browser.** Settings option 8 downloads a data set, or
+  SDSF output saved with `XDC`, as a UTF-8 text file through `IND$FILE`. A
+  macro can do it too, so one key fetches a fixed scratch data set.
 - **Fit to window**: ask the host for a screen the size of the window rather than
   the model's 24×80, negotiated as IBM-DYNAMIC.
 

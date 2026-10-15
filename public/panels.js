@@ -13,6 +13,7 @@ import { sizeMode } from "./settings.js";
 import { comboLabel } from "./keymap.js";
 import { settingsLayout } from "./panel-settings.js";
 import { logonLayout } from "./panel-logon.js";
+import { downloadLayout } from "./panel-download.js";
 import { themeLayout } from "./panel-theme.js";
 import { fontLayout } from "./panel-font.js";
 import { sizeLayout } from "./panel-size.js";
@@ -20,6 +21,7 @@ import {
   macrosLayout,
   macroEditLayout,
   macroCursorLayout,
+  macroDownloadLayout,
 } from "./panel-macros.js";
 import {
   recordingsLayout,
@@ -56,6 +58,9 @@ import { charsLayout, printableCharacter } from "./panel-chars.js";
  * @property {(id: string) => boolean} ownsSession
  * @property {(id: string) => Promise<void>} terminateSession
  * @property {(user: string, password: string) => Promise<void>} logon
+ * @property {(hostFile: string, hostCommand: string) => Promise<string>} download
+ *   the data set saved by the browser; resolves with the host's word on it
+ * @property {() => void} cancelDownload
  * @property {(character: string) => void} insertCharacter
  *
  * @typedef {object} Edit an input field in place of the line's value
@@ -81,6 +86,7 @@ import { charsLayout, printableCharacter } from "./panel-chars.js";
  * @property {() => void} [m]
  * @property {() => void | Promise<void>} [k]
  * @property {() => void} [j]
+ * @property {() => void} [f]
  *
  * @typedef {{ id: string, top: number, insertAt?: number }} Frame a screen, and how far it is scrolled
  * @typedef {{ recording: import('./recorder.js').Recorder['recordings'][number], index: number, speed: number, direction: 1 | -1, paused: boolean, overlay: boolean, jumpDraft: string | null, jumpCaret: number, timer: ReturnType<typeof setTimeout> | null }} Playback
@@ -118,12 +124,14 @@ const LAYOUTS = {
   admin: adminLayout,
   chars: charsLayout,
   logon: logonLayout,
+  download: downloadLayout,
 };
 
 /** @param {string} id @returns {PanelLayout} */
 function layoutFor(id) {
   if (id.startsWith("keys:")) return bindingsLayout;
   if (id.startsWith("macro-cursor:")) return macroCursorLayout;
+  if (id.startsWith("macro-download:")) return macroDownloadLayout;
   if (id.startsWith("macro:")) return macroEditLayout;
   if (id.startsWith("recording:")) return createMacroLayout;
   return LAYOUTS[id] ?? settingsLayout;
@@ -173,6 +181,46 @@ export class Panels {
     this.pickerReturn = null;
     /** @type {string} kept for the next try, unlike the password */
     this.logonUser = "";
+    this.downloadHostFile = "";
+    // x3270's own: \e005B is the EBCDIC $, whatever the code page puts there.
+    this.downloadCommand = "TSO IND\\e005BFILE";
+    this.downloading = false;
+  }
+
+  /**
+   * @param {string} hostFile
+   * @param {string} hostCommand
+   * @returns {Promise<void>}
+   */
+  async download(hostFile, hostCommand) {
+    this.downloadHostFile = hostFile;
+    this.downloadCommand = hostCommand;
+    if (this.downloading) {
+      this.message = problem("E5047", "A download is already running");
+      this.deps.redraw();
+      return;
+    }
+    if (hostFile === "" || hostCommand === "") {
+      this.message = problem("E5048", "Type a data set name and a command");
+      this.deps.redraw();
+      return;
+    }
+    this.downloading = true;
+    this.message = `Downloading ${hostFile}...`;
+    this.deps.redraw();
+    try {
+      this.message = await this.deps.download(hostFile, hostCommand);
+      console.info("download finished", { hostFile });
+    } catch (cause) {
+      console.error("[E5049] download failed", cause);
+      const text = cause instanceof Error ? cause.message : String(cause);
+      this.message = text.startsWith("[E")
+        ? text
+        : problem("E5049", "The download could not be sent to the server");
+    } finally {
+      this.downloading = false;
+    }
+    this.deps.redraw();
   }
 
   /**
@@ -550,23 +598,41 @@ export class Panels {
     this.push(`macro-cursor:${frame.id.slice(6)}`, index);
   }
 
+  /** @param {number} index */
+  openMacroDownload(index) {
+    const frame = this.stack.at(-1);
+    if (frame === undefined || !frame.id.startsWith("macro:")) return;
+    this.push(`macro-download:${frame.id.slice(6)}`, index);
+  }
+
   /** @param {number} row 0-based @param {number} col 0-based */
   addMacroCursorMove(row, col) {
+    if (!this.pickingMacroCursor()) return;
+    this.addMacroStep({
+      text: "",
+      action: "MoveCursor1",
+      args: [String(row + 1), String(col + 1)],
+    });
+  }
+
+  /**
+   * Inserts a step from a screen opened over the macro's editor, and goes back
+   * to the editor on it.
+   *
+   * @param {import('./macros.js').MacroStep} step
+   * @returns {void}
+   */
+  addMacroStep(step) {
     const frame = this.stack.at(-1);
-    if (frame === undefined || !frame.id.startsWith("macro-cursor:")) return;
-    const macro = this.deps.macros.macros.find(
-      (entry) => entry.name === frame.id.slice(13),
-    );
+    if (frame === undefined) return;
+    const name = frame.id.slice(frame.id.indexOf(":") + 1);
+    const macro = this.deps.macros.macros.find((entry) => entry.name === name);
     if (macro === undefined) return;
     const index = Math.min(
       frame.insertAt ?? macro.steps.length,
       macro.steps.length,
     );
-    macro.steps.splice(index, 0, {
-      text: "",
-      action: "MoveCursor1",
-      args: [String(row + 1), String(col + 1)],
-    });
+    macro.steps.splice(index, 0, step);
     this.deps.macros.deps.persist(this.deps.macros.macros);
     this.back();
     const editor = this.stack.at(-1);
@@ -936,7 +1002,8 @@ export class Panels {
         letter === "p" ||
         letter === "m" ||
         letter === "k" ||
-        letter === "j"
+        letter === "j" ||
+        letter === "f"
           ? item[letter]
           : undefined;
       if (run === undefined) {

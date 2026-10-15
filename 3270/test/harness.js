@@ -4,7 +4,6 @@ import { createInterface } from "node:readline";
 import { FakeHost } from "../../test/fakehost.js";
 import { Session } from "../src/index.js";
 import { b3270Indications } from "./b3270.js";
-import "./read.js";
 
 export { FakeHost };
 
@@ -27,6 +26,10 @@ export function normalize(kind, body) {
   if (kind === "tls-hello") body = { ...body, provider: "" };
   if (kind === "setting" && body.name === "confDir")
     body = { ...body, value: "" };
+  // How fast a file transfer went is up to the clock.
+  const rate = (/** @type {string} */ text) =>
+    text.replace(/^\S+ [KM]?bytes\/sec/m, "RATE bytes/sec");
+  if (kind === "ft" && body.text) body = { ...body, text: rate(body.text) };
   if (kind === "run-result") {
     const { time, ...rest } = body;
     if (rest.text)
@@ -37,7 +40,8 @@ export function normalize(kind, body) {
             "$1:",
           )
           .replace(/127\.0\.0\.1 \d+$/, "127.0.0.1 PORT")
-          .replace(/^(b3270|node3270) v4\.5ga5.*/, "BUILD"),
+          .replace(/^(b3270|node3270) v4\.5ga5.*/, "BUILD")
+          .replace(/^\S+ [KM]?bytes\/sec/, "RATE bytes/sec"),
       );
     return JSON.stringify({ [kind]: rest });
   }
@@ -89,7 +93,7 @@ export function startB3270() {
 /**
  * @param {boolean} [b3270] write what b3270 writes, or only what the app gets
  * @param {(s: import("../src/session.js").State, kind: string, body: any) => void} [watch] sees each indication first
- * @returns {Emulator}
+ * @returns {Emulator & {session: Session}}
  */
 export function startOurs(b3270 = true, watch) {
   // LOG=1 shows node3270's log, for debugging a mismatch.
@@ -98,7 +102,7 @@ export function startOurs(b3270 = true, watch) {
     { model: "3279-4-E" },
     process.env.LOG ? { warn: log, info: log, debug: log } : undefined,
   );
-  return track((push, results) => {
+  const emulator = track((push, results) => {
     /** @param {{kind: string, body: any}} indication */
     const listener = ({ kind, body }) => {
       watch?.(session.s, kind, body);
@@ -112,6 +116,7 @@ export function startOurs(b3270 = true, watch) {
       stop: () => session.close(),
     };
   });
+  return { ...emulator, session };
 }
 
 /**
@@ -245,7 +250,8 @@ export function telnetUnits(payloads) {
  * Connects to a host replaying the trace one telnet unit at a time, so both emulators
  * see the same reads, then runs the actions and disconnects.
  * Besides actions, steps can be ["host", hex] to send the emulator bytes, ["hostClose"] to hang up,
- * ["+Action", ...args] to start an action without waiting for it, ["await"] to wait for those, and
+ * ["+Action", ...args] to start an action without waiting for it, ["aid"] to wait for the record it
+ * sends, ["await"] to wait for those, and
  * ["run", [Action, ...args], [Action, ...args], ...] to run several actions as one run.
  * @param {Emulator} emulator @param {string} trace @param {Step[]} actions
  * @param {[string, ...(string | number)[]][]} [setup] actions before connecting
@@ -275,7 +281,16 @@ export async function scenario(
     }
     /** @type {Promise<any>[]} */
     let pending = [];
+    let started = 0;
     for (const [name, ...args] of actions) {
+      if (name === "aid") {
+        await host.waitUntil(
+          () => host.received.split("ffef").length > started,
+          5000,
+          "no AID record",
+        );
+        continue;
+      }
       if (name === "host") {
         host.socket?.write(Buffer.from(String(args[0]), "hex"));
         await sync(host);
@@ -294,6 +309,7 @@ export async function scenario(
         continue;
       }
       if (name.startsWith("+")) {
+        started = host.received.split("ffef").length;
         pending.push(emulator.run(name.slice(1), args));
         continue;
       }

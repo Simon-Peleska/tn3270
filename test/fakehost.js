@@ -1,4 +1,4 @@
-import { createServer } from "node:net";
+import { connect, createServer } from "node:net";
 import { createServer as createTlsServer } from "node:tls";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -10,6 +10,8 @@ import { fileURLToPath } from "node:url";
 
 const IAC_DO_TIMING_MARK = Buffer.from([0xff, 0xfd, 0x06]);
 const IAC_WONT_TIMING_MARK = "fffc06";
+// pr3287 agrees to the timing mark instead.
+const IAC_WILL_TIMING_MARK = "fffb06";
 
 /** The fake host's self-signed certificate, for an emulator's caFile. */
 export const FAKEHOST_CA = fileURLToPath(
@@ -142,7 +144,7 @@ export class FakeHost {
   }
 
   /**
-   * The only reliable way to know the emulator consumed everything: it must answer WONT.
+   * The only reliable way to know the emulator consumed everything: it must answer.
    * @returns {Promise<void>}
    */
   async sendTimingMark() {
@@ -151,7 +153,13 @@ export class FakeHost {
     const before = this.received.length;
     socket.write(IAC_DO_TIMING_MARK);
     await this.waitUntil(
-      () => this.received.slice(before).endsWith(IAC_WONT_TIMING_MARK),
+      () => {
+        const answer = this.received.slice(before);
+        return (
+          answer.endsWith(IAC_WONT_TIMING_MARK) ||
+          answer.endsWith(IAC_WILL_TIMING_MARK)
+        );
+      },
       5000,
       "emulator did not answer the timing mark",
     );
@@ -185,6 +193,30 @@ export class FakeHost {
     }
     await new Promise((resolve) => this.server.close(() => resolve(undefined)));
   }
+}
+
+/**
+ * One port for a display and its printer, as on a real host: each connection goes on to the
+ * next of `ports`, so the display's trace and the printer's can be two FakeHosts.
+ * @param {number[]} ports
+ * @returns {Promise<{ port: number, close: () => void }>}
+ */
+export async function sharedPort(ports) {
+  const server = createServer((socket) => {
+    const port = ports.shift();
+    if (port === undefined) return socket.destroy();
+    const target = connect(port, "127.0.0.1");
+    socket.pipe(target).pipe(socket);
+    socket.on("error", () => target.destroy());
+    target.on("error", () => socket.destroy());
+  });
+  await new Promise((resolve) =>
+    server.listen(0, "127.0.0.1", () => resolve(undefined)),
+  );
+  const address = /** @type {import("node:net").AddressInfo} */ (
+    server.address()
+  );
+  return { port: address.port, close: () => server.close() };
 }
 
 // Also runnable directly: npm run fakehost

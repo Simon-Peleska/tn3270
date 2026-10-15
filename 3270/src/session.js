@@ -5,6 +5,8 @@ import tls from "node:tls";
 import { codePage } from "./charset.js";
 import { ctlrConnect, erase, newCells, setRowsCols } from "./ctlr.js";
 import { NodeError } from "./errors.js";
+import { ftCstate, transfer } from "./ft.js";
+import { PrinterSession } from "./printer.js";
 import { splitHost } from "./host.js";
 import * as kybd from "./kybd.js";
 import {
@@ -29,6 +31,7 @@ import {
   uiConnect,
 } from "./ui.js";
 import { query } from "./query.js";
+import * as read from "./read.js";
 import {
   create3270Termtype,
   netSetDefaultTermtype,
@@ -330,6 +333,8 @@ export function createState(opts = {}, io = {}) {
     },
     /** @type {{name: string, value: string}[]} Set(-defer) values waiting for a disconnect */
     disconnectSets: [],
+    /** @type {import("./ft.js").Transfer | null} the IND$FILE transfer under way */
+    ft: null,
 
     write: io.write ?? (() => {}),
     emit: io.emit ?? (() => {}),
@@ -401,6 +406,7 @@ export function changeCstate(s, next) {
     frontendHook(s, old);
     scrollConnect(s);
   }
+  ftCstate(s);
 }
 
 /**
@@ -458,6 +464,13 @@ export const ACTIONS = {
     query(s, "Query", args),
   Show: (/** @type {State} */ s, /** @type {any[]} */ ...args) =>
     query(s, "Show", args),
+  Ascii: read.ascii,
+  Ascii1: read.ascii1,
+  AsciiField: read.asciiField,
+  Ebcdic: read.ebcdic,
+  Ebcdic1: read.ebcdic1,
+  EbcdicField: read.ebcdicField,
+  ReadBuffer: read.readBuffer,
   Enter: kybd.enter,
   PF: kybd.pf,
   PA: kybd.pa,
@@ -529,6 +542,7 @@ export const ACTIONS = {
   Set: set,
   Toggle: toggle,
   Scroll: scrollAction,
+  Transfer: transfer,
 };
 
 /**
@@ -616,10 +630,16 @@ export const ACTION_NAMES = new Map(
   ].map((name) => [name.toLowerCase(), name]),
 );
 
+/** How long b3270 waits after reaching 3270 mode before it starts the printer. */
+const PRINTER_DELAY_MS = 3000;
+
 /**
  * A TN3270 client session over TCP or TLS.
  * Events: "update" (screen or keyboard changed), "close",
- * "quit" (a Quit() ran: b3270 would exit now).
+ * "quit" (a Quit() ran: b3270 would exit now),
+ * "print" (text the printer LU printed), "print-end" (its job ended),
+ * "print-error" (the printer session failed, with a NodeError),
+ * "transfer" (text a Transfer() received from the host).
  */
 export class Session extends EventEmitter {
   /** @param {Partial<Options>} [options] @param {Logger} [log] */
@@ -629,6 +649,12 @@ export class Session extends EventEmitter {
     this.socket = null;
     /** What Open() last tried, for Reconnect(). */
     this.lastTarget = "";
+    /** @type {tls.ConnectionOptions | false} how the display connected, for its printer */
+    this.tlsOptions = false;
+    /** @type {PrinterSession | null} */
+    this.printer = null;
+    /** @type {NodeJS.Timeout | null} */
+    this.printerDelay = null;
     this.log = log;
     /** @type {number | undefined} */
     this.lastKybdlock = undefined;
@@ -645,6 +671,7 @@ export class Session extends EventEmitter {
       emit: (e) => {
         if (e.type === "alarm") this.s.ui?.out("bell", {});
         if (e.type === "timer") this.flush();
+        if (e.type === "ft-data") this.emit("transfer", e.text);
       },
       log,
     });
@@ -666,6 +693,11 @@ export class Session extends EventEmitter {
     s.connHost = host;
     s.connPort = port;
     s.secure = !!how.tls;
+    this.tlsOptions = how.tls
+      ? typeof how.tls === "object"
+        ? how.tls
+        : {}
+      : false;
     s.verified = false;
     s.tlsCertInfo = s.tlsSessionInfo = null;
     s.stats = { brcvd: 0, rrcvd: 0, bsent: 0, rsent: 0 };
@@ -771,7 +803,7 @@ export class Session extends EventEmitter {
    * b3270's run: the actions in order, stopping at the first failure, then a run-result.
    * Like b3270, Open waits for the host to let the keyboard go, and so does an action that sends an AID.
    * @param {{action: string, args?: any[]}[]} actions @param {string} [tag]
-   * @returns {Promise<{success: boolean, text: string[]}>}
+   * @returns {Promise<{success: boolean, text: string[], err: boolean[], time: number}>} err marks the lines that are errors; time is in seconds
    */
   async run(actions, tag) {
     // Never starts inside its caller: a run started from an indication would otherwise run in the middle of the one emitting it.
@@ -848,6 +880,7 @@ export class Session extends EventEmitter {
       this.flush();
       if (!success) break;
     }
+    const time = Math.round(performance.now() - started) / 1000;
     if (s.ui) {
       /** @type {Record<string, any>} */
       const result =
@@ -856,7 +889,7 @@ export class Session extends EventEmitter {
         result.text = out.text;
         result["text-err"] = out.err;
       }
-      result.time = Math.round(performance.now() - started) / 1000;
+      result.time = time;
       s.ui.out("run-result", result);
     }
     if (quitting) {
@@ -864,7 +897,7 @@ export class Session extends EventEmitter {
       this.disconnect();
       this.emit("quit");
     }
-    return { success, text: out.text };
+    return { success, text: out.text, err: out.err, time };
   }
 
   /**
@@ -1050,6 +1083,7 @@ export class Session extends EventEmitter {
   flush() {
     const s = this.s;
     if (s.ui) screenDisp(s);
+    if (s.cstate !== this.lastCstate) this.checkPrinter();
     if (
       !s.changed &&
       s.kybdlock === this.lastKybdlock &&
@@ -1060,6 +1094,69 @@ export class Session extends EventEmitter {
     this.lastKybdlock = s.kybdlock;
     this.lastCstate = s.cstate;
     this.emit("update");
+  }
+
+  /**
+   * pr3287_connected() and pr3287_disconnected(): the printer LU in options.printerLu runs
+   * while the display is in 3270 mode. "." associates it with the display's own LU.
+   */
+  checkPrinter() {
+    const s = this.s;
+    const lu = s.options.printerLu;
+    const running = this.printer !== null || this.printerDelay !== null;
+    if (!in3270(s)) {
+      if (running) this.stopPrinter();
+      return;
+    }
+    if (running) {
+      if (lu === "." && !inE(s)) this.stopPrinter();
+      return;
+    }
+    if (!lu) return;
+    if (lu === "." && (s.cstate !== CONNECTED_TN3270E || !s.connectedLu))
+      return;
+    const assoc = lu === "." ? s.connectedLu : null;
+    const delay = Number(process.env["PRINTER_DELAY_MS"]) || PRINTER_DELAY_MS;
+    this.log.info(`printer starts in ${delay} ms`);
+    this.printerDelay = setTimeout(() => {
+      this.printerDelay = null;
+      this.startPrinter(assoc, assoc ? null : lu);
+    }, delay);
+  }
+
+  /** @param {string | null} assoc @param {string | null} lu */
+  startPrinter(assoc, lu) {
+    const s = this.s;
+    const printer = new PrinterSession({
+      host: s.connHost,
+      port: s.connPort,
+      tls: this.tlsOptions,
+      assoc,
+      lu,
+      codePage: s.codePage,
+      log: this.log,
+    });
+    this.printer = printer;
+    s.ui?.out("oia", {
+      field: "printer-session",
+      value: true,
+      lu: assoc ?? lu,
+    });
+    printer.on("data", (text) => this.emit("print", text));
+    printer.on("eoj", () => this.emit("print-end"));
+    printer.on("close", (/** @type {NodeError | undefined} */ err) => {
+      if (this.printer === printer) this.printer = null;
+      s.ui?.out("oia", { field: "printer-session", value: false });
+      if (err) this.emit("print-error", err);
+    });
+  }
+
+  stopPrinter() {
+    this.log.info("stopping the printer");
+    if (this.printerDelay) clearTimeout(this.printerDelay);
+    this.printerDelay = null;
+    this.printer?.close();
+    this.printer = null;
   }
 
   /** Resolves the first time pred() holds, checked after every update. @param {(s: Session) => boolean} pred */

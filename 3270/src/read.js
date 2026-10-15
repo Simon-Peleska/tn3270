@@ -1,4 +1,4 @@
-import { CS_GE, CS_MASK, ebcdicToUnicode } from "../src/charset.js";
+import { CS_GE, CS_MASK, ebcdicToUnicode } from "./charset.js";
 import {
   XA_3270,
   XA_BACKGROUND,
@@ -14,20 +14,13 @@ import {
   hostCs,
   isProtected,
   isZero,
-} from "../src/ctlr.js";
-import {
-  ACTIONS,
-  ACTION_NAMES,
-  NOT_CONNECTED,
-  RECONNECTING,
-  in3270,
-} from "../src/session.js";
-import { actionOutput, popupError } from "../src/ui.js";
+} from "./ctlr.js";
+import { NOT_CONNECTED, RECONNECTING, in3270 } from "./session.js";
+import { actionOutput, popupError } from "./ui.js";
 
-// task.c's actions that read the screen, which the app never runs. The conformance tests read
-// the screen through them, field attributes and all, to compare it with b3270's.
+// task.c's actions that read the screen, for REST callers and the conformance tests.
 
-/** @typedef {import("../src/session.js").State} State */
+/** @typedef {import("./session.js").State} State */
 
 /** x3270's toupper table leaves these alone, where JavaScript has an upper case for them. */
 const NO_UPPER = new Set([
@@ -255,7 +248,7 @@ function readBufferText(s, mode, field = -1) {
  * ReadBuffer(Ascii|Ebcdic|Unicode|Field): the screen, a line per row, or the cursor's field.
  * @param {State} s @param {any[]} argv
  */
-function readBuffer(s, ...argv) {
+export function readBuffer(s, ...argv) {
   /** @type {"ascii" | "ebcdic" | "unicode"} */
   let mode = "ascii";
   let field = false;
@@ -292,20 +285,31 @@ function readBuffer(s, ...argv) {
   return true;
 }
 
-/** @type {Record<string, (s: State, ...args: any[]) => boolean>} */
-const READ_ACTIONS = {
-  Ascii: (s, ...args) => dumpFixed(s, args.map(String), 0, "Ascii", true),
-  Ascii1: (s, ...args) => dumpFixed(s, args.map(String), 1, "Ascii1", true),
-  AsciiField: (s, ...args) => dumpField(s, args, "AsciiField", true),
-  Ebcdic: (s, ...args) => dumpFixed(s, args.map(String), 0, "Ebcdic", false),
-  Ebcdic1: (s, ...args) => dumpFixed(s, args.map(String), 1, "Ebcdic1", false),
-  EbcdicField: (s, ...args) => dumpField(s, args, "EbcdicField", false),
-  ReadBuffer: readBuffer,
-};
-
-Object.assign(ACTIONS, READ_ACTIONS);
-for (const name of Object.keys(READ_ACTIONS))
-  ACTION_NAMES.set(name.toLowerCase(), name);
+// Declared functions, not arrows: session.js lists them in ACTIONS while this module may still be loading.
+/** @param {State} s @param {any[]} args */
+export function ascii(s, ...args) {
+  return dumpFixed(s, args.map(String), 0, "Ascii", true);
+}
+/** @param {State} s @param {any[]} args */
+export function ascii1(s, ...args) {
+  return dumpFixed(s, args.map(String), 1, "Ascii1", true);
+}
+/** @param {State} s @param {any[]} args */
+export function asciiField(s, ...args) {
+  return dumpField(s, args, "AsciiField", true);
+}
+/** @param {State} s @param {any[]} args */
+export function ebcdic(s, ...args) {
+  return dumpFixed(s, args.map(String), 0, "Ebcdic", false);
+}
+/** @param {State} s @param {any[]} args */
+export function ebcdic1(s, ...args) {
+  return dumpFixed(s, args.map(String), 1, "Ebcdic1", false);
+}
+/** @param {State} s @param {any[]} args */
+export function ebcdicField(s, ...args) {
+  return dumpField(s, args, "EbcdicField", false);
+}
 
 /** status_string(): the 11 fields of s3270's prompt, without its window id. @param {State} s */
 export function statusString(s) {

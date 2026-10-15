@@ -1,6 +1,6 @@
 // A code is an identity: append only, never renumber, never reuse. E1xxx config,
 // E2xxx emulator, E3xxx session, E4xxx client, E5xxx browser, E6xxx transport,
-// E8xxx user data, E9xxx single sign-on.
+// E7xxx REST, E8xxx user data, E9xxx single sign-on.
 export const ERRORS = Object.freeze({
   E1001: "Config file could not be read",
   E1002: "Config file is not valid JSONC",
@@ -16,6 +16,7 @@ export const ERRORS = Object.freeze({
   E2004: "Emulator reported a protocol error",
   E2005: "Emulator action failed",
   // E2007 was the emulator thread pool's, which sessions no longer use. Retired, not free.
+  E2008: "Printer session failed",
 
   E3001: "Session not found",
   E3002: "Session limit reached",
@@ -45,6 +46,8 @@ export const ERRORS = Object.freeze({
   E3026: "A logon is already running",
   E3027: "Logon could not be typed",
   E3028: "Session closed during the logon",
+  E3029: "Only the session's owner may download data sets",
+  E3030: "Data set download failed",
 
   E4001: "WebSocket message was not valid JSON",
   E4002: "WebSocket message had an unknown type",
@@ -98,6 +101,10 @@ export const ERRORS = Object.freeze({
   E5044: "Logon could not be sent to the server",
   E5045: "Logon needs a user name and a password",
   E5046: "User data another tab saved could not be read",
+  E5047: "A download is already running",
+  E5048: "Download needs a data set name and a command",
+  E5049: "Download could not be sent to the server",
+  E5050: "A macro's download step needs a data set name and a command",
 
   E6001: "Static file not found",
   E6002: "WebSocket upgrade path is not a session",
@@ -110,6 +117,15 @@ export const ERRORS = Object.freeze({
   E6011: "Page has no place for the user's settings",
 
   // E7001-E7004 were the REST proxy's, which is gone. Retired, not free.
+  E7005: "REST path is not one s3270 serves",
+  E7006: "REST post needs the POST method",
+  E7007: "REST post body must be text/plain or application/json",
+  E7008: "REST call failed",
+  E7009: "REST path is not valid percent-encoding",
+  E7010: "REST actions could not be run",
+  E7011: "REST post body is too large",
+  E7012: "REST action is not one a REST call may run",
+  E7013: "REST call is not from the user who started the session",
 
   E8001: "User data database could not be opened",
   E8002: "User data could not be read",

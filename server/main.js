@@ -11,6 +11,7 @@ import { AppError, describeError } from "./errors.js";
 import { checkVendoredWs } from "./vendorcheck.js";
 import { USER_DATA_KEYS, openUserData, ownerOf } from "./userdata.js";
 import { parseSessionSize } from "./protocol.js";
+import { answerRest } from "./rest.js";
 import { Settings } from "../public/settings.js";
 
 const config = loadConfig(process.env["TN3270_CONFIG"] ?? "config.jsonc");
@@ -38,6 +39,9 @@ const userData = openUserData(config.userDataFile);
 
 // Recordings carry a full styled screen per step, so they are the big one.
 const MAX_USER_DATA_BYTES = 32 * 1024 * 1024;
+
+/** A REST post is a script, not a file. */
+const MAX_REST_BYTES = 1024 * 1024;
 
 const ROOT = resolve(".");
 
@@ -128,6 +132,13 @@ const ERROR_STATUS = Object.freeze({
   E8007: 404,
   E8005: 413,
   E8006: 400,
+  E7005: 404,
+  E7006: 405,
+  E7007: 415,
+  E7009: 400,
+  E7011: 413,
+  E7012: 403,
+  E7013: 403,
 });
 
 /**
@@ -450,6 +461,21 @@ async function handleRequest(req, res) {
     );
     res.writeHead(204);
     res.end();
+    return;
+  }
+
+  const restMatch =
+    /^\/api\/sessions\/([0-9a-fA-F-]{36})\/3270\/rest\/(.*)$/.exec(path);
+  if (restMatch !== null) {
+    const session = registry.get(String(restMatch[1]));
+    const method = req.method ?? "GET";
+    await answerRest(res, session, String(restMatch[2]), {
+      method,
+      user: clientIdentity(req).user,
+      contentType: header(req, "content-type").split(";")[0]?.trim() ?? "",
+      body:
+        method === "POST" ? await readBody(req, MAX_REST_BYTES, "E7011") : "",
+    });
     return;
   }
 

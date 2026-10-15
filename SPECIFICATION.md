@@ -8,8 +8,8 @@ A browser-based IBM 3270 terminal. The user opens a page, connects to a TN3270
 host, sees the host's screen, and types on it. A second person opening the same
 URL sees the same screen live.
 
-Out of scope for this build: file transfer (IND$FILE), printer sessions
-(`pr3287`), DBCS / double-width characters, scripting, plain-TELNET (NVT and
+Out of scope for this build: file transfer beyond downloading a data set as
+text, DBCS / double-width characters, scripting, plain-TELNET (NVT and
 line-mode) hosts, and login/authentication. A host that sends data before
 negotiating TN3270 is dropped with `N1203`.
 
@@ -231,6 +231,24 @@ sessions this browser owns; the server also checks the owner's private session
 pass before ending one. Other viewers are disconnected with `E3015` and do not
 reconnect to a terminated session.
 
+**Download data set** (option 8 of Settings) fetches a data set as text with
+`IND$FILE` and has the browser save it as `<data set>.txt`, in UTF-8. The command
+is typed on the host screen behind the panel, so the owner starts it from where
+a command line takes it: `TSO IND\e005BFILE` from ISPF (the default), or
+`IND\e005BFILE` from TSO's READY. `\e005B` is x3270's escape for EBCDIC X'5B',
+the `$` of US code pages, which keeps the command right whatever the session's
+code page puts there. SDSF job output is saved to a data set with `XDC` first.
+`CANCEL` on the command line stops a download that is running. Only the
+session's owner may download; anyone else gets `E3029`, and a failed or
+cancelled download `E3030` with the host's own message.
+
+A macro can download too: `F` in a macro's editor adds a **Download** step,
+asking for the data set and the command as the panel does (`E5050` without
+them). The step takes its turn in the macro like any other, and the steps after
+it wait until the data set has arrived. The file is saved as from the panel; a
+failure shows its code on the screen, as there is no panel to show it. With a
+fixed scratch data set, `XDC` in SDSF and one key give the job output as a file.
+
 **Keys.** A panel has no keyboard of its own. It answers to the 3270 commands
 of §5, so a key does the same thing in a panel as on the screen behind it, and
 rebinding one rebinds it in both places.
@@ -390,7 +408,9 @@ copies nothing.
 Only the actions in the table above may cross the wire. `b3270` accepts many
 more, including actions that read files and run programs, so
 `server/protocol.js` holds a strict allow-list rather than a pass-through. An
-action outside it is refused with `E4002` and never reaches the emulator.
+action outside it is refused with `E4002` and never reaches the emulator. The
+REST interface keeps its own list in `server/rest.js`, the reading actions
+(`Ascii`, `Query`, `ReadBuffer`…) and the keys, and refuses the rest with `E7012`.
 
 ## 6. Wire protocol
 
@@ -410,7 +430,13 @@ array of them when one moment produced several (a paint and the status with it):
 {"type":"refused","code":"E3008","message":"bob did not let you in."}
 {"type":"error","code":"E3006","message":"This session is being controlled by someone else."}
 {"type":"logon","code":"E9003","message":"DCAS refused the PassTicket request: …"}
+{"type":"download","text":"HELLO, WORLD\n"}
+{"type":"downloadEnd","hostFile":"'USER.DATA'","ok":true,"message":"Transfer complete, 13 bytes transferred 2.1 Kbytes/sec in DFT mode"}
+{"type":"downloadEnd","hostFile":"'USER.DATA'","ok":false,"code":"E3030","message":"Data set download failed: TRANS34 …"}
 ```
+
+`download` streams a data set's text to the viewer that asked for it, and
+`downloadEnd` closes it.
 
 `logon` goes to the owner when single sign-on failed, and opens the logon
 dialog with the error in it. An owner who attaches later still gets it, once.
@@ -442,6 +468,7 @@ paint to a grid of the wrong size.
 {"type":"text","value":"abc"}
 {"type":"paste","text":"one\ntwo"}
 {"type":"macro","steps":[{"type":"text","value":"1.3"},{"type":"paste","text":".4"},{"type":"action","action":"Enter"}]}
+{"type":"macro","steps":[{"type":"transfer","hostFile":"'U.TN3270.DL'","hostCommand":"TSO IND\\e005BFILE"}]}
 {"type":"action","action":"PF","args":["3"]}
 {"type":"connect","host":"mainframe:23"}
 {"type":"disconnect"}
@@ -451,22 +478,25 @@ paint to a grid of the wrong size.
 {"type":"answer","viewer":"ab12cd34","allow":true}
 {"type":"stopSharing"}
 {"type":"stopEditing"}
+{"type":"transfer","hostFile":"'USER.DATA(MEM)'","hostCommand":"TSO IND\\e005BFILE"}
+{"type":"transferCancel"}
 ```
 
 `/ws/<session-id>?pass=…` brings back the pass from an earlier `hello`.
 
 ### HTTP
 
-| Method   | Path                       | Result                                                                                                                                                                                                                                    |
-| -------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST`   | `/api/sessions`            | Creates a session → `201 {id, rows, cols}`; an optional body `{model, oversize}` sets the size it starts at, `400 E3017` if either is invalid. An oversize that does not fit the model is dropped for the model's own size                |
-| `GET`    | `/api/sessions`            | Lists sessions → `{sessions:[{id, startedAt, startedBy}]}`                                                                                                                                                                                |
-| `DELETE` | `/api/sessions/<id>`       | Ends the session with its owner's `x-session-pass` → `204`; otherwise `403 E3014`                                                                                                                                                         |
-| `POST`   | `/api/sessions/<id>/logon` | Logs on by hand with the owner's `x-session-pass` and a body `{user, password}` → `204` once the host shows `logon.doneText`; `403 E3019`, `400 E3025`, `404 E3024` when no logon is configured, `409 E3026`/`E3022`, `504 E3020`/`E3021` |
-| `GET`    | `/api/userdata/<key>`      | One of those four, `null` if never saved; `404 E8007` for any other key                                                                                                                                                                   |
-| `PUT`    | `/api/userdata/<key>`      | Replaces one of those four with the JSON body → `204`; `404 E8004`, `400 E8006`, `413 E8005`                                                                                                                                              |
-| `GET`    | `/`, `/index.html`         | The page, with this user's font preload, theme background and `{data:{settings, macros, keymap}}` (or `{error:{code, message}}`) written into it; never cached                                                                            |
-| `GET`    | anything else              | Static files from `public/`, brotli or gzip compressed when the browser accepts it, revalidated by ETag; fonts are immutable for a year                                                                                                   |
+| Method   | Path                                                       | Result                                                                                                                                                                                                                                                                                                                                                                                                        |
+| -------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST`   | `/api/sessions`                                            | Creates a session → `201 {id, rows, cols}`; an optional body `{model, oversize}` sets the size it starts at, `400 E3017` if either is invalid. An oversize that does not fit the model is dropped for the model's own size                                                                                                                                                                                    |
+| `GET`    | `/api/sessions`                                            | Lists sessions → `{sessions:[{id, startedAt, startedBy}]}`                                                                                                                                                                                                                                                                                                                                                    |
+| `DELETE` | `/api/sessions/<id>`                                       | Ends the session with its owner's `x-session-pass` → `204`; otherwise `403 E3014`                                                                                                                                                                                                                                                                                                                             |
+| `POST`   | `/api/sessions/<id>/logon`                                 | Logs on by hand with the owner's `x-session-pass` and a body `{user, password}` → `204` once the host shows `logon.doneText`; `403 E3019`, `400 E3025`, `404 E3024` when no logon is configured, `409 E3026`/`E3022`, `504 E3020`/`E3021`                                                                                                                                                                     |
+| `GET`    | `/api/sessions/<id>/3270/rest/{text,stext,json}/<actions>` | Runs s3270 actions on the session and answers exactly as `s3270 -httpd` does: `200`, or `400` with the failing action's error. `POST …/3270/rest/post` takes the actions as a `text/plain` or `application/json` body. Only reading the screen and typing; any other known action is `403 E7012`. A session started with an `X-Remote-User` answers only calls carrying the same name, others get `403 E7013` |
+| `GET`    | `/api/userdata/<key>`                                      | One of those four, `null` if never saved; `404 E8007` for any other key                                                                                                                                                                                                                                                                                                                                       |
+| `PUT`    | `/api/userdata/<key>`                                      | Replaces one of those four with the JSON body → `204`; `404 E8004`, `400 E8006`, `413 E8005`                                                                                                                                                                                                                                                                                                                  |
+| `GET`    | `/`, `/index.html`                                         | The page, with this user's font preload, theme background and `{data:{settings, macros, keymap}}` (or `{error:{code, message}}`) written into it; never cached                                                                                                                                                                                                                                                |
+| `GET`    | anything else                                              | Static files from `public/`, brotli or gzip compressed when the browser accepts it, revalidated by ETag; fonts are immutable for a year                                                                                                                                                                                                                                                                       |
 
 Errors are JSON: `{"code":"E6001","message":"…"}` with a matching status.
 
@@ -508,113 +538,128 @@ Every code is fixed for the lifetime of the project and appears both in the log
 and in the page. The blocks are subsystems, and a code belongs to the subsystem
 that decides it is an error rather than to the file that throws it: `E1xxx`
 config, `E2xxx` the emulator, `E3xxx` session, `E4xxx` client messages, `E5xxx`
-browser, `E6xxx` server transport, `E8xxx` user data, `E9xxx` single sign-on. Retired codes — `E2001`–`E2003` and `E2006`
-of the old b3270 child process, `E2007` of the old emulator thread pool, `E3016` of the old session worker threads, `E5006` of the old several sessions in one page, `E7xxx` of the old REST proxy — are not reused.
+browser, `E6xxx` server transport, `E7xxx` REST, `E8xxx` user data, `E9xxx` single sign-on. Retired codes — `E2001`–`E2003` and `E2006`
+of the old b3270 child process, `E2007` of the old emulator thread pool, `E3016` of the old session worker threads, `E5006` of the old several sessions in one page, `E7001`–`E7004` of the old REST proxy — are not reused.
 
-| Code    | Meaning                                                |
-| ------- | ------------------------------------------------------ |
-| `E1001` | Config file could not be read                          |
-| `E1002` | Config file is not valid JSONC                         |
-| `E1003` | Config value has the wrong type                        |
-| `E1004` | Config value is out of range                           |
-| `E1005` | Config setting is not an emulator setting              |
-| `E1006` | Code page is in the wrong config section               |
-| `E1007` | Config section was renamed (`b3270` is now `emulator`) |
-| `E1009` | Single sign-on is off: its config is incomplete        |
-| `E2004` | Emulator reported a protocol error                     |
-| `E2005` | Emulator action failed                                 |
-| `E3001` | Session not found                                      |
-| `E3002` | Session limit reached                                  |
-| `E3003` | Session has too many viewers                           |
-| `E3004` | Screen indication referenced a cell outside the screen |
-| `E3005` | Host address is not allowed by config                  |
-| `E3006` | Input rejected: viewer is an observer                  |
-| `E3008` | The session's owner did not let the viewer in          |
-| `E3009` | The session's owner stopped sharing it                 |
-| `E3010` | Only the session's owner may answer or stop sharing    |
-| `E3011` | The session's owner did not let the viewer edit        |
-| `E3012` | The session's owner took editing back                  |
-| `E3013` | Session input queue is full                            |
-| `E3014` | Only the session's owner may terminate it              |
-| `E3015` | Session terminated by its owner                        |
-| `E3017` | Session size asked for is not valid                    |
-| `E3018` | Input waits until the logon has finished               |
-| `E3019` | Only the session's owner may log on                    |
-| `E3020` | Logon screen did not appear in time                    |
-| `E3021` | Logon did not finish in time                           |
-| `E3022` | Not connected to the host for the logon                |
-| `E3023` | No user name to sign on with: the proxy sent none      |
-| `E3024` | Logon is not configured                                |
-| `E3025` | Logon request is not valid                             |
-| `E3026` | A logon is already running                             |
-| `E3027` | Logon could not be typed                               |
-| `E3028` | Session closed during the logon                        |
-| `E4001` | WebSocket message was not valid JSON                   |
-| `E4002` | WebSocket message had an unknown type                  |
-| `E4003` | Pasted text is too large to type into a screen         |
-| `E4004` | Oversize screen has more cells than b3270 can hold     |
-| `E4005` | Typed text is too large for one input                  |
-| `E5001` | Terminal renderer failed to initialise                 |
-| `E5002` | WebSocket connection to the server failed              |
-| `E5003` | Settings could not be read from the server             |
-| `E5004` | Settings could not be saved on the server              |
-| `E5005` | Clipboard could not be read for a Shift+Insert paste   |
-| `E5008` | Macros could not be read from the server               |
-| `E5009` | Macros could not be saved on the server                |
-| `E5011` | The keymap could not be saved on the server            |
-| `E5013` | The keymap could not be read from the server           |
-| `E5014` | A dropped session could not be restarted               |
-| `E5015` | A panel command is not known here                      |
-| `E5016` | A line command is not available on this line           |
-| `E5017` | Font size is outside the allowed range                 |
-| `E5018` | A key name is not recognized                           |
-| `E5019` | Connect was asked for without a host                   |
-| `E5020` | A macro was given a blank name                         |
-| `E5021` | Field background must be Y or N                        |
-| `E5022` | Force max font size must be Y or N                     |
-| `E5023` | Macro cursor position is invalid                       |
-| `E5024` | A macro step must be one key                           |
-| `E5025` | A macro step cannot be typed as free text              |
-| `E5026` | Recording step number is invalid                       |
-| `E5027` | Recording has no steps                                 |
-| `E5028` | Recordings could not be saved                          |
-| `E5029` | Recordings could not be read                           |
-| `E5030` | Recording could not be imported                        |
-| `E5031` | Recording file could not be read                       |
-| `E5032` | Open sessions could not be loaded                      |
-| `E5033` | No character was selected                              |
-| `E5034` | Character code is not two hex digits                   |
-| `E5035` | Character is not printable in this code page           |
-| `E5036` | A recording was given a blank name                     |
-| `E5037` | Server sent a malformed WebSocket message              |
-| `E5038` | First terminal session could not be opened             |
-| `E5039` | Session could not be terminated                        |
-| `E5040` | No saved recording is available to repeat              |
-| `E5041` | No macro has the number given on the command line      |
-| `E5043` | Page carries no saved settings from the server         |
-| `E5044` | Logon could not be sent to the server                  |
-| `E5045` | Logon needs a user name and a password                 |
-| `E6001` | Static file not found                                  |
-| `E6002` | WebSocket upgrade path is not a session                |
-| `E6003` | WebSocket closed unexpectedly                          |
-| `E6004` | Server could not start                                 |
-| `E6005` | Log file could not be opened                           |
-| `E6006` | Log file could not be written or rolled over           |
-| `E6010` | Viewer is too slow to receive the screen               |
-| `E6011` | Page has no place for the user's settings              |
-| `E8001` | User data database could not be opened                 |
-| `E8002` | User data could not be read                            |
-| `E8003` | User data could not be saved                           |
-| `E8004` | User data key is not one the server keeps              |
-| `E8005` | User data is too large to save                         |
-| `E8006` | User data to save is not valid JSON                    |
-| `E8007` | User data key to read is not one the server keeps      |
-| `E9001` | DCAS could not be reached                              |
-| `E9002` | DCAS did not answer in time                            |
-| `E9003` | DCAS refused the PassTicket request                    |
-| `E9004` | DCAS answer was not understood                         |
-| `E9005` | DCAS certificate files could not be read               |
-| `E0000` | An error with no code of its own; see the log          |
+| Code    | Meaning                                                     |
+| ------- | ----------------------------------------------------------- |
+| `E1001` | Config file could not be read                               |
+| `E1002` | Config file is not valid JSONC                              |
+| `E1003` | Config value has the wrong type                             |
+| `E1004` | Config value is out of range                                |
+| `E1005` | Config setting is not an emulator setting                   |
+| `E1006` | Code page is in the wrong config section                    |
+| `E1007` | Config section was renamed (`b3270` is now `emulator`)      |
+| `E1009` | Single sign-on is off: its config is incomplete             |
+| `E2004` | Emulator reported a protocol error                          |
+| `E2005` | Emulator action failed                                      |
+| `E3001` | Session not found                                           |
+| `E3002` | Session limit reached                                       |
+| `E3003` | Session has too many viewers                                |
+| `E3004` | Screen indication referenced a cell outside the screen      |
+| `E3005` | Host address is not allowed by config                       |
+| `E3006` | Input rejected: viewer is an observer                       |
+| `E3008` | The session's owner did not let the viewer in               |
+| `E3009` | The session's owner stopped sharing it                      |
+| `E3010` | Only the session's owner may answer or stop sharing         |
+| `E3011` | The session's owner did not let the viewer edit             |
+| `E3012` | The session's owner took editing back                       |
+| `E3013` | Session input queue is full                                 |
+| `E3014` | Only the session's owner may terminate it                   |
+| `E3015` | Session terminated by its owner                             |
+| `E3017` | Session size asked for is not valid                         |
+| `E3018` | Input waits until the logon has finished                    |
+| `E3019` | Only the session's owner may log on                         |
+| `E3020` | Logon screen did not appear in time                         |
+| `E3021` | Logon did not finish in time                                |
+| `E3022` | Not connected to the host for the logon                     |
+| `E3023` | No user name to sign on with: the proxy sent none           |
+| `E3024` | Logon is not configured                                     |
+| `E3025` | Logon request is not valid                                  |
+| `E3026` | A logon is already running                                  |
+| `E3027` | Logon could not be typed                                    |
+| `E3028` | Session closed during the logon                             |
+| `E3029` | Only the session's owner may download data sets             |
+| `E3030` | Data set download failed                                    |
+| `E4001` | WebSocket message was not valid JSON                        |
+| `E4002` | WebSocket message had an unknown type                       |
+| `E4003` | Pasted text is too large to type into a screen              |
+| `E4004` | Oversize screen has more cells than b3270 can hold          |
+| `E4005` | Typed text is too large for one input                       |
+| `E5001` | Terminal renderer failed to initialise                      |
+| `E5002` | WebSocket connection to the server failed                   |
+| `E5003` | Settings could not be read from the server                  |
+| `E5004` | Settings could not be saved on the server                   |
+| `E5005` | Clipboard could not be read for a Shift+Insert paste        |
+| `E5008` | Macros could not be read from the server                    |
+| `E5009` | Macros could not be saved on the server                     |
+| `E5011` | The keymap could not be saved on the server                 |
+| `E5013` | The keymap could not be read from the server                |
+| `E5014` | A dropped session could not be restarted                    |
+| `E5015` | A panel command is not known here                           |
+| `E5016` | A line command is not available on this line                |
+| `E5017` | Font size is outside the allowed range                      |
+| `E5018` | A key name is not recognized                                |
+| `E5019` | Connect was asked for without a host                        |
+| `E5020` | A macro was given a blank name                              |
+| `E5021` | Field background must be Y or N                             |
+| `E5022` | Force max font size must be Y or N                          |
+| `E5023` | Macro cursor position is invalid                            |
+| `E5024` | A macro step must be one key                                |
+| `E5025` | A macro step cannot be typed as free text                   |
+| `E5026` | Recording step number is invalid                            |
+| `E5027` | Recording has no steps                                      |
+| `E5028` | Recordings could not be saved                               |
+| `E5029` | Recordings could not be read                                |
+| `E5030` | Recording could not be imported                             |
+| `E5031` | Recording file could not be read                            |
+| `E5032` | Open sessions could not be loaded                           |
+| `E5033` | No character was selected                                   |
+| `E5034` | Character code is not two hex digits                        |
+| `E5035` | Character is not printable in this code page                |
+| `E5036` | A recording was given a blank name                          |
+| `E5037` | Server sent a malformed WebSocket message                   |
+| `E5038` | First terminal session could not be opened                  |
+| `E5039` | Session could not be terminated                             |
+| `E5040` | No saved recording is available to repeat                   |
+| `E5041` | No macro has the number given on the command line           |
+| `E5043` | Page carries no saved settings from the server              |
+| `E5044` | Logon could not be sent to the server                       |
+| `E5045` | Logon needs a user name and a password                      |
+| `E5047` | A download is already running                               |
+| `E5048` | Download needs a data set name and a command                |
+| `E5049` | Download could not be sent to the server                    |
+| `E5050` | A macro's download step needs a data set name and a command |
+| `E6001` | Static file not found                                       |
+| `E6002` | WebSocket upgrade path is not a session                     |
+| `E6003` | WebSocket closed unexpectedly                               |
+| `E6004` | Server could not start                                      |
+| `E6005` | Log file could not be opened                                |
+| `E6006` | Log file could not be written or rolled over                |
+| `E6010` | Viewer is too slow to receive the screen                    |
+| `E6011` | Page has no place for the user's settings                   |
+| `E7005` | REST path is not one s3270 serves                           |
+| `E7006` | REST post needs the POST method                             |
+| `E7007` | REST post body must be text/plain or application/json       |
+| `E7008` | REST call failed                                            |
+| `E7009` | REST path is not valid percent-encoding                     |
+| `E7010` | REST actions could not be run                               |
+| `E7011` | REST post body is too large                                 |
+| `E7012` | REST action is not one a REST call may run                  |
+| `E7013` | REST call is not from the user who started the session      |
+| `E8001` | User data database could not be opened                      |
+| `E8002` | User data could not be read                                 |
+| `E8003` | User data could not be saved                                |
+| `E8004` | User data key is not one the server keeps                   |
+| `E8005` | User data is too large to save                              |
+| `E8006` | User data to save is not valid JSON                         |
+| `E8007` | User data key to read is not one the server keeps           |
+| `E9001` | DCAS could not be reached                                   |
+| `E9002` | DCAS did not answer in time                                 |
+| `E9003` | DCAS refused the PassTicket request                         |
+| `E9004` | DCAS answer was not understood                              |
+| `E9005` | DCAS certificate files could not be read                    |
+| `E0000` | An error with no code of its own; see the log               |
 
 Errors are shown as a dismissible bar at the top of the page. The page is never
 navigated away from.

@@ -2,6 +2,8 @@
 //   N1xxx connection and network
 //   N2xxx host data stream (logged, the session carries on like x3270 does)
 //   N3xxx keyboard and actions
+//   N4xxx printer
+//   N5xxx file transfer
 //   N9xxx configuration
 
 export class NodeError extends Error {

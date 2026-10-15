@@ -2,12 +2,22 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocket } from "../vendor/ws.mjs";
-import { FakeHost } from "./fakehost.js";
+import { FakeHost, sharedPort } from "./fakehost.js";
 import { freePort, testConfig, waitUntil } from "./helpers.js";
+import {
+  CLOSE,
+  UNFORMATTED,
+  insert,
+  message,
+  open,
+} from "../3270/test/indfile.js";
+
+const PRINTER_TRACE = "3270/test/fixtures/printer/smoke.trc";
 
 async function stopProcess(child) {
   if (child.exitCode !== null || child.signalCode !== null) return;
@@ -15,10 +25,18 @@ async function stopProcess(child) {
   await once(child, "exit");
 }
 
-async function startBrowser(t) {
-  const host = await FakeHost.listen("test/traces/fields.trc", 0, {
-    tls: true,
-  });
+async function startBrowser(t, { printer = false } = {}) {
+  const host = await FakeHost.listen(
+    printer ? "test/traces/lu.trc" : "test/traces/fields.trc",
+    0,
+    { tls: true },
+  );
+  const printerHost = printer
+    ? await FakeHost.listen(PRINTER_TRACE, 0, { tls: true })
+    : null;
+  const shared = printerHost
+    ? await sharedPort([host.port, printerHost.port])
+    : null;
   const serverPort = await freePort();
   const debugPort = await freePort();
   const temp = await mkdtemp(join(tmpdir(), "tn3270-browser-"));
@@ -28,13 +46,16 @@ async function startBrowser(t) {
     JSON.stringify(
       testConfig({
         server: { host: "127.0.0.1", port: serverPort },
-        emulator: { defaultHost: `127.0.0.1:${host.port}` },
+        emulator: {
+          defaultHost: `127.0.0.1:${shared?.port ?? host.port}`,
+          settings: printer ? { printerLu: "." } : {},
+        },
         logFile: "",
       }),
     ),
   );
   const server = spawn(process.execPath, ["server/main.js"], {
-    env: { ...process.env, TN3270_CONFIG: configFile },
+    env: { ...process.env, TN3270_CONFIG: configFile, PRINTER_DELAY_MS: "1" },
     stdio: "ignore",
   });
   t.after(() => stopProcess(server));
@@ -63,6 +84,8 @@ async function startBrowser(t) {
   t.after(async () => {
     socket?.close();
     await stopProcess(browser);
+    shared?.close();
+    await printerHost?.close();
     await host.close();
     await rm(temp, { recursive: true, force: true, maxRetries: 5 });
   });
@@ -222,6 +245,9 @@ async function startBrowser(t) {
     exceptions,
     sentFrames,
     server,
+    host,
+    printerHost,
+    temp,
     base: `http://127.0.0.1:${serverPort}`,
   };
 }
@@ -925,5 +951,152 @@ test("clicking a URL on the host screen opens a new tab", async (t) => {
   });
   assert.ok((await opened).targetInfo);
   assert.equal((await navigated).targetInfo.url, "http://localhost/");
+  assert.deepEqual(browser.exceptions, []);
+});
+
+test("a print job from the host downloads as a UTF-8 text file", async (t) => {
+  const browser = await startBrowser(t, { printer: true });
+  const downloads = join(browser.temp, "downloads");
+  await browser.command("Browser.setDownloadBehavior", {
+    behavior: "allow",
+    downloadPath: downloads,
+  });
+  const trace = readFileSync(PRINTER_TRACE, "utf8").split("\n");
+  const records = trace
+    .slice(0, trace.indexOf("+"))
+    .filter((line) => line.startsWith("< 0x") && line.trim().endsWith("ffef"));
+
+  await browser.printerHost.waitForConnection();
+  await browser.printerHost.sendRecords(records.length);
+  await waitUntil(
+    async () =>
+      (await readdir(downloads).catch(() => [])).filter((name) =>
+        /^print-.*-2\.txt$/.test(name),
+      ).length === 1,
+    "the second job to download",
+    10000,
+  );
+
+  const [file] = (await readdir(downloads)).filter((name) =>
+    name.endsWith("-2.txt"),
+  );
+  assert.equal(
+    await readFile(join(downloads, file), "utf8"),
+    readFileSync("3270/test/fixtures/printer/smoke.out", "latin1"),
+  );
+  assert.deepEqual(browser.exceptions, []);
+});
+
+test("a data set downloads as a UTF-8 text file from the download panel", async (t) => {
+  const browser = await startBrowser(t);
+  const downloads = join(browser.temp, "downloads");
+  await browser.command("Browser.setDownloadBehavior", {
+    behavior: "allow",
+    downloadPath: downloads,
+  });
+  browser.host.socket?.write(Buffer.from(UNFORMATTED, "hex"));
+  /** @param {string} text */
+  const type = async (text) => {
+    for (const ch of text) await browser.key(ch, "", { text: ch });
+  };
+  const enter = () =>
+    browser.key("Enter", "Enter", { modifiers: 2, windowsVirtualKeyCode: 13 });
+
+  await browser.key("m", "KeyM", { modifiers: 1, windowsVirtualKeyCode: 77 });
+  await type("8");
+  await enter();
+  await browser.key("Tab", "Tab", { windowsVirtualKeyCode: 9 });
+  await type("'USER.DATA'");
+  await enter();
+  await browser.host.waitUntil(
+    () => browser.host.received.includes("7d"),
+    5000,
+    "the IND$FILE command",
+  );
+  for (const record of [
+    open("FT:DATA"),
+    // ü and ß, as IND$FILE's ASCII table has them.
+    insert(Buffer.from("Gr\xf0\xb1e\r\n", "latin1")),
+    CLOSE,
+    ...message("TRANS03 File transfer complete"),
+  ])
+    browser.host.socket?.write(Buffer.from(record, "hex"));
+
+  await waitUntil(
+    async () =>
+      (await readdir(downloads).catch(() => [])).includes("USER.DATA.txt"),
+    "the data set to download",
+  );
+  assert.equal(
+    await readFile(join(downloads, "USER.DATA.txt"), "utf8"),
+    "Grüße\n",
+  );
+  assert.deepEqual(browser.exceptions, []);
+});
+
+test("a macro's download step saves the data set without the panel", async (t) => {
+  const browser = await startBrowser(t);
+  const downloads = join(browser.temp, "downloads");
+  await browser.command("Browser.setDownloadBehavior", {
+    behavior: "allow",
+    downloadPath: downloads,
+  });
+  browser.host.socket?.write(Buffer.from(UNFORMATTED, "hex"));
+  for (const [key, body] of /** @type {const} */ ([
+    [
+      "macros",
+      [
+        {
+          name: "Get",
+          steps: [
+            {
+              text: "",
+              action: "Download",
+              args: ["'U.TN3270.DL'", "TSO IND\\e005BFILE"],
+            },
+          ],
+        },
+      ],
+    ],
+    [
+      "keymap",
+      {
+        "Macro:Get": [{ key: "F12", shift: false, ctrl: false, alt: false }],
+      },
+    ],
+  ])) {
+    const changed = browser.consoleMessage("user data changed elsewhere");
+    const response = await fetch(`${browser.base}/api/userdata/${key}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", "x-tab": "elsewhere" },
+      body: JSON.stringify(body),
+    });
+    assert.equal(response.status, 204);
+    await changed;
+  }
+
+  await browser.key("F12", "F12", { windowsVirtualKeyCode: 123 });
+  await browser.host.waitUntil(
+    () => browser.host.received.includes("7d"),
+    5000,
+    "the IND$FILE command",
+  );
+  for (const record of [
+    open("FT:DATA"),
+    insert(Buffer.from("JOB OUTPUT\r\n")),
+    CLOSE,
+    ...message("TRANS03 File transfer complete"),
+  ])
+    browser.host.socket?.write(Buffer.from(record, "hex"));
+
+  await waitUntil(
+    async () =>
+      (await readdir(downloads).catch(() => [])).includes("U.TN3270.DL.txt"),
+    "the data set to download",
+  );
+  assert.equal(
+    await readFile(join(downloads, "U.TN3270.DL.txt"), "utf8"),
+    "JOB OUTPUT\n",
+  );
   assert.deepEqual(browser.exceptions, []);
 });

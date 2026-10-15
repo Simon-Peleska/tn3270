@@ -89,6 +89,20 @@ function moveCursor({ row, col }) {
 }
 
 /**
+ * @param {import('./protocol.js').TransferMessage} message
+ * @returns {{ action: string, args: string[] }}
+ */
+function transferAction(message) {
+  return {
+    action: "Transfer",
+    args: [
+      `HostFile=${message.hostFile}`,
+      `HostCommand=${message.hostCommand}`,
+    ],
+  };
+}
+
+/**
  * What the character picker offers: blank where a byte shows nothing that can
  * be typed back, like 0xFF, which the emulator draws as a dot.
  *
@@ -187,6 +201,8 @@ export class Session {
     this.inputQueue = [];
     /** @type {Promise<void> | null} The input the emulator is working on. */
     this.input = null;
+    /** @type {WeakMap<import('./protocol.js').TransferMessage, Viewer>} A macro's downloads, by who played it. */
+    this.macroTransfers = new WeakMap();
 
     const options = {
       ...config.emulator.settings,
@@ -203,6 +219,33 @@ export class Session {
     this.chart = codePageChart(this.emulator.s.codePage);
 
     this.startIdleTimer();
+
+    /** @type {number} the print job streaming to the owner */
+    this.printJob = 1;
+    this.emulator.on("print", (/** @type {string} */ text) => {
+      const owners = this.owners();
+      this.log.info("print", {
+        job: this.printJob,
+        chars: text.length,
+        owners: owners.length,
+      });
+      for (const owner of owners)
+        owner.sendMessage({ type: "print", job: this.printJob, text });
+    });
+    this.emulator.on("print-end", () => {
+      this.log.info("print job ended", { job: this.printJob });
+      for (const owner of this.owners())
+        owner.sendMessage({ type: "printEnd", job: this.printJob });
+      this.printJob++;
+    });
+    /** @type {Viewer | null} who asked for the download running now */
+    this.transferViewer = null;
+    this.emulator.on("transfer", (/** @type {string} */ text) => {
+      this.transferViewer?.sendMessage({ type: "download", text });
+    });
+    this.emulator.on("print-error", (/** @type {Error} */ err) => {
+      this.reportError(new AppError("E2008", err.message, err));
+    });
 
     // Last, as the emulator's initialize block arrives right away.
     this.emulator.indications((indication) => {
@@ -677,7 +720,7 @@ export class Session {
     } catch (err) {
       this.log.error(err, { user });
       const { code, summary } = describeError(err);
-      const owners = [...this.viewers].filter((viewer) => viewer.owner);
+      const owners = this.owners();
       for (const owner of owners)
         owner.sendMessage({ type: "logon", code, message: summary });
       this.logonFailure =
@@ -949,6 +992,12 @@ export class Session {
       return;
     }
     if (!this.viewers.delete(viewer)) return;
+    if (this.transferViewer === viewer) {
+      this.log.info("download canceled: its viewer left", {
+        viewer: viewer.id,
+      });
+      this.emulator.run([{ action: "Transfer", args: ["Cancel"] }]);
+    }
     this.log.info("viewer detached", {
       viewer: viewer.id,
       ip: viewer.ip ?? "",
@@ -1048,7 +1097,96 @@ export class Session {
       case "recorder":
         this.queueInput(viewer, message);
         return;
+      case "transfer":
+        this.transfer(viewer, message);
+        return;
+      case "transferCancel":
+        if (this.transferViewer !== viewer) return;
+        this.log.info("download canceled", { viewer: viewer.id });
+        this.emulator.run([{ action: "Transfer", args: ["Cancel"] }]);
+        return;
     }
+  }
+
+  /**
+   * IND$FILE GET of a data set as text, streamed to the viewer that asked. The
+   * transfer types the command and presses Enter itself, so it takes its turn
+   * in the input like a REST call.
+   *
+   * @param {Viewer} viewer
+   * @param {import('./protocol.js').TransferMessage} message
+   * @returns {Promise<void>}
+   */
+  async transfer(viewer, message) {
+    if (!this.startTransfer(viewer, message)) return;
+    /** @type {{ success: boolean, text: string[] }} */
+    let result;
+    try {
+      result = await this.runInTurn([transferAction(message)], "transfer");
+    } catch (err) {
+      result = { success: false, text: [String(err)] };
+    }
+    this.endTransfer(viewer, message, result);
+  }
+
+  /**
+   * @param {Viewer} viewer
+   * @param {import('./protocol.js').TransferMessage} message
+   * @returns {boolean} whether the transfer may run; if not, the viewer was told
+   */
+  startTransfer(viewer, message) {
+    const refuse = (/** @type {AppError} */ err) => {
+      this.log.warn(`${err.code} ${err.summary}`, { viewer: viewer.id });
+      viewer.sendMessage({
+        type: "downloadEnd",
+        hostFile: message.hostFile,
+        ok: false,
+        code: err.code,
+        message: err.summary,
+      });
+      return false;
+    };
+    if (viewer.owner !== true) return refuse(new AppError("E3029"));
+    if (this.loggingOn) return refuse(new AppError("E3018"));
+    if (this.transferViewer !== null)
+      return refuse(new AppError("E3030", "another download is running"));
+    this.log.info("download starts", {
+      viewer: viewer.id,
+      hostFile: message.hostFile,
+      hostCommand: message.hostCommand,
+    });
+    this.transferViewer = viewer;
+    return true;
+  }
+
+  /**
+   * @param {Viewer} viewer
+   * @param {import('./protocol.js').TransferMessage} message
+   * @param {{ success: boolean, text: string[] }} result
+   * @returns {void}
+   */
+  endTransfer(viewer, message, result) {
+    this.transferViewer = null;
+    const said = result.text.join(" ");
+    if (!result.success) {
+      const err = new AppError("E3030", said);
+      this.log.warn(`${err.code} ${err.summary}`, { viewer: viewer.id });
+      viewer.sendMessage({
+        type: "downloadEnd",
+        hostFile: message.hostFile,
+        ok: false,
+        code: err.code,
+        message: err.summary,
+      });
+      return;
+    }
+    this.log.info("download finished", { viewer: viewer.id, result: said });
+    viewer.sendMessage({
+      type: "downloadEnd",
+      hostFile: message.hostFile,
+      ok: true,
+      message: said,
+    });
   }
 
   /**
@@ -1207,12 +1345,43 @@ export class Session {
       });
       return;
     }
+    if (message.type === "macro")
+      for (const step of message.steps)
+        if (step.type === "transfer") this.macroTransfers.set(step, viewer);
     this.inputQueue.push(message);
     if (this.input !== null)
       this.log.debug("input waits for the one before", {
         queued: this.inputQueue.length,
       });
     this.runQueuedInput();
+  }
+
+  /**
+   * A REST call's actions, or a transfer, taking turns with the viewers' input
+   * so neither types into the middle of the other.
+   *
+   * @param {{ action: string, args: string[] }[]} actions
+   * @param {string} reason for the log
+   * @returns {Promise<{ success: boolean, text: string[], err: boolean[], time: number }>}
+   */
+  async runInTurn(actions, reason) {
+    while (this.input !== null) await this.input;
+    // Undo would retype fields the actions have since changed.
+    this.clearHistory(reason);
+    const run = this.emulator.run(actions);
+    const input = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.input = input;
+    try {
+      return await run;
+    } finally {
+      if (this.input === input) {
+        this.input = null;
+        this.runQueuedInput();
+      }
+    }
   }
 
   /** @returns {void} */
@@ -1321,6 +1490,21 @@ export class Session {
         ]);
         if (actions.length === 0) return null;
         return this.runEdit(actions);
+      }
+      case "transfer": {
+        // The steps after it wait for the whole data set, as they would for a
+        // command typed by hand.
+        const viewer = this.macroTransfers.get(message);
+        if (viewer === undefined || !this.viewers.has(viewer)) return null;
+        if (!this.startTransfer(viewer, message)) return null;
+        this.clearHistory("transfer");
+        return this.emulator
+          .run([transferAction(message)])
+          .then(
+            (result) => result,
+            (err) => ({ success: false, text: [String(err)] }),
+          )
+          .then((result) => this.endTransfer(viewer, message, result));
       }
       default:
         return null;
@@ -1441,6 +1625,11 @@ export class Session {
    */
   sendToAll(message) {
     for (const viewer of this.viewers) viewer.sendMessage(message);
+  }
+
+  /** @returns {Viewer[]} */
+  owners() {
+    return [...this.viewers].filter((viewer) => viewer.owner);
   }
 
   /**

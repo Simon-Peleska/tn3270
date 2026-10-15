@@ -74,6 +74,13 @@ export const macrosLayout = {
   },
 };
 
+/** @param {import('./macros.js').MacroStep} step @returns {string} */
+function stepLabel(step) {
+  if (step.text) return step.text;
+  if (step.action === "Download") return `Download ${step.args[0] ?? ""}`;
+  return `${step.action}${step.args.join("")}`;
+}
+
 /** @param {import('./panels.js').Panels} panel @param {import('./macros.js').Macro} macro */
 function run(panel, macro) {
   panel.close();
@@ -101,7 +108,12 @@ export const macroEditLayout = {
       return;
     }
     view.field("command", 2, 1, 1, "");
-    view.say(2, 3, "E=Edit A=Add C=Cursor Move D=Delete F5=Exit", "turquoise");
+    view.say(
+      2,
+      3,
+      "E=Edit A=Add C=Cursor Move F=Download D=Delete F5=Exit",
+      "turquoise",
+    );
   },
 
   /** @param {import('./panels.js').Panels} panel @param {string} id @returns {string} */
@@ -118,10 +130,11 @@ export const macroEditLayout = {
     const items = macro.steps.map((step, index) => ({
       key: String(index),
       label: `Step ${index + 1}`,
-      value: step.text || `${step.action}${step.args.join("")}`,
+      value: stepLabel(step),
       e: () => panel.startMacroCapture(index, true),
       a: () => panel.startMacroCapture(index + 1),
       c: () => panel.openMacroCursor(index + 1),
+      f: () => panel.openMacroDownload(index + 1),
       d: () => {
         const removedAt = macro.steps.indexOf(step);
         macro.steps.splice(removedAt, 1);
@@ -132,11 +145,10 @@ export const macroEditLayout = {
             : `line:${Math.min(removedAt, macro.steps.length - 1)}`;
       },
       edit: {
-        value: step.text || `${step.action}${step.args.join("")}`,
+        value: stepLabel(step),
         open: panel.macroCapture,
         commit: (text) => {
-          if (text === (step.text || `${step.action}${step.args.join("")}`))
-            return null;
+          if (text === stepLabel(step)) return null;
           if (text === "") {
             macro.steps.splice(macro.steps.indexOf(step), 1);
             macros.deps.persist(macros.macros);
@@ -174,6 +186,7 @@ export const macroEditLayout = {
       label: "New step",
       a: () => panel.startMacroCapture(macro.steps.length),
       c: () => panel.openMacroCursor(macro.steps.length),
+      f: () => panel.openMacroDownload(macro.steps.length),
     });
     return items;
   },
@@ -217,5 +230,49 @@ export const macroCursorLayout = {
       return;
     }
     panel.addMacroCursorMove(y - 1, x - 1);
+  },
+};
+
+export const macroDownloadLayout = {
+  title: "TN3270 Add Download",
+
+  /** @param {import('./panels.js').Panels} panel @param {import('./panels.js').PanelView} view */
+  render(panel, view) {
+    view.say(1, 2, "Data set ===>", "green");
+    view.field("hostFile", 1, 16, 56, panel.downloadHostFile);
+    view.say(2, 2, "Command  ===>", "green");
+    view.field("hostCommand", 2, 16, 30, panel.downloadCommand);
+    view.say(
+      4,
+      2,
+      "Enter adds a step that downloads the data set, as the Download",
+      "turquoise",
+    );
+    view.say(
+      5,
+      2,
+      "panel does. The steps after it wait until the file has arrived.",
+      "turquoise",
+    );
+  },
+
+  /** @param {import('./panels.js').Panels} panel @param {Record<string, string>} values */
+  input(panel, values) {
+    const hostFile = (values.hostFile ?? "").trim();
+    const hostCommand = (values.hostCommand ?? "").trim();
+    panel.downloadHostFile = hostFile;
+    panel.downloadCommand = hostCommand;
+    if (hostFile === "" || hostCommand === "") {
+      panel.message = panel.problem(
+        "E5050",
+        "Type a data set name and a command",
+      );
+      return;
+    }
+    panel.addMacroStep({
+      text: "",
+      action: "Download",
+      args: [hostFile, hostCommand],
+    });
   },
 };
