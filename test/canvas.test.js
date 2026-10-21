@@ -202,7 +202,7 @@ const THEME = {
   field: "#282828",
 };
 
-const PAGE = { width: 1600, height: 900 };
+const PAGE = { x: 0, y: 0, width: 1600, height: 900 };
 
 test("screen layout respects a font size cap but shrinks further when needed", () => {
   const screen = new Screen({
@@ -213,7 +213,7 @@ test("screen layout respects a font size cap but shrinks further when needed", (
   screen.resize(80, 24);
   screen.layout(PAGE, "monospace", 16);
   assert.equal(screen.fontSize, 16);
-  screen.layout({ width: 700, height: 350 }, "monospace", 16);
+  screen.layout({ x: 0, y: 0, width: 700, height: 350 }, "monospace", 16);
   assert.ok(screen.fontSize < 16);
 });
 

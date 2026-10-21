@@ -874,6 +874,41 @@ test("a save in one tab tells the user's other tabs, and nobody else's", async (
   assert.deepEqual(notices(bobs), [{ type: "userdata", key: "macros" }]);
 });
 
+test("a tab showing several sessions hears of a save once", async (t) => {
+  const server = await startServer("warn", true);
+  t.after(() => server.stop());
+
+  /** @param {string} tab */
+  const openSocket = async (tab) => {
+    const created = await (
+      await fetch(`http://127.0.0.1:${server.port}/api/sessions`, {
+        method: "POST",
+      })
+    ).json();
+    const viewer = await openViewer(
+      `ws://127.0.0.1:${server.port}/ws/${created.id}?tab=${tab}`,
+    );
+    t.after(() => viewer.socket.close());
+    await waitUntil(
+      () => viewer.messages.some((m) => m["type"] === "hello"),
+      `a socket of tab ${tab} to be attached`,
+    );
+    return viewer;
+  };
+  /** @param {{ messages: Record<string, unknown>[] }} viewer */
+  const notices = (viewer) =>
+    viewer.messages.filter((m) => m["type"] === "userdata");
+
+  const first = await openSocket("split");
+  const second = await openSocket("split");
+  // Told last, so by the time it hears, the split tab has heard all it will.
+  const other = await openSocket("other");
+
+  await putUserData(server.port, "settings", {}, { "x-tab": "saver" });
+  await waitUntil(() => notices(other).length > 0, "the other tab to hear");
+  assert.equal(notices(first).length + notices(second).length, 1);
+});
+
 test("blue and green servers on one database file see each other's saves", async (t) => {
   const dataFile = `test/.tmp-userdata-shared-${process.pid}.sqlite`;
   const blue = await startServer("warn", false, dataFile);

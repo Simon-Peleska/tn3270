@@ -244,8 +244,8 @@ resolves only after every indication it caused has been applied.
 
 ## Serving the page
 
-There is no bundler and no build step. The frontend is thirty ES modules
-served as thirty files — the same files `node --test` imports and the same
+There is no bundler and no build step. The frontend is thirty-three ES modules
+served as thirty-three files — the same files `node --test` imports and the same
 ones a browser gets opening `index.html` off disk. What a bundle would have
 bought is bought in `index.html` and `sendFile()` (`server/main.js`) instead,
 without anything standing between the source and what runs.
@@ -298,13 +298,14 @@ server/
   userdata.js   settings, keymap, macros, recordings in a shared SQLite file
 
 public/
-  index.html    the canvas, the inlined CSS, the preloads, and nothing else
-  app.js        the session, clipboard and clicks, routed to a panel when one is open
+  index.html    a canvas per pane, the inlined CSS, the preloads, and nothing else
+  app.js        sessions, panes, clipboard and clicks, routed to a panel when one is open
   grid.js       the cell buffer: applyPaint, put, rectangular text, the field under a cell
   hints.js      Ctrl-B's field hint letters and the prefix that shows them
   paste.js      a paste split into one segment per stretch of editable cells
                 (run by the server, and by local-host.js for panels)
-  canvas.js     Screen: the one canvas, the two grids on it, and the drawing
+  canvas.js     Screen: one session's canvas, the two grids on it, and the drawing
+  sessions.js   Ctrl+digit, the URL fragment, and how panes split the page
   colors.js     3270 colour name → ANSI slot, gr → flags
   oia.js        the status line, composed from the last status and cursor
   keymap.js     KeyboardEvent → 3270 action, and the Keymap the Keys panel edits

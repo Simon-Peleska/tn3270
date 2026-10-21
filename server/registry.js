@@ -167,17 +167,21 @@ export class SessionRegistry {
    * @returns {number} how many tabs were told
    */
   userDataSaved(owner, savedBy, key) {
-    let told = 0;
+    // A tab showing several sessions has a socket on each, and is told once.
+    /** @type {Set<unknown>} */
+    const told = new Set();
     for (const session of this.sessions.values()) {
       for (const viewer of session.viewers) {
         if (viewer.tab === savedBy) continue;
         if (ownerOf({ ip: viewer.ip ?? "", user: viewer.user ?? "" }) !== owner)
           continue;
+        const tab = viewer.tab ?? viewer;
+        if (told.has(tab)) continue;
+        told.add(tab);
         viewer.sendMessage({ type: "userdata", key });
-        told++;
       }
     }
-    return told;
+    return told.size;
   }
 
   /** @returns {void} */

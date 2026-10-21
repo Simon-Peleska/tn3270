@@ -64,6 +64,8 @@ runs more or other seeds.
 
 ## What it does
 
+- **Up to four sessions in one page**, tiled edge to edge. `Ctrl+1`–`4` aims
+  the keyboard at one, opening it if needed; `Ctrl+Shift+1`–`4` lays the panes out.
 - **Field hints.** `Ctrl-B` puts a letter on every typeable field; typing that
   letter moves the cursor there.
 - **Shared by URL.** The first viewer types, the rest watch, and the screen is
@@ -83,7 +85,7 @@ runs more or other seeds.
   text file or the clipboard, or uploaded from a file or the clipboard, ready
   for ISPF's `COPY` and an `A` or `B` line command. A macro can do it too, so
   one key copies a fixed scratch data set to the clipboard.
-- **Fit to window**: ask the host for a screen the size of the window rather than
+- **Fit to window**: ask the host for a screen the size of the pane rather than
   the model's 24×80, negotiated as IBM-DYNAMIC.
 
 ## Configuring it

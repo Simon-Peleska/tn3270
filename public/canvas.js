@@ -13,7 +13,7 @@ import {
  * A 3270 screen is a fixed grid of single-width cells with no scrollback, no
  * reflow and no alternate screen, so this draws exactly that and nothing else.
  *
- * There is one canvas for the whole page, and one session on it.
+ * Every session on the page has a canvas of its own, its pane.
  * `Screen.render()` clears the canvas and draws it whole, every time. Making a
  * frame whole is the only way to be sure it is not half of the last one.
  *
@@ -87,13 +87,12 @@ const URL_PATTERN = /https?:\/\/[^\s<>"'`]+/gi;
 const URL_END_PUNCTUATION = /[.,;:!?)}\]]+$/;
 
 /**
- * The page's one canvas and the session's cells on it: their grids, where they
- * sit and how big they are. Everything visible is drawn here, in one pass.
+ * A session's canvas and its cells on it: their grids, where they sit and how
+ * big they are. Everything visible in the pane is drawn here, in one pass.
  */
 export class Screen {
   /**
    * @param {{ canvas: HTMLCanvasElement, theme: Theme, fieldBackground: boolean, redraw?: () => void }} options
-   *   the canvas is the one in `index.html`; the page's markup is fixed.
    *   `redraw` asks the page for a frame when a drag changes the selection.
    */
   constructor(options) {
@@ -122,10 +121,10 @@ export class Screen {
     this.metrics = { width: 0, height: 0, baseline: 0 };
     /** @type {Rect} where the cells sit on the canvas, in CSS pixels */
     this.rect = { x: 0, y: 0, width: 0, height: 0 };
-    /** @type {{ width: number, height: number }} the whole canvas, in CSS pixels */
-    this.page = { width: 0, height: 0 };
+    /** @type {Rect} the pane: where the canvas sits in the page, in CSS pixels */
+    this.page = { x: 0, y: 0, width: 0, height: 0 };
 
-    /** @type {'block' | 'underline'} */
+    /** @type {'block' | 'underline' | 'hidden'} hidden where the keyboard is not */
     this.cursorStyle = "block";
     /** @type {{ row: number, col: number } | null} */
     this.selectionStart = null;
@@ -324,25 +323,27 @@ export class Screen {
   }
 
   /**
-   * Size the backing store to the page, then pick the largest font that fits
-   * the cells inside it and centre them.
+   * Put the canvas where its pane is and size the backing store to it, then
+   * pick the largest font that fits the cells inside it and centre them.
    *
    * The backing store is set here and nowhere else. Setting `width`/`height`
    * clears the canvas and resets the context, so anything that touches them
    * outside this method loses the frame — and, if it forgets the ratio, the
    * HiDPI sharpness with it.
    *
-   * @param {{ width: number, height: number }} box the page, in CSS pixels
+   * @param {Rect} box the pane, in CSS pixels
    * @param {string} fontFamily
    * @param {number} [maxFontSize]
    * @returns {void}
    */
   layout(box, fontFamily, maxFontSize) {
     this.dpr = window.devicePixelRatio || 1;
-    this.page = { width: box.width, height: box.height };
+    this.page = { ...box };
 
     this.canvas.width = Math.round(box.width * this.dpr);
     this.canvas.height = Math.round(box.height * this.dpr);
+    this.canvas.style.left = `${box.x}px`;
+    this.canvas.style.top = `${box.y}px`;
     this.canvas.style.width = `${box.width}px`;
     this.canvas.style.height = `${box.height}px`;
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -644,7 +645,8 @@ export class Screen {
   /** @returns {void} */
   renderCursor() {
     const cursor = visibleCursor(this.host, this.overlay);
-    if (cursor === null || !cursor.visible) return;
+    if (cursor === null || !cursor.visible || this.cursorStyle === "hidden")
+      return;
     const { row, col } = cursor;
     if (row < 0 || row >= this.displayRows || col < 0 || col >= this.cols)
       return;

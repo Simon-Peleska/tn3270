@@ -39,6 +39,7 @@
     <link rel="modulepreload" href="./recorder.js" />
     <link rel="modulepreload" href="./screen-keyboard.js" />
     <link rel="modulepreload" href="./session-api.js" />
+    <link rel="modulepreload" href="./sessions.js" />
     <link rel="modulepreload" href="./settings.js" />
     <link rel="modulepreload" href="./themes.js" />
     <link rel="modulepreload" href="./store.js" />
@@ -106,12 +107,17 @@
         background: #000;
       }
       #screen {
+        position: relative;
         height: 100%;
         overflow: hidden;
         outline: none;
       }
-      #canvas {
+      canvas {
+        position: absolute;
         display: block;
+      }
+      canvas[hidden] {
+        display: none;
       }
       #paste-target {
         position: fixed;
@@ -126,7 +132,11 @@
   <body>
     <!-- Errors show in place on the status line; a redirect would drop the session. -->
     <main id="screen" tabindex="0">
-      <canvas id="canvas"></canvas>
+      <!-- One per session, laid out as panes: see sessions.js. -->
+      <canvas id="pane-1"></canvas>
+      <canvas id="pane-2" hidden></canvas>
+      <canvas id="pane-3" hidden></canvas>
+      <canvas id="pane-4" hidden></canvas>
       <textarea id="paste-target" tabindex="-1" aria-hidden="true"></textarea>
     </main>
     <input

@@ -60,7 +60,8 @@ export const ERRORS = Object.freeze({
   E5003: "Settings could not be read from the server",
   E5004: "Settings could not be saved on the server",
   E5005: "Clipboard could not be read for a Shift+Insert paste",
-  // E5006 was opening a second session in the same page, which is gone. Retired, not free.
+  // E5006 was opening a second session in the same page, before that was removed and
+  // brought back. Retired, not free: the comeback has E5059.
   // E5007 is spent.
   E5008: "Macros could not be read from the server",
   E5009: "Macros could not be saved on the server",
@@ -113,6 +114,8 @@ export const ERRORS = Object.freeze({
   E5056: "No file was chosen for an upload",
   E5057: "The text to upload is too long",
   E5058: "A macro's transfer step's option must be 1 to 4",
+  E5059: "Another terminal session could not be opened",
+  E5060: "The sessions for a layout could not be opened",
 
   E6001: "Static file not found",
   E6002: "WebSocket upgrade path is not a session",

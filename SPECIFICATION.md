@@ -20,18 +20,27 @@ connection, one keyboard. The emulator is node3270 (`3270/`), a port of x3270's
 `b3270 -json` that runs in the server's own process, on its one thread, beside
 the HTTP and websocket serving.
 
-One page holds one session, filling the page; another session is another tab.
-The page keeps its WebSocket open even while the tab is hidden, or the idle
-timeout below would reap the session.
+One page holds up to **4** sessions at once and shows one, two, three or four of
+them side by side (§5, `Ctrl+1`–`4`). Every session it holds keeps its WebSocket
+open even while it is off screen or the tab is hidden, or the idle timeout below
+would reap it.
 
-| Event                                | Behaviour                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Page opened with no `#fragment`      | A session is created; its id goes into the URL fragment                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| Page opened with `#<id>`             | The session is joined if it still exists; one that is gone is reported with `E3001` and a new session is created                                                                                                                                                                                                                                                                                                                                                                                                          |
-| Browser reloads or the network drops | The session is untouched. The page shows the disconnect and retries the socket with exponential backoff and jitter. It keeps waiting while the server does not answer. Once the server answers, it reattaches if the session still exists; one the server has reaped is refused with `E3001` and the page creates a new one (`E5014` if that fails). The reconnected page reloads itself, so a server that came back with newer page code is picked up; the fragment still names the same session, so it reattaches to it |
-| Last viewer detaches                 | The session is kept alive for `sessions.idleTimeoutMs`, then closed. A viewer attaching inside that window cancels the reaping                                                                                                                                                                                                                                                                                                                                                                                            |
+A session on screen sits in a **pane**. Panes tile the page edge to edge — no
+gaps, no frames, nothing between two screens but the theme's own background — and
+the keyboard is aimed at exactly one of them. Only that pane shows the cursor, the
+panels and the error bar; with more than one pane, each status row starts with its
+session's number. Clicking a pane aims the keyboard at it.
 
-Sharing the URL is how a session is shared: there is no invite step. But nobody gets in on the URL
+| Event                                | Behaviour                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Page opened with no `#fragment`      | A session is created; its id goes into the URL fragment                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Page opened with `#<ids>`            | The fragment is a comma-separated list, one slot per digit (`a,,c` is sessions 1 and 3). Each id is joined if it still exists; one that is gone is reported with `E3001` and a new session is created in its slot                                                                                                                                                                                                                                                                                                            |
+| `Ctrl+N` for an empty slot           | A session is created for that slot and added to the fragment (`E5059` if the server refuses)                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Browser reloads or the network drops | The session is untouched. The page shows the disconnect and retries the socket with exponential backoff and jitter. It keeps waiting while the server does not answer. Once the server answers, it reattaches if the session still exists; one the server has reaped is refused with `E3001` and the page creates a new one (`E5014` if that fails). The reconnected page reloads itself, so a server that came back with newer page code is picked up; the fragment still names the same sessions, so it reattaches to them |
+| Last viewer detaches                 | The session is kept alive for `sessions.idleTimeoutMs`, then closed. A viewer attaching inside that window cancels the reaping                                                                                                                                                                                                                                                                                                                                                                                               |
+
+Sharing the URL is how a session is shared: there is no invite step, and sharing
+a page that holds four sessions shares all four. But nobody gets in on the URL
 alone — the owner is asked first (§3).
 
 ## 3. Roles
@@ -82,33 +91,35 @@ the host.
   `emulator.settings.oversize` says otherwise. One that did asks for it in the request
   that creates its session, so the first screen is already that size.
 - **Fit to window** is the last choice in the same list, after the dynamic
-  screen. The browser measures how many cells the window would hold at a
+  screen. The browser measures how many cells the session's pane would hold at a
   chosen text size and asks for exactly that many columns and rows, which b3270
   takes as an _oversize_ on top of the model last chosen and negotiates as
   IBM-DYNAMIC. Choosing a model puts the model's own size back. The screen is never smaller than the model — b3270 refuses that and quietly
   hands back the model's own screen — and never more than the 16383 cells b3270
   has a buffer for (`E4004`); a model change that the standing size no longer fits
   turns the oversize off rather than failing.
-- A window too narrow for the model's 80 columns asks for them anyway, drawn in
+- A pane too narrow for the model's 80 columns asks for them anyway, drawn in
   text small enough to hold them, and asks for the extra rows that smaller text
-  makes room for. Otherwise the screen would stop short of the bottom of the window.
+  makes room for. Otherwise the screen would stop short of the bottom of the pane.
 - The cell is measured at the text size being asked about rather than scaled from
-  the one on screen, so asking twice gives the same answer twice, and fitting a
-  screen that already fits changes nothing.
+  the one on screen, so two panes of the same size always ask for the same screen,
+  and asking twice gives the same answer twice. A split is a grid of screens that
+  line up, and fitting a pane that already fits changes nothing.
 - The Font panel's **Font Size** is 8–32 px and saved in the browser. It is the
   size used to measure a fit-to-window screen. Normally the displayed text
-  floats to fill the window; with **Force max font size** enabled it grows no
-  larger than this setting, but still shrinks when the window is too small.
+  floats to fill the pane; with **Force max font size** enabled it grows no
+  larger than this setting, but still shrinks when the pane is too small.
 - The size is negotiated with the host once, when the connection is opened, so
   changing either the model or the fit **drops the connection and reopens the
   same host**. The settings panel says so before it does it. Observers cannot
   change the size (`E3006`).
-- A window that changes size refits a session that has nothing to lose by it:
-  one with no host on it, and one **nobody has typed at yet**. A session the
-  operator has used keeps its screen and shrinks its text instead, because
-  dropping a live connection to make a window tidier is not a trade the page
-  may make on its own. Typing counts from any viewer, and a session never
-  becomes untouched again. The refit waits until the window stops moving. This only happens while
+- A pane that changes size — a split, or the window being dragged — refits the
+  sessions that have nothing to lose by it: one with no host on it, and one
+  **nobody has typed at yet**. A session the operator has used keeps its screen
+  and shrinks its text instead, because dropping a live connection to make a
+  pane tidier is not a trade the page may make on its own. Typing counts from
+  any viewer, and a session never becomes untouched again. A window drag waits
+  until the window stops moving; a split refits at once. This only happens while
   the screen is one measured from the window: a model's own size and the dynamic
   screen were asked for by name and are left alone.
 - A size change resizes the grid for **every** viewer, not just the one who
@@ -140,13 +151,13 @@ the host.
   Erase EOF, Erase input, Insert, Dup, Field mark, Home, BackTab, Tab;
   PF1–PF12; PF13–PF24 — in the screen's own colours, every key a bold
   `[label]` like the status row's buttons. The keys sit on a grid of twelve
-  six-column cells, 72 columns centred on the screen, a key taking two cells when
+  six-column cells, 72 columns centred in the pane, a key taking two cells when
   its label needs them, so PF13 is under PF1. It covers
   the bottom four rows of the screen, and the top four while the cursor is
   under it, so the field being typed in stays in view. A click anywhere in a
   key's cells sends it as if it had been pressed (a macro being
   recorded takes it too); a click on the keyboard is never a cursor move. It is drawn
-  over the session only, not under a panel, and is not
+  on the session being looked at only, not under a panel, and is not
   remembered across a reload.
 - HTTP and HTTPS URLs on a host screen are underlined. Clicking one opens it in
   a separate tab instead of moving the host cursor. Selecting text, the
@@ -361,6 +372,8 @@ mnemonics:
 | F1–F12                            | PF1–PF12                                           |
 | Shift-F1–F12                      | PF13–PF24                                          |
 | Ctrl-B then a letter              | move the cursor to the field with that hint        |
+| Ctrl-1–4                          | aim the keyboard at that session                   |
+| Ctrl-Shift-1–4                    | show that many sessions at once                    |
 
 Shift held on a key that prints nothing and has no Shift binding of its own
 counts as not held, so Shift left down from typing capitals does not swallow
@@ -383,7 +396,8 @@ comes while the last one is still out is dropped rather than queued, so letting
 go stops the paging at once. Enter, Clear, Attn and SysReq do not repeat.
 
 Plain Ctrl and Meta combinations are left to the browser, except Ctrl-B (the
-field hints, below) and Ctrl-C/Ctrl-V, which copy and paste the system
+field hints, below), Ctrl-1–4 and Ctrl-Shift-1–4 (the sessions, below) and
+Ctrl-C/Ctrl-V, which copy and paste the system
 clipboard rather than reaching the host as 3270 actions, and `Ctrl+M`, which
 opens Macros. Alt is otherwise left
 to the browser too, except the PA-key and Dup/FieldMark/EraseInput bindings
@@ -399,6 +413,28 @@ that can be typed into, the first letter of the label in front of it where that
 is free; that letter moves the cursor to the field, and any other key cancels.
 Ctrl may be held down through the letter or let go; either works. On a panel the
 hints are the panel's own fields.
+
+`Ctrl` and a digit aims the keyboard at that session; a digit for an empty slot
+opens a new session there. **Shift** turns the same digit into the layout — how
+many sessions are on screen rather than which one is typed at. The digit is read
+from the key itself, not from what it prints, so Shift-2 is the 2 key on every
+keyboard layout. Neither ever reaches the host. A browser may keep Ctrl-1–4 for
+its own tab switching; the session can then still be picked by clicking its pane.
+
+|                | Panes                                                            |
+| -------------- | ---------------------------------------------------------------- |
+| `Ctrl-Shift-1` | one session filling the page: the one the keyboard is already on |
+| `Ctrl-Shift-2` | sessions 1 and 2, side by side                                   |
+| `Ctrl-Shift-3` | session 1 down the left half, 2 above 3 on the right             |
+| `Ctrl-Shift-4` | quarters: 1 above 2 on the left, 3 above 4 on the right          |
+
+A layout that names a session nobody has opened yet opens it. A session that was
+off screen takes the pane the keyboard was on.
+
+Splitting the page does **not** resize a session that has a host on it and has
+been typed at: the screen size is negotiated when the connection is opened (§4),
+so resizing would drop and reopen it. Such a pane keeps its screen and shrinks
+the text instead.
 
 A paste is typed into the screen with b3270's `PasteString`, not `String`: a
 newline moves to the next line of input instead of sending Enter, and a
@@ -556,7 +592,7 @@ and in the page. The blocks are subsystems, and a code belongs to the subsystem
 that decides it is an error rather than to the file that throws it: `E1xxx`
 config, `E2xxx` the emulator, `E3xxx` session, `E4xxx` client messages, `E5xxx`
 browser, `E6xxx` server transport, `E7xxx` REST, `E8xxx` user data, `E9xxx` single sign-on. Retired codes — `E2001`–`E2003` and `E2006`
-of the old b3270 child process, `E2007` of the old emulator thread pool, `E3016` of the old session worker threads, `E5006` of the old several sessions in one page, `E7001`–`E7004` of the old REST proxy — are not reused.
+of the old b3270 child process, `E2007` of the old emulator thread pool, `E3016` of the old session worker threads, `E5006` of the first several sessions in one page (now `E5059`), `E7001`–`E7004` of the old REST proxy — are not reused.
 
 | Code    | Meaning                                                     |
 | ------- | ----------------------------------------------------------- |
@@ -655,6 +691,8 @@ of the old b3270 child process, `E2007` of the old emulator thread pool, `E3016`
 | `E5056` | No file was chosen for an upload                            |
 | `E5057` | The text to upload is too long                              |
 | `E5058` | A macro's transfer step's option must be 1 to 4             |
+| `E5059` | Another terminal session could not be opened                |
+| `E5060` | The sessions for a layout could not be opened               |
 | `E6001` | Static file not found                                       |
 | `E6002` | WebSocket upgrade path is not a session                     |
 | `E6003` | WebSocket closed unexpectedly                               |

@@ -686,6 +686,62 @@ test("the session is restored after reload", async (t) => {
   assert.deepEqual(browser.exceptions, []);
 });
 
+test("Ctrl+digit opens and switches sessions, Ctrl+Shift+digit splits the page", async (t) => {
+  const browser = await startBrowser(t);
+  const evaluate = async (expression) =>
+    (
+      await browser.command("Runtime.evaluate", {
+        expression,
+        awaitPromise: true,
+        returnByValue: true,
+      })
+    ).result.result.value;
+  const afterPaint = (expression) =>
+    evaluate(
+      `new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => done(${expression}))))`,
+    );
+  const panes = () =>
+    afterPaint(
+      "[...document.querySelectorAll('canvas')].map((c) => c.hidden ? null : c.style.left)",
+    );
+
+  const secondHello = browser.frame("Network.webSocketFrameReceived", "hello");
+  const onSecond = browser.consoleMessage("keyboard on session");
+  await browser.key("2", "Digit2", { modifiers: 2, windowsVirtualKeyCode: 50 });
+  await secondHello;
+  await onSecond;
+  const ids = (await evaluate("location.hash.slice(1)")).split(",");
+  assert.equal(ids.length, 2);
+  assert.equal(ids[0], browser.sessionId);
+  assert.notEqual(ids[1], browser.sessionId);
+  // The second session took the one pane there was.
+  assert.deepEqual(await panes(), [null, "0px", null, null]);
+
+  // Shift-2 prints " on a German keyboard; the digit comes from the code.
+  const split = browser.consoleMessage("layout");
+  await browser.key('"', "Digit2", {
+    modifiers: 2 | 8,
+    windowsVirtualKeyCode: 50,
+  });
+  await split;
+  const [left, right] = await panes();
+  assert.equal(left, "0px");
+  assert.ok(Number.parseInt(right, 10) > 0, right);
+
+  const backOnFirst = browser.consoleMessage("keyboard on session");
+  await browser.key("1", "Digit1", { modifiers: 2, windowsVirtualKeyCode: 49 });
+  assert.match(await backOnFirst, /1$/);
+  const typed = browser.frame("Network.webSocketFrameSent", "text");
+  await browser.key("a", "KeyA", { text: "a", windowsVirtualKeyCode: 65 });
+  assert.equal((await typed).value, "a");
+
+  const reattached = browser.frame("Network.webSocketFrameReceived", "hello");
+  await browser.command("Page.reload");
+  await reattached;
+  assert.equal(await evaluate("location.hash.slice(1)"), ids.join(","));
+  assert.deepEqual(browser.exceptions, []);
+});
+
 test("the address keeps the panels and the keyboard on show across a reload", async (t) => {
   const browser = await startBrowser(t);
   const addressAfterPaint = async () =>
