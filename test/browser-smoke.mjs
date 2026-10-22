@@ -569,6 +569,79 @@ test("a right click and a wheel turn sideways move the cursor and run what they 
   assert.deepEqual(browser.exceptions, []);
 });
 
+test("Ctrl+C copies the selection and lets go of it, as Ctrl+X does", async (t) => {
+  const browser = await startBrowser(t);
+  await browser.command("Browser.grantPermissions", {
+    permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"],
+    origin: browser.base,
+  });
+  await browser.command("Emulation.setFocusEmulationEnabled", {
+    enabled: true,
+  });
+  await browser.command("Runtime.evaluate", {
+    expression: `window.copies = [];
+    navigator.clipboard.writeText = async (text) => {
+      window.copies.push(text);
+      console.info("copied");
+    };`,
+  });
+  const box = await browser.command("Runtime.evaluate", {
+    expression: `(() => {
+      const rect = document.querySelector("#pane-1").getBoundingClientRect();
+      return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+    })()`,
+    returnByValue: true,
+  });
+  const { left, top, width, height } = box.result.result.value;
+  const [x, y] = [left + width * 0.05, top + height * 0.05];
+  const [toX, toY] = [left + width * 0.95, top + height * 0.6];
+  await browser.command("Input.dispatchMouseEvent", {
+    type: "mousePressed",
+    x,
+    y,
+    button: "left",
+    clickCount: 1,
+  });
+  await browser.command("Input.dispatchMouseEvent", {
+    type: "mouseMoved",
+    x: toX,
+    y: toY,
+    button: "left",
+    buttons: 1,
+  });
+  await browser.command("Input.dispatchMouseEvent", {
+    type: "mouseReleased",
+    x: toX,
+    y: toY,
+    button: "left",
+    clickCount: 1,
+  });
+
+  /** @returns {Promise<string[]>} */
+  const copies = async () =>
+    (
+      await browser.command("Runtime.evaluate", {
+        expression: "window.copies",
+        returnByValue: true,
+      })
+    ).result.result.value;
+  const ctrlC = () =>
+    browser.key("c", "KeyC", { modifiers: 2, windowsVirtualKeyCode: 67 });
+
+  const first = browser.consoleMessage("copied");
+  await ctrlC();
+  await first;
+  const [selected] = await copies();
+  assert.ok(selected.trim() !== "", "the selection was copied");
+
+  // With the selection gone, Ctrl+C takes the field under the cursor instead.
+  const second = browser.consoleMessage("copied");
+  await ctrlC();
+  await second;
+  assert.notEqual((await copies())[1], selected);
+  assert.deepEqual(browser.exceptions, []);
+});
+
 test("a middle click moves the cursor and pastes there", async (t) => {
   const browser = await startBrowser(t);
   await browser.command("Browser.grantPermissions", {

@@ -1727,29 +1727,29 @@ screenEl.addEventListener(
       const box = screen.selectionBox();
       if (box !== null) {
         navigator.clipboard.writeText(screen.getSelection());
-        if (!cut || grid === null) return;
         // Last run first: a Delete pulls the rest of its field left, over
         // cells that would otherwise still have to be cut.
-        for (let row = box.bottom; row >= box.top; row--) {
-          let end = box.right;
-          while (end >= box.left) {
-            if (!grid.cellAt(row, end)?.editable) {
-              end--;
-              continue;
+        if (cut && grid !== null)
+          for (let row = box.bottom; row >= box.top; row--) {
+            let end = box.right;
+            while (end >= box.left) {
+              if (!grid.cellAt(row, end)?.editable) {
+                end--;
+                continue;
+              }
+              let start = end;
+              while (start > box.left && grid.cellAt(row, start - 1)?.editable)
+                start--;
+              deliver({
+                type: "action",
+                action: "MoveCursor1",
+                args: [String(row + 1), String(start + 1)],
+              });
+              for (let col = start; col <= end; col++)
+                deliver({ type: "action", action: "Delete", args: [] });
+              end = start - 1;
             }
-            let start = end;
-            while (start > box.left && grid.cellAt(row, start - 1)?.editable)
-              start--;
-            deliver({
-              type: "action",
-              action: "MoveCursor1",
-              args: [String(row + 1), String(start + 1)],
-            });
-            for (let col = start; col <= end; col++)
-              deliver({ type: "action", action: "Delete", args: [] });
-            end = start - 1;
           }
-        }
         screen.clearSelection();
         redraw();
         return;
