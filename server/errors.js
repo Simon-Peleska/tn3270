@@ -116,6 +116,9 @@ export const ERRORS = Object.freeze({
   E5058: "A macro's transfer step's option must be 1 to 4",
   E5059: "Another terminal session could not be opened",
   E5060: "The sessions for a layout could not be opened",
+  E5061: "The editor could not open a data set",
+  E5062: "The editor did not answer a request to open a data set",
+  E5063: "The editor could not look up the data sets on the screen",
 
   E6001: "Static file not found",
   E6002: "WebSocket upgrade path is not a session",

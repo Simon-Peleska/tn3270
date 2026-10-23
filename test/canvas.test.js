@@ -446,6 +446,58 @@ test("host URLs are underlined, clickable by cell, and updated with the host pai
   assert.equal(screen.linkAt(1, 1), "http://example.net");
 });
 
+test("data set names are found on the host screen and underlined once they are in the repo", () => {
+  const inRepo = new Set();
+  const screen = new Screen({
+    canvas: fakeCanvas(),
+    theme: THEME,
+    fieldBackground: true,
+    inRepo: (dataset) => inRepo.has(dataset),
+  });
+  screen.resize(80, 24);
+  const lines = [
+    "EDIT USER.PLI.SOURCE(PGM1) - 01.00",
+    "'USER.PLI.SOURCE(PGM2)' and USER.PLI.DATA.",
+    "LOADLIB(MEM) but not LOADLIB, Edit.Mode or SYS1.ABCDEFGHI",
+    "http://SYS1.EXAMPLE.ORG/a",
+    `${"ABCDEFGH.".repeat(5)}X`,
+  ];
+  screen.applyHostPaint({
+    type: "paint",
+    full: true,
+    color: true,
+    fieldsFormatted: false,
+    rows: lines.map((text, row) => ({ row, runs: [{ col: 0, text }] })),
+    cursor: { row: 0, col: 0, on: false },
+  });
+  assert.deepEqual(
+    [...screen.datasetNames()],
+    [
+      "USER.PLI.SOURCE(PGM1)",
+      "USER.PLI.SOURCE(PGM2)",
+      "USER.PLI.DATA",
+      "LOADLIB(MEM)",
+    ],
+  );
+  assert.equal(screen.datasetAt(0, 4), null);
+  assert.equal(screen.datasetAt(0, 5), "USER.PLI.SOURCE(PGM1)");
+  assert.equal(screen.datasetAt(0, 25), "USER.PLI.SOURCE(PGM1)");
+  assert.equal(screen.datasetAt(1, 0), null, "the quote is not the name");
+  assert.equal(screen.datasetAt(1, 1), "USER.PLI.SOURCE(PGM2)");
+
+  screen.layout(PAGE, "monospace");
+  const underlines = () => {
+    screen.render();
+    return lastFrame(screen).filter(
+      (fill) => fill.h < screen.metrics.height / 4,
+    ).length;
+  };
+  const link = "http://SYS1.EXAMPLE.ORG/a".length;
+  assert.equal(underlines(), link);
+  inRepo.add("USER.PLI.SOURCE(PGM1)");
+  assert.equal(underlines(), link + "USER.PLI.SOURCE(PGM1)".length);
+});
+
 test("the screen is fitted to the one canvas and centred on it", () => {
   const screen = page();
 

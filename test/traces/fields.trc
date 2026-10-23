@@ -84,6 +84,21 @@
 //   ord.sba 20 1
 //   ord.sf protect,skip
 //   text "└────────────┴────────────┘"
+//   ord.sba 22 1
+//   ord.sf protect,skip
+//   text "Data set names, opened in VS Code with Shift+click when its repo has them:"
+//   ord.sba 24 1
+//   ord.sf protect,skip
+//   text "  USER.PLI.SOURCE(PGM1)      in the repo, no file extension"
+//   ord.sba 25 1
+//   ord.sf protect,skip
+//   text "  'USER.PLI.SOURCE(PGM2)'    in the repo as PGM2.pli, quoted"
+//   ord.sba 26 1
+//   ord.sf protect,skip
+//   text "  USER.PLI.SOURCE(NOTHERE)   not in the repo"
+//   ord.sba 27 1
+//   ord.sf protect,skip
+//   text "  USER.PLI.DATA              sequential, not in the repo"
 //   ord.sba 3 12
 //   ord.ic
 //  telnet.eor
@@ -106,4 +121,14 @@
 < 0x200 08a208a208a208d611d6601df0088540938586a34040404c604040088540a281
 < 0x220 948540407e7e404040088511d7f01df008c408a208a208a208a208a208a208a2
 < 0x240 08a208a208a208a208a208c708a208a208a208a208a208a208a208a208a208a2
-< 0x260 08a208a208d411c26b13ffef
+< 0x260 08a208a208d4115a501df0c481a38140a285a34095819485a26b409697859585
+< 0x280 8440899540e5e240c396848540a689a38840e2888986a34e839389839240a688
+< 0x2a0 85954089a3a24099859796408881a240a38885947a115cf01df04040e4e2c5d9
+< 0x2c0 4bd7d3c94be2d6e4d9c3c54dd7c7d4f15d404040404040899540a38885409985
+< 0x2e0 97966b40959640868993854085a7a38595a2899695115e401df040407de4e2c5
+< 0x300 d94bd7d3c94be2d6e4d9c3c54dd7c7d4f25d7d40404040899540a38885409985
+< 0x320 97964081a240d7c7d4f24b9793896b4098a496a38584115f501df04040e4e2c5
+< 0x340 d94bd7d3c94be2d6e4d9c3c54dd5d6e3c8c5d9c55d4040409596a340899540a3
+< 0x360 888540998597961160601df04040e4e2c5d94bd7d3c94bc4c1e3c14040404040
+< 0x380 404040404040404040a28598a48595a38981936b409596a340899540a3888540
+< 0x3a0 9985979611c26b13ffef

@@ -305,6 +305,7 @@ public/
   paste.js      a paste split into one segment per stretch of editable cells
                 (run by the server, and by local-host.js for panels)
   canvas.js     Screen: one session's canvas, the two grids on it, and the drawing
+  embedder.js   talks to the editor framing the page: data sets in its repo, opening them
   sessions.js   Ctrl+digit, the URL fragment, and how panes split the page
   colors.js     3270 colour name → ANSI slot, gr → flags
   oia.js        the status line, composed from the last status and cursor

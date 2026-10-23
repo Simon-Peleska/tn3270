@@ -85,6 +85,11 @@ const BOX_ARMS = new Map([
 
 const URL_PATTERN = /https?:\/\/[^\s<>"'`]+/gi;
 const URL_END_PUNCTUATION = /[.,;:!?)}\]]+$/;
+// Qualifiers of 1 to 8 characters, and a member in brackets. Quotes around a
+// name are not part of it, so 'USER.PLI(A)' is USER.PLI(A).
+const DATASET_PATTERN =
+  /(?<![\w#@$.-])[A-Z#@$][A-Z0-9#@$-]{0,7}(?:\.[A-Z#@$][A-Z0-9#@$-]{0,7})*(?:\([A-Z#@$][A-Z0-9#@$]{0,7}\))?(?![\w#@$-])/g;
+const DATASET_NAME_MAX = 44;
 
 /**
  * A session's canvas and its cells on it: their grids, where they sit and how
@@ -92,8 +97,9 @@ const URL_END_PUNCTUATION = /[.,;:!?)}\]]+$/;
  */
 export class Screen {
   /**
-   * @param {{ canvas: HTMLCanvasElement, theme: Theme, fieldBackground: boolean, redraw?: () => void }} options
+   * @param {{ canvas: HTMLCanvasElement, theme: Theme, fieldBackground: boolean, redraw?: () => void, inRepo?: (dataset: string) => boolean }} options
    *   `redraw` asks the page for a frame when a drag changes the selection.
+   *   `inRepo` says which data set names to underline.
    */
   constructor(options) {
     /** @type {Theme} */
@@ -112,6 +118,10 @@ export class Screen {
     this.overlay = new Grid(0, 0, null);
     /** @type {(string | null)[]} */
     this.links = [];
+    /** @type {(string | null)[]} the data set name each cell is part of */
+    this.datasets = [];
+    /** @type {(dataset: string) => boolean} */
+    this.inRepo = options.inRepo ?? (() => false);
 
     /** @type {string} */
     this.fontFamily = "";
@@ -179,6 +189,7 @@ export class Screen {
     this.host.resize(rows, cols);
     this.overlay.resize(this.displayRows, cols);
     this.links = Array(rows * cols).fill(null);
+    this.datasets = Array(rows * cols).fill(null);
     this.clearSelection();
   }
 
@@ -204,6 +215,17 @@ export class Screen {
         const start = row * this.cols + (match.index ?? 0);
         this.links.fill(url, start, start + url.length);
       }
+      this.datasets.fill(null, row * this.cols, (row + 1) * this.cols);
+      for (const match of this.host.rowText(row).matchAll(DATASET_PATTERN)) {
+        const dataset = match[0];
+        const name = dataset.replace(/\(.*/, "");
+        if (name.length > DATASET_NAME_MAX) continue;
+        // One qualifier alone is any upper-case word.
+        if (name === dataset && !name.includes(".")) continue;
+        const start = row * this.cols + (match.index ?? 0);
+        if (this.links[start] !== null) continue;
+        this.datasets.fill(dataset, start, start + dataset.length);
+      }
     }
   }
 
@@ -211,6 +233,19 @@ export class Screen {
   linkAt(row, col) {
     if (row < 0 || row >= this.rows || col < 0 || col >= this.cols) return null;
     return this.links[row * this.cols + col] ?? null;
+  }
+
+  /** @param {number} row @param {number} col @returns {string | null} */
+  datasetAt(row, col) {
+    if (row < 0 || row >= this.rows || col < 0 || col >= this.cols) return null;
+    return this.datasets[row * this.cols + col] ?? null;
+  }
+
+  /** @returns {Set<string>} every data set name on the host's screen */
+  datasetNames() {
+    const names = new Set(this.datasets);
+    names.delete(null);
+    return /** @type {Set<string>} */ (names);
   }
 
   /** @returns {void} */
@@ -492,9 +527,11 @@ export class Screen {
         cells[col] = cell;
         const style = cell === null ? null : this.styleOf(cell);
         const at = row * cols + col;
+        const dataset = this.datasets[at];
         if (
           style !== null &&
-          this.links[at] != null &&
+          (this.links[at] != null ||
+            (dataset != null && this.inRepo(dataset))) &&
           this.overlay.cells[at]?.ch === null
         )
           style.underline = true;

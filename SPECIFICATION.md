@@ -159,6 +159,8 @@ the host.
   recorded takes it too); a click on the keyboard is never a cursor move. It is drawn
   on the session being looked at only, not under a panel, and is not
   remembered across a reload.
+- Data set names on a host screen are underlined when the editor the page is
+  framed in has them in its repo, and Shift-click opens them there (§4.2).
 - HTTP and HTTPS URLs on a host screen are underlined. Clicking one opens it in
   a separate tab instead of moving the host cursor. Selecting text, the
   on-screen keyboard, and panels still take priority over links.
@@ -329,6 +331,51 @@ same combination pressed again closes the panel, and from inside another panel
 it opens its own. Copy, paste and clicks work on a panel the way they do on the
 screen.
 
+### 4.2 Embedded in an editor
+
+The page can be framed by an editor that holds a repo, such as VS Code's PL/I
+extension, which shows it in an iframe inside a webview. The editor then says
+which data set names on the host screen are files in its repo; those are
+underlined, and `OpenDataset` — Shift-click by default — opens the one under
+the click (or, bound to a key, under the cursor) in the editor. Without such a
+parent nothing is underlined and Shift-click does nothing. Which file a name
+is, is the editor's business, not the page's.
+
+A data set name is found on the host's screen only, never on a panel: up to 44
+characters of qualifiers joined by dots, each 1–8 of `A–Z 0–9 # @ $ -` and not
+starting with a digit or `-`, then optionally a member of 1–8 in brackets. A
+name of one qualifier counts only with a member, since any upper-case word
+would otherwise be one. Quotes around a name are not part of it, so
+`'USER.PLI(PGM1)'` is sent as `USER.PLI(PGM1)`. Lower case is not a name, and a
+name inside an underlined URL is the URL's.
+
+The page and its parent talk with `postMessage`. The page speaks only to a
+parent whose origin is a `vscode-webview://` one or the page's own, read from
+`location.ancestorOrigins`, and posts to exactly that origin; it takes only
+messages whose `source` is its parent and whose origin is that one. Any other
+site could frame the page just to learn what is on the screen. A browser without
+`location.ancestorOrigins` (Firefox) never talks to its parent.
+
+Every message is an object `{bridge:"tn3270", v:1, type, …}`; a message with a
+different `bridge` or `v` is ignored by both sides.
+
+| Direction     | `type`            | Fields                                            | Meaning                                                                                                           |
+| ------------- | ----------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| page → editor | `hello`           | `capabilities: ["resolveDatasets","openDataset"]` | Sent once, when the page loads                                                                                    |
+| editor → page | `hello`           | `capabilities: string[]`                          | The requests the editor answers. The page sends none before it, and forgets what it was told about names          |
+| page → editor | `resolveDatasets` | `id: number, names: string[]`                     | Which of these names are in the repo? Each name is asked about once, until the repo changes                       |
+| page → editor | `openDataset`     | `id: number, name: string`                        | Open this name, which the editor said is in the repo                                                              |
+| editor → page | `result`          | `id`, and `result` or `error: {code, message}`    | The answer to the request with that `id`: `{found: string[]}` for `resolveDatasets`, `{}` for `openDataset`       |
+| editor → page | `datasetsChanged` |                                                   | Files were added, removed or renamed: the page forgets every answer and asks again about the names on its screens |
+
+Names travel in upper case, without quotes, as `HLQ.NAME` or `HLQ.NAME(MEMBER)`.
+A `resolveDatasets` the editor does not answer within 15 s leaves its names
+unknown — not underlined — and they are asked about again with the next paint;
+it is not an error, since a repo the editor has just opened can take that long.
+An `error` answer to it is `E5063`. An `openDataset` with no answer within 5 s is
+`E5062`, and an `error` answer is `E5061`. The editor's own code (VS Code's
+`TERM0xxE`) is part of the message shown, so both sides' logs can be found.
+
 ## 5. Keyboard
 
 Printable characters are sent as text. Everything else follows IBM Personal
@@ -374,6 +421,7 @@ mnemonics:
 | Ctrl-B then a letter              | move the cursor to the field with that hint                        |
 | Ctrl-1–4                          | aim the keyboard at that session                                   |
 | Ctrl-Shift-1–4                    | show that many sessions at once                                    |
+| Shift-click                       | open the underlined data set under it in the editor (§4.2)         |
 
 Shift held on a key that prints nothing and has no Shift binding of its own
 counts as not held, so Shift left down from typing capitals does not swallow
@@ -693,6 +741,9 @@ of the old b3270 child process, `E2007` of the old emulator thread pool, `E3016`
 | `E5058` | A macro's transfer step's option must be 1 to 4             |
 | `E5059` | Another terminal session could not be opened                |
 | `E5060` | The sessions for a layout could not be opened               |
+| `E5061` | The editor could not open a data set                        |
+| `E5062` | The editor did not answer a request to open a data set      |
+| `E5063` | The editor could not look up the data sets on the screen    |
 | `E6001` | Static file not found                                       |
 | `E6002` | WebSocket upgrade path is not a session                     |
 | `E6003` | WebSocket closed unexpectedly                               |

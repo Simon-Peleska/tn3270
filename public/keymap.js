@@ -40,6 +40,7 @@ export const COMMANDS = Object.freeze([
   { id: "Copy", label: "Copy" },
   { id: "Cut", label: "Cut" },
   { id: "Paste", label: "Paste" },
+  { id: "OpenDataset", label: "Open data set in editor" },
   { id: "SelectUp", label: "Select up" },
   { id: "SelectDown", label: "Select down" },
   { id: "SelectLeft", label: "Select left" },
@@ -71,8 +72,9 @@ export const COMMANDS = Object.freeze([
 ]);
 
 /**
- * Commands this browser answers itself: the clipboard, and the panels, which
- * are drawn over the session rather than sent to the host.
+ * Commands this browser answers itself: the clipboard, the editor the page is
+ * framed in, and the panels, which are drawn over the session rather than sent
+ * to the host.
  *
  * @type {ReadonlySet<string>}
  */
@@ -80,6 +82,7 @@ export const CLIENT_COMMANDS = new Set([
   "Copy",
   "Cut",
   "Paste",
+  "OpenDataset",
   "SelectUp",
   "SelectDown",
   "SelectLeft",
@@ -199,6 +202,7 @@ export const DEFAULT_BINDINGS = Object.freeze({
     combo("Insert", { ctrl: true, shift: true }),
     combo("MiddleClick"),
   ],
+  OpenDataset: [combo("LeftClick", { shift: true })],
   SelectUp: [combo("ArrowUp", { shift: true })],
   SelectDown: [combo("ArrowDown", { shift: true })],
   SelectLeft: [combo("ArrowLeft", { shift: true })],

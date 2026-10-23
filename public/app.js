@@ -1,4 +1,10 @@
 import { Screen } from "./canvas.js";
+import {
+  inRepo,
+  openDataset,
+  resolveDatasets,
+  startEmbedder,
+} from "./embedder.js";
 import { renderOia, cursorPosition } from "./oia.js";
 import {
   ComboCapture,
@@ -412,16 +418,25 @@ let chromeFrame = null;
  */
 function redraw() {
   if (chromeFrame !== null) return;
-  chromeFrame = requestAnimationFrame(() => {
-    chromeFrame = null;
-    for (const index of panes) {
-      const slot = sessions[index];
-      if (slot === null) continue;
-      drawChrome(slot);
-      slot.screen.render();
-    }
-    writeAddress();
-  });
+  chromeFrame = requestAnimationFrame(drawNow);
+}
+
+/**
+ * A canvas that was just laid out is blank until it is drawn, so a frame shown
+ * before the next redraw would flash black.
+ *
+ * @returns {void}
+ */
+function drawNow() {
+  if (chromeFrame !== null) cancelAnimationFrame(chromeFrame);
+  chromeFrame = null;
+  for (const index of panes) {
+    const slot = sessions[index];
+    if (slot === null) continue;
+    drawChrome(slot);
+    slot.screen.render();
+  }
+  writeAddress();
 }
 
 /**
@@ -887,18 +902,12 @@ function fitIdleSessions() {
   }
 }
 
-// Coalesced into a frame: a drag fires this continuously.
-let fitScheduled = false;
 /** @type {ReturnType<typeof setTimeout> | undefined} */
 let settleTimer;
+// Called at most once a frame, after layout and before paint, so the new
+// layout is drawn in the frame that shows the new size.
 const resizeObserver = new ResizeObserver(() => {
-  if (!fitScheduled) {
-    fitScheduled = true;
-    requestAnimationFrame(() => {
-      fitScheduled = false;
-      applyLayout();
-    });
-  }
+  applyLayout();
   // A refit costs a host round trip, so wait for the drag to settle.
   clearTimeout(settleTimer);
   settleTimer = setTimeout(fitIdleSessions, 400);
@@ -1220,6 +1229,7 @@ function handleServerMessage(slot, message) {
     // Even hidden, even behind a panel: the grid underneath is what showing
     // it again puts back.
     screen.applyHostPaint(message);
+    resolveDatasets(screen.datasetNames());
     if (displayed(slot)) redraw();
     return;
   }
@@ -1337,7 +1347,7 @@ function applyLayout() {
         : undefined,
     );
   }
-  redraw();
+  drawNow();
 }
 
 /**
@@ -1764,6 +1774,16 @@ screenEl.addEventListener(
       if (cut) deliver({ type: "action", action: "DeleteField", args: [] });
       return;
     }
+    if (mapped.command === "OpenDataset") {
+      if (panel) return;
+      const screen = session.screen;
+      const at = pressedCell ?? screen.host.cursor;
+      const name = at === null ? null : screen.datasetAt(at.row, at.col);
+      if (name === null) return;
+      if (inRepo(name)) openDataset(name);
+      else console.info(name, "is not in the editor's repo");
+      return;
+    }
     // The panel commands are the other client commands, and the window handler
     // claims those before this one ever runs.
     if (mapped.command !== "Paste") return;
@@ -1786,15 +1806,19 @@ screenEl.addEventListener(
   true,
 );
 
+/** @type {{ row: number, col: number } | null} the cell a click is a keydown for */
+let pressedCell = null;
+
 /**
  * The wheel and the mouse buttons are bound like keys: each turn or click is a
  * keydown of its own name, so a key field in the Keys panel picks it up too.
  *
  * @param {string} name a combo's key, e.g. "WheelUp" or "MiddleClick"
  * @param {MouseEvent} event
+ * @param {{ row: number, col: number } | null} [cell] the one clicked
  * @returns {boolean} whether something took it
  */
-function pressMouseKey(name, event) {
+function pressMouseKey(name, event, cell = null) {
   const keyEvent = new KeyboardEvent("keydown", {
     key: name,
     code: name,
@@ -1804,7 +1828,12 @@ function pressMouseKey(name, event) {
     bubbles: true,
     cancelable: true,
   });
-  return !screenEl.dispatchEvent(keyEvent);
+  pressedCell = cell;
+  try {
+    return !screenEl.dispatchEvent(keyEvent);
+  } finally {
+    pressedCell = null;
+  }
 }
 
 screenEl.addEventListener(
@@ -1949,7 +1978,7 @@ function canvasClicked(index, event) {
     return;
   }
   sendUnrecorded(moveCursor);
-  pressMouseKey(name, event);
+  pressMouseKey(name, event, hit);
 }
 
 /** @type {Readonly<Record<number, string>>} `MouseEvent.button` to a combo's key */
@@ -2012,6 +2041,7 @@ try {
         theme: settings.theme().colors,
         fieldBackground: settings.values.fieldBackground,
         redraw,
+        inRepo,
       }),
   );
 } catch (cause) {
@@ -2021,6 +2051,13 @@ try {
   screenEl.textContent = `[E5001] The renderer failed to start: ${String(cause)}`;
   throw cause;
 }
+startEmbedder({
+  changed: () => {
+    for (const screen of screens) resolveDatasets(screen.datasetNames());
+    redraw();
+  },
+  error: (code, message) => showError(code, message),
+});
 resizeObserver.observe(screenEl);
 function watchScale() {
   matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`).addEventListener(

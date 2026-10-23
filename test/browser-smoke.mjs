@@ -1084,6 +1084,147 @@ test("clicking a URL on the host screen opens a new tab", async (t) => {
   assert.deepEqual(browser.exceptions, []);
 });
 
+test("Shift+click opens a data set in the editor the page is framed in", async (t) => {
+  const browser = await startBrowser(t);
+  // A page of the server's own stands in for VS Code's webview, and frames
+  // the session the test started.
+  const loaded = browser.event("Page.loadEventFired");
+  await browser.command("Page.navigate", { url: `${browser.base}/editor` });
+  await loaded;
+  const resolved = browser.consoleMessage("resolve ");
+  await browser.command("Runtime.evaluate", {
+    expression: `(() => {
+      addEventListener("message", (event) => {
+        const message = event.data;
+        if (message?.bridge !== "tn3270") return;
+        const answer = (fields) =>
+          event.source.postMessage({ bridge: "tn3270", v: 1, ...fields }, location.origin);
+        if (message.type === "hello")
+          answer({ type: "hello", capabilities: ["resolveDatasets", "openDataset"] });
+        if (message.type === "resolveDatasets") {
+          console.info("resolve " + JSON.stringify(message.names));
+          const found = message.names.filter((name) => /PGM[12]/.test(name));
+          answer({ type: "result", id: message.id, result: { found } });
+        }
+        if (message.type === "openDataset") {
+          console.info("open " + message.name);
+          answer(
+            message.name.includes("PGM2")
+              ? { type: "result", id: message.id, error: { code: "TERM005E", message: "open failed" } }
+              : { type: "result", id: message.id, result: {} },
+          );
+        }
+      });
+      const frame = document.createElement("iframe");
+      frame.src = "/#${browser.sessionId}";
+      frame.style = "position: fixed; inset: 0; border: 0; width: 1000px; height: 700px";
+      document.body.append(frame);
+    })()`,
+  });
+  assert.deepEqual(JSON.parse((await resolved).slice("resolve ".length)), [
+    "USER.PLI.SOURCE(PGM1)",
+    "USER.PLI.SOURCE(PGM2)",
+    "USER.PLI.SOURCE(NOTHERE)",
+    "USER.PLI.DATA",
+  ]);
+
+  /** @param {number} row @param {number} col 0-based */
+  const shiftClick = async (row, col) => {
+    const position = await browser.command("Runtime.evaluate", {
+      expression: `(() => {
+        const frame = document.querySelector("iframe").getBoundingClientRect();
+        const canvas = document.querySelector("iframe").contentDocument.querySelector("canvas");
+        const metrics = canvas.getContext("2d").measureText("M");
+        const width = metrics.width;
+        const height = Math.ceil(metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent);
+        const rect = canvas.getBoundingClientRect();
+        return {
+          x: frame.left + rect.left + (rect.width - 80 * width) / 2 + (${col} + 0.5) * width,
+          y: frame.top + rect.top + (rect.height - 44 * height) / 2 + (${row} + 0.5) * height,
+        };
+      })()`,
+      returnByValue: true,
+    });
+    const { x, y } = position.result.result.value;
+    for (const type of ["mousePressed", "mouseReleased"])
+      await browser.command("Input.dispatchMouseEvent", {
+        type,
+        x,
+        y,
+        button: "left",
+        clickCount: 1,
+        modifiers: 8,
+      });
+  };
+
+  // Not in the repo, so not opened: the first open is the next click's.
+  const opened = browser.consoleMessage("open ");
+  await shiftClick(25, 12);
+  await shiftClick(23, 12);
+  assert.equal(await opened, "open USER.PLI.SOURCE(PGM1)");
+
+  const failed = browser.consoleMessage("E5061");
+  await shiftClick(24, 12);
+  assert.match(await failed, /USER\.PLI\.SOURCE\(PGM2\).*TERM005E/);
+
+  const askedAgain = browser.consoleMessage("resolve ");
+  await browser.command("Runtime.evaluate", {
+    expression: `document.querySelector("iframe").contentWindow.postMessage(
+      { bridge: "tn3270", v: 1, type: "datasetsChanged" }, location.origin)`,
+  });
+  assert.equal(
+    JSON.parse((await askedAgain).slice("resolve ".length)).length,
+    4,
+  );
+  assert.deepEqual(browser.exceptions, []);
+});
+
+test("a resize draws the screen in the frame it happens in, never a blank canvas", async (t) => {
+  const browser = await startBrowser(t);
+  // This observer comes after the page's, so its frame is the one the
+  // page's resize is shown in.
+  await browser.command("Runtime.evaluate", {
+    expression: `new Promise((observed) => {
+      const canvas = document.querySelector("canvas");
+      let first = true;
+      window.litAfterResize = new Promise((resolve) => {
+        const observer = new ResizeObserver(() => {
+          if (first) {
+            first = false;
+            observed();
+            return;
+          }
+          observer.disconnect();
+          requestAnimationFrame(() => {
+            const { data } = canvas
+              .getContext("2d")
+              .getImageData(0, 0, canvas.width, canvas.height);
+            let lit = 0;
+            for (let i = 0; i < data.length; i += 4)
+              if (data[i] + data[i + 1] + data[i + 2] > 0) lit++;
+            resolve(lit);
+          });
+        });
+        observer.observe(document.querySelector("#screen"));
+      });
+    })`,
+    awaitPromise: true,
+  });
+  await browser.command("Emulation.setDeviceMetricsOverride", {
+    width: 900,
+    height: 600,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  const lit = await browser.command("Runtime.evaluate", {
+    expression: "window.litAfterResize",
+    awaitPromise: true,
+    returnByValue: true,
+  });
+  assert.ok(lit.result.result.value > 0, "the resized canvas is drawn");
+  assert.deepEqual(browser.exceptions, []);
+});
+
 test("a print job from the host downloads as a UTF-8 text file", async (t) => {
   const browser = await startBrowser(t, { printer: true });
   const downloads = join(browser.temp, "downloads");
