@@ -1,6 +1,7 @@
 // The page this one is framed in, when that is an editor holding a repo, such as
 // VS Code's PL/I extension: it says which data set names on the screen are files
-// in the repo, and opens them. The messages are SPECIFICATION.md §4.2's.
+// in the repo, and opens them, and it may type on the session through REST. The
+// messages are SPECIFICATION.md §4.2's.
 
 // Looking up a repo the editor has only just opened can take seconds.
 const RESOLVE_TIMEOUT_MS = 15000;
@@ -23,6 +24,8 @@ let nextId = 0;
 let changed = () => {};
 /** @type {(code: string, message: string) => void} */
 let error = () => {};
+/** @type {() => string | null} */
+let controlledSession = () => null;
 
 /**
  * @typedef {{ result?: { found?: string[] }, error?: { code: string, message: string } }} Answer
@@ -33,8 +36,10 @@ let error = () => {};
  * webview, or a page of this server's own. Any other site could frame the
  * page just to read the names off it.
  *
- * @param {{ changed: () => void, error: (code: string, message: string) => void }} hooks
- *   `changed` when names should be looked up again and the screens redrawn
+ * @param {{ changed: () => void, error: (code: string, message: string) => void, controlledSession: () => string | null }} hooks
+ *   `changed` when names should be looked up again and the screens redrawn;
+ *   `controlledSession` is the id of the session the keyboard is on, when
+ *   this page may type on it
  * @returns {void}
  */
 export function startEmbedder(hooks) {
@@ -50,8 +55,12 @@ export function startEmbedder(hooks) {
   parentOrigin = origin;
   changed = hooks.changed;
   error = hooks.error;
+  controlledSession = hooks.controlledSession;
   window.addEventListener("message", received);
-  post({ type: "hello", capabilities: ["resolveDatasets", "openDataset"] });
+  post({
+    type: "hello",
+    capabilities: ["resolveDatasets", "openDataset", "rest"],
+  });
 }
 
 /** @param {MessageEvent} event */
@@ -67,6 +76,10 @@ function received(event) {
   }
   if (message.type === "datasetsChanged") {
     forget();
+    return;
+  }
+  if (message.type === "rest") {
+    runRest(message.id, message.actions);
     return;
   }
   if (message.type === "result") {
@@ -175,4 +188,57 @@ export function openDataset(name) {
         `${name} could not be opened in the editor: [${answer.error.code}] ${answer.error.message}`,
       );
   });
+}
+
+/**
+ * Runs the editor's actions as a REST post would, so the server's list of
+ * what REST may run is the only one. It goes through the page because the
+ * page is already signed in to the server and the editor is not.
+ *
+ * @param {unknown} id
+ * @param {unknown} actions as a REST post's JSON body takes them
+ * @returns {Promise<void>}
+ */
+async function runRest(id, actions) {
+  /** @param {string} code @param {string} message */
+  const fail = (code, message) => {
+    console.warn(`[${code}] ${message}`);
+    post({ type: "result", id, error: { code, message } });
+  };
+  const sessionId = controlledSession();
+  if (sessionId === null) {
+    fail("E5064", "The editor may only type on a session this page controls");
+    return;
+  }
+  // Names only: a String's text can be a password.
+  const names = Array.isArray(actions)
+    ? actions.map((step) => step?.action)
+    : typeof actions;
+  console.info("the editor runs", names, "on", sessionId);
+  let response;
+  let body;
+  try {
+    response = await fetch(
+      new URL(`./api/sessions/${sessionId}/3270/rest/post`, document.baseURI),
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify(actions),
+      },
+    );
+    body = await response.json();
+  } catch (cause) {
+    fail("E5065", `The editor's actions did not reach the server: ${cause}`);
+    return;
+  }
+  // s3270 answers a failing action with 400 and says which in the body.
+  if (response.status === 200 || response.status === 400) {
+    post({ type: "result", id, result: body });
+    return;
+  }
+  fail(
+    body?.code ?? "E5065",
+    body?.message ?? `The server answered ${response.status}`,
+  );
 }

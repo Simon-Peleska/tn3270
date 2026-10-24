@@ -359,14 +359,15 @@ site could frame the page just to learn what is on the screen. A browser without
 Every message is an object `{bridge:"tn3270", v:1, type, …}`; a message with a
 different `bridge` or `v` is ignored by both sides.
 
-| Direction     | `type`            | Fields                                            | Meaning                                                                                                           |
-| ------------- | ----------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| page → editor | `hello`           | `capabilities: ["resolveDatasets","openDataset"]` | Sent once, when the page loads                                                                                    |
-| editor → page | `hello`           | `capabilities: string[]`                          | The requests the editor answers. The page sends none before it, and forgets what it was told about names          |
-| page → editor | `resolveDatasets` | `id: number, names: string[]`                     | Which of these names are in the repo? Each name is asked about once, until the repo changes                       |
-| page → editor | `openDataset`     | `id: number, name: string`                        | Open this name, which the editor said is in the repo                                                              |
-| editor → page | `result`          | `id`, and `result` or `error: {code, message}`    | The answer to the request with that `id`: `{found: string[]}` for `resolveDatasets`, `{}` for `openDataset`       |
-| editor → page | `datasetsChanged` |                                                   | Files were added, removed or renamed: the page forgets every answer and asks again about the names on its screens |
+| Direction     | `type`            | Fields                                                   | Meaning                                                                                                           |
+| ------------- | ----------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| page → editor | `hello`           | `capabilities: ["resolveDatasets","openDataset","rest"]` | Sent once, when the page loads                                                                                    |
+| editor → page | `hello`           | `capabilities: string[]`                                 | The requests the editor answers. The page sends none before it, and forgets what it was told about names          |
+| page → editor | `resolveDatasets` | `id: number, names: string[]`                            | Which of these names are in the repo? Each name is asked about once, until the repo changes                       |
+| page → editor | `openDataset`     | `id: number, name: string`                               | Open this name, which the editor said is in the repo                                                              |
+| editor → page | `result`          | `id`, and `result` or `error: {code, message}`           | The answer to the request with that `id`: `{found: string[]}` for `resolveDatasets`, `{}` for `openDataset`       |
+| editor → page | `datasetsChanged` |                                                          | Files were added, removed or renamed: the page forgets every answer and asks again about the names on its screens |
+| editor → page | `rest`            | `id`, `actions` as a REST post's JSON body takes them    | Run them on the session the keyboard is on (§6, HTTP); answered with `result`                                     |
 
 Names travel in upper case, without quotes, as `HLQ.NAME` or `HLQ.NAME(MEMBER)`.
 A `resolveDatasets` the editor does not answer within 15 s leaves its names
@@ -375,6 +376,14 @@ it is not an error, since a repo the editor has just opened can take that long.
 An `error` answer to it is `E5063`. An `openDataset` with no answer within 5 s is
 `E5062`, and an `error` answer is `E5061`. The editor's own code (VS Code's
 `TERM0xxE`) is part of the message shown, so both sides' logs can be found.
+
+A `rest` request is a REST post (§6, HTTP) the page makes for the editor, since the
+page is signed in to the server and the editor may not be: the server's REST
+list of actions is the only one, so the editor can read the screen and type,
+nothing more. Its `result` is the post's JSON body for a `200` or a `400`, a
+failing action answering as s3270 does; any other answer is an `error` with the
+server's code, such as `E7012`. The page runs it only on a session it controls,
+`E5064` otherwise, and `E5065` when the post does not reach the server.
 
 ## 5. Keyboard
 
@@ -744,6 +753,8 @@ of the old b3270 child process, `E2007` of the old emulator thread pool, `E3016`
 | `E5061` | The editor could not open a data set                        |
 | `E5062` | The editor did not answer a request to open a data set      |
 | `E5063` | The editor could not look up the data sets on the screen    |
+| `E5064` | The editor may only type on a session this page controls    |
+| `E5065` | The editor's actions did not reach the server               |
 | `E6001` | Static file not found                                       |
 | `E6002` | WebSocket upgrade path is not a session                     |
 | `E6003` | WebSocket closed unexpectedly                               |

@@ -2057,6 +2057,8 @@ startEmbedder({
     redraw();
   },
   error: (code, message) => showError(code, message),
+  controlledSession: () =>
+    session.role === "controller" && !session.waiting ? session.id : null,
 });
 resizeObserver.observe(screenEl);
 function watchScale() {

@@ -119,6 +119,8 @@ export const ERRORS = Object.freeze({
   E5061: "The editor could not open a data set",
   E5062: "The editor did not answer a request to open a data set",
   E5063: "The editor could not look up the data sets on the screen",
+  E5064: "The editor may only type on a session this page controls",
+  E5065: "The editor's actions did not reach the server",
 
   E6001: "Static file not found",
   E6002: "WebSocket upgrade path is not a session",

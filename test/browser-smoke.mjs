@@ -1084,10 +1084,16 @@ test("clicking a URL on the host screen opens a new tab", async (t) => {
   assert.deepEqual(browser.exceptions, []);
 });
 
-test("Shift+click opens a data set in the editor the page is framed in", async (t) => {
-  const browser = await startBrowser(t);
-  // A page of the server's own stands in for VS Code's webview, and frames
-  // the session the test started.
+/**
+ * A page of the server's own stands in for VS Code's webview, frames the
+ * session the test started, and answers the page as the PL/I extension does.
+ * It logs "resolve <names>", "open <name>" and "answer <result>" for each
+ * result to a request of its own.
+ *
+ * @param {Awaited<ReturnType<typeof startBrowser>>} browser
+ * @returns {Promise<string>} the first resolve's message
+ */
+async function frameInFakeEditor(browser) {
   const loaded = browser.event("Page.loadEventFired");
   await browser.command("Page.navigate", { url: `${browser.base}/editor` });
   await loaded;
@@ -1106,6 +1112,7 @@ test("Shift+click opens a data set in the editor the page is framed in", async (
           const found = message.names.filter((name) => /PGM[12]/.test(name));
           answer({ type: "result", id: message.id, result: { found } });
         }
+        if (message.type === "result") console.info("answer " + JSON.stringify(message));
         if (message.type === "openDataset") {
           console.info("open " + message.name);
           answer(
@@ -1121,6 +1128,12 @@ test("Shift+click opens a data set in the editor the page is framed in", async (
       document.body.append(frame);
     })()`,
   });
+  return resolved;
+}
+
+test("Shift+click opens a data set in the editor the page is framed in", async (t) => {
+  const browser = await startBrowser(t);
+  const resolved = frameInFakeEditor(browser);
   assert.deepEqual(JSON.parse((await resolved).slice("resolve ".length)), [
     "USER.PLI.SOURCE(PGM1)",
     "USER.PLI.SOURCE(PGM2)",
@@ -1176,6 +1189,33 @@ test("Shift+click opens a data set in the editor the page is framed in", async (
     JSON.parse((await askedAgain).slice("resolve ".length)).length,
     4,
   );
+  assert.deepEqual(browser.exceptions, []);
+});
+
+test("the editor types and reads the screen through the page's REST", async (t) => {
+  const browser = await startBrowser(t);
+  await frameInFakeEditor(browser);
+  /** @param {number} id @param {unknown} actions */
+  const rest = async (id, actions) => {
+    const answered = browser.consoleMessage(`"type":"result","id":${id},`);
+    await browser.command("Runtime.evaluate", {
+      expression: `document.querySelector("iframe").contentWindow.postMessage(
+        { bridge: "tn3270", v: 1, type: "rest", id: ${id}, actions: ${JSON.stringify(actions)} },
+        location.origin)`,
+    });
+    return JSON.parse((await answered).slice("answer ".length));
+  };
+
+  const typed = await rest(1, [
+    { action: "String", args: ["HELLO"] },
+    { action: "Ascii1", args: ["24", "4", "21"] },
+  ]);
+  assert.deepEqual(typed.result.result, ["USER.PLI.SOURCE(PGM1)"]);
+  const screen = await rest(2, [{ action: "Ascii" }]);
+  assert.ok(screen.result.result.some((line) => line.includes("HELLO")));
+
+  const refused = await rest(3, [{ action: "Connect", args: ["elsewhere"] }]);
+  assert.equal(refused.error.code, "E7012");
   assert.deepEqual(browser.exceptions, []);
 });
 
